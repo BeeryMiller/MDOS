@@ -1,0 +1,55 @@
+* File: PAGENUMS
+*      created
+*      8/27/90 -PaulC  [part of general MDOS cleanup]
+*
+* page equates for MDOS ... intentionally volatile, to break
+* non-standard code with each release of MDOS
+*
+* 1.18.2021 added P_TIPI after HFDC code page
+*
+* 7.29.2022 Updated PAGE mapping for file compression. If this file
+*           changes page listing, then CYA\PATCH_S must be changed as well for
+*           pages P_HFC1, P_HFC2, and P_SCSI
+*
+*
+P_HEAD EQU  >00               eprom bootstrap assumes this...
+*
+P_RESV EQU  >03               HARDWARE WIRED - reserved always for TIMODE
+P_LAST EQU  >0D               1st uninitialized page in system image
+P_NULL EQU  >FF               not available due to hardware (EPROM)
+P_DBUG EQU  >13               reserved for debugger (scratch)
+*                   updated 8.15.92 by bwm for backwards compatibility
+P_VID1 EQU  >08      >01
+P_VID2 EQU  >04      >02
+P_VID3 EQU  >09      >04
+*
+P_MEM  EQU  >05      >05      (general, too)
+*
+P_DSR1 EQU  >01      >06
+P_DSR2 EQU  >07      >07
+P_DSR3 EQU  >02      >08
+P_DSR4 EQU  P_LAST            scratch
+P_DSR5 EQU  P_LAST+1          "
+P_DSR6 EQU  P_LAST+2          "
+P_DSR7 EQU  P_LAST+3          "
+*
+P_MATH EQU  >0A      >09
+*
+P_CLI1 EQU  >06      >0a
+P_CLI2 EQU  >0B      >0b
+P_CLI3 EQU  >0C      >0c
+P_CLI4 EQU  >11      >11
+P_CLI5 EQU  >32      >32      used for screen buffering, tables
+*
+P_HFC1 EQU  >14
+P_HFC2 EQU  >15
+P_TIPI EQU  >16          ;12.20 moved from >0D
+*
+P_SCSI EQU  >12      >12      SCSI hard disk support, added 10/17/94
+**P_SCSI EQU  >E9        ;tt, test to improve SCSI dsr speed
+
+P_SCAC EQU  >E8      >E8      SCSI file buffers and disk cache, zero wait state
+* I will be increasing MDOS by 8k, by transferring this page to PLAST+2,
+* saving the image, and then when MDOS loads, direct MDOS to copy the
+* page to page # >12
+;eof

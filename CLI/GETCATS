@@ -1,0 +1,1348 @@
+
+* GETCATS
+*
+*      DIRS  (128*16)
+*      --------------
+*      0-9               directory name
+*      10-13             time/date
+*      14-15             size allocated for dir
+*
+*
+*      NAMES (128*32) in catmaps
+*      -------------------------
+*      0-9               Filename
+*      10-13             date/time
+*      31                Fragmentation flag (0=not), only for floppy
+*
+* 3.8.2021  Fixed timestamp in SMASH;seconds/2 !
+*           ?Comments were lost in this file?
+* 3.27.2022 Capped maximum number of directories that can be displayed
+*           on the TIPI.
+*
+*
+* 4.16.2022 Moved CLR @SUBFLG to clear flag after set, for all devices
+* 4.16.2022 Moved CLR @DIRFLG to clear flag after set, for all devices
+
+       UNL
+*
+       DEF  SUBFLG                           3.22.2022
+       DEF  TIPFLG                           12.19.2020
+       DEF  TIPEXC
+       DEF  GETCAT,TRECAT
+       DEF  SETCAT
+       DEF  RELCAT
+*
+       DEF  FSTDIR
+*
+       DEF  VOLON
+       REF  MATCH
+       REF  BREAK
+
+;      REF  P_DSR2       ;1.23.2021, added for TIPI DSKx remap integration
+       COPY "\MDOS\HEAD\PAGENUMS"   ;can't REF, must include|add to !makefile
+       REF  DRVMAP       ;tipi
+*
+SETCAT LI   R0,1              opcode
+       MOV  R0,R1             set count
+       LI   R2,8              64k boundary
+       CLR  R3
+       XOP  @SEVEN,0
+       MOV  R0,R0
+       JNE  MEMERR
+*
+       LI   R0,3              map page into our address space
+       LI   R1,8              local page #
+       LI   R2,6              put it at >c000 7/31/88
+       XOP  @SEVEN,0
+       MOV  R0,R0
+*
+MEMERR RT
+*
+* release memory from catalog space
+*
+RELCAT LI   R0,2
+       LI   R1,1
+       LI   R2,8
+       XOP  @SEVEN,0
+       RT
+*
+* get a disk catalog into memory...winchester or floppy
+*
+* ...do status to determine existence
+*
+TRECAT SETO @NOWILD
+       JMP  GETCA2
+*
+GETCAT CLR  @NOWILD
+GETCA2 MOV  R0,@PABLOC
+       MOV  R11,@GETRT
+       MOV  @BREAK,@BRKSAV
+       CLR  @FSTDIR           no subdirs found yet
+       CLR  @DIRFLG           4.16.2022 need to clear flag for all devices
+       CLR  @SUBFLG           4.16.2022 need to clear flag for all devices
+*
+* check for wildcards: start at end and look for a period
+*
+       LI   R8,15+PAB         point at name length
+       MOVB *R8,R9
+       MOVB R9,@LENSAV        save name length
+       SRL  R9,8
+       A    R8,R9             point at last character in name
+       MOV  R9,R0             keep a pointer to last char in name
+*
+       MOV  @NOWILD,R2
+       JNE  WILD#0
+*
+       SETO @WDIR             dirs will be shown
+       CLR  @WTYPE
+       CLR  @WILD             no wildcards
+       MOV  @SPACES,@WILDST   clear out match filename
+       MOV  @SPACES,@WILDST+2 "
+       MOV  @SPACES,@WILDST+4 "
+       MOV  @SPACES,@WILDST+6 "
+       MOV  @SPACES,@WILDST+8 "
+*
+       CB   *R9,@PERIOD
+       JNE  WILD#1
+WILD#0 B    @WILD#2
+*
+WILD#1 DEC  R9
+       C    R8,R9
+       JHE  WILD#0            no periods in name=no match string
+       CB   *R9,@PERIOD
+       JNE  WILD#1
+*
+       MOV  R9,R1             save pointer to period
+       S    R8,R9
+       SLA  R9,8
+       MOVB R9,*R8
+*
+       LI   R2,WILDST
+       INC  R1                point to char after period
+WILD00 CB   *R1,@BQUOTE       did the user give a file type char?
+       JNE  WIL000            nope, just a regular scan
+*
+       INC  R1                point to next char
+       C    R1,R0
+       JH   WILD#2            we've processed everything
+*
+       CB   *R1,@BQUOTE
+       JEQ  WILD02            double BQUOTE gets turned into BQUOTE...
+*
+       CLR  @WDIR             no directories shown
+       CLR  R3                record length gets built here
+       CLR  @WONES            bits which must be one
+       CLR  @WZEROS           bits which must be zero
+       JMP  WILD42
+*
+WILD40 SETO @WTYPE
+WILD41 INC  R1                legal options now are DIVFPRE<#>
+WILD42 C    R1,R0
+       JH   WILD89
+*
+       MOVB *R1,R4
+       SRL  R4,8
+       CI   R4,'0'
+       JL   WILD41
+       CI   R4,'9'
+       JLE  WILD60            digit for record length
+*
+       ANDI R4,>005F          mask the >20 bit (convert to uppercase)
+       CI   R4,'D'
+       JEQ  WILD61
+       CI   R4,'I'
+       JEQ  WILD62
+       CI   R4,'V'
+       JEQ  WILD63
+       CI   R4,'F'
+       JEQ  WILD64
+       CI   R4,'P'
+       JEQ  WILD65
+       CI   R4,'R'            dirs allowed ...
+       JEQ  WILD66
+       CI   R4,'E'            emulate files
+       JEQ  WILD67
+       JMP  WILD41
+*
+WILD60 AI   R4,-'0'
+       MOV  R3,R2
+       MPY  @D10,R2
+       A    R4,R3
+       SOCB @H05,@WZEROS
+       JMP  WILD40
+*
+WILD61 SOCB @H07,@WZEROS      set bits for display type files
+       JMP  WILD40
+*
+WILD62 SOCB @H05,@WZEROS      set bits for internal type files
+       SOCB @H02,@WONES
+       JMP  WILD40
+*
+WILD63 SOCB @H80,@WONES       set bits for variable type files
+       SOCB @H05,@WZEROS
+       JMP  WILD40
+*
+WILD64 SOCB @H85,@WZEROS      set bits for fixed type files
+       JMP  WILD40
+*
+WILD65 SOCB @H01,@WONES       set bits for program type files
+       SOCB @H04,@WZEROS
+       JMP  WILD40
+*
+WILD66 SETO @WDIR             show dirs
+       SOCB @H04,@WONES       reserved bit
+       JMP  WILD40
+*
+WILD67 SOCB @H20,@WONES       set bits for emulate type files.
+       JMP  WILD40
+*
+WILD89 MOV  R3,@WRECLN
+       MOV  @WZEROS,R3        get required zero bits
+       SZCB @WONES,@WZEROS    if both are "required", require neither
+       SZCB R3,@WONES         "
+       JMP  WILD#2
+*
+* if no "'" for special effects, jumps here for "normal" scan
+*
+WIL000 CB   *R1,@ASTER
+       JEQ  WILD01
+*
+       CB   *R1,@QUEST
+       JNE  WILD02
+*
+WILD01 SETO @WILD
+WILD02 MOVB *R1+,*R2+         copy part of the wildcard string
+       CI   R2,WILDST+10
+       JHE  WILD#2
+*
+       C    R1,R0
+       JLE  WILD00            more chars to copy
+*
+WILD#2 MOV  @PABLOC,R0
+       MOV  R0,R1             save it for indexing
+GETC01 CLR  *R1+
+       CI   R1,PAB+14
+       JL   GETC01
+       INC  @PAB+2
+*
+       CLR  @TIPFLG                         12.19.2020
+       CLR  @TIPEXC           ;exceed 127 files -tipi only
+
+       MOV  R0,R1
+       C    @16(R1),@WINNAM
+       JEQ  GETCO2
+       C    @16(R1),@WINNA2
+       JEQ  GETCO2
+       C    @16(R1),@TIPNAM
+       JEQ  GETCO3                           12.17.2020
+*      C    @16(R1),@URINAM                  3.14.2021
+*      JEQ  GETCO3                           3.14.2021
+       C    @16(R1),@SCNAME
+       JNE  DOFL10
+
+GETCO2 B    @DOWIN
+
+; TIPFLG DATA 0          moved to EOF          12.19.2020
+GETCO3 SETO @TIPFLG                          12.19.2020
+*      CLR  @DIRFLG                          3.27.2022
+*      CLR  @SUBFLG                          3.27.2022
+       JMP  GETCO2                           12.19.2020
+*
+DEVERR SETO R0
+BADDIR MOV  @BRKSAV,@BREAK
+       MOV  @GETRT,R11
+       MOVB @LENSAV,@PAB+15
+       MOV  R0,R0
+       RT
+*
+       EVEN
+;
+; 1.23.2021, force TIPI remapped drives back to Hard Drive routine
+; REFerence DRVMAP from SECT2-P
+; REFerence P_DSR2
+;
+PAGEDSR2 BYTE P_DSR2,0   ;DSR page w/remap table | temp page hold
+TIPDSKMINMAX             ;volumes start at Device 0=22 for TIPI remaps
+       BYTE 22           22=0
+       BYTE 26           23=1,24=2,25=3,26=4
+BETTERSAVER3  DATA 0
+       EVEN
+
+; Test for TIPI remapped drives first
+; Let's hope R3 is safe to use
+DOFL10
+       MOV  R3,@BETTERSAVER3
+       MOVB @19(R1),R3    get drive/volume # from pab
+       SRL  R3,8         0-9
+       AI   R3,->30      ASCII TO NUM
+;test remaps by temporarily mapping DSR page into this space at >c000
+       MOVB @>F112,@PAGEDSR2+1   save page@
+       MOVB @PAGEDSR2,@>F112     map in the DSR page temporarily
+       MOVB @DRVMAP(R3),R3      get the mapping (lives in >4000)
+       MOVB @PAGEDSR2+1,@>F112      restore page before we continue
+;
+       CB   R3,@TIPDSKMINMAX  is the remap of this drive <22?
+       JL   DOFL10F           yep, not tipi
+       CB   R3,@TIPDSKMINMAX+1   is it >26?
+       JH   DOFL10F              yep, not TIPI
+       JMP  GETCO3            TIPI remap. Force to WIN w/TIPI Flag set
+
+; Truly floppy device now
+DOFL10F
+       MOV  @BETTERSAVER3,R3  ;TIPI just in case
+
+       MOVB @STATOP,*R0
+       MOVB @H00,@2(R1)       no error yet
+       XOP  @EIGHT,0          status, fix 2nd period if floppy volume
+       MOVB @2(R1),R0         check error byte
+       JNE  DEVERR            device error
+*
+       CLR  R0
+       MOVB @14(R1),R2        status byte
+       JLT  BADDIR
+*
+* NOW TO READ SECTOR ZERO
+*
+DOFLOP BL   @GETSEC
+       DATA 0                 so that we can auto-density
+*
+       LI   R1,PNTRS
+       LI   R2,VOLNAM
+       LI   R3,6              6 words to move (includes sectors/disk)
+DOFL00 MOV  *R1+,*R2+
+       DEC  R3
+       JNE  DOFL00
+*
+       LI   R1,DIRS          CLEAR directory table
+DIRCLR MOVB @H20,*R1
+       AI   R1,16
+       CI   R1,DIRS+2048
+       JL   DIRCLR
+*
+       MOV  @WDIR,R1          did we ask for special treatment? (0=no dirs)
+       JEQ  FDIR99            no dirs allowed!
+*
+       LI   R1,PNTRS+>14      first directory entry in VIB
+       LI   R2,DIRS           START of structure
+*
+* loop and find the dirs (3 at most)
+*
+FDIR00 MOV  @10(R1),R3        test for subdir
+       JEQ  FDIR90
+*
+       MOV  @FSTDIR,R3        7.7.96
+       JNE  HASDIR            already found first DIR
+       LI   R3,1              First one, so tell routine to
+       MOV  R3,@FSTDIR        look at first record! (hope it works)
+
+HASDIR MOV  R1,R3
+       MOV  *R3+,*R2+         copy name over
+       MOV  *R3+,*R2+
+       MOV  *R3+,*R2+
+       MOV  *R3+,*R2+
+       MOV  *R3+,*R2+
+       CLR  *R2+              clear out creation date, since
+       CLR  *R2+              floppy subdirs don't have one
+       MOV  @ONE,*R2+         length of subdir (1 sector of pointers)
+       C    @D1600,@TOTSEC
+       JHE  FDIR90
+       INC  @-2(R2)           one more for doubled sectors
+       C    @D3200,@TOTSEC
+       JHE  FDIR90
+       INCT @-2(R2)
+       C    @D6400,@TOTSEC
+       JHE  FDIR90
+       INCT @-2(R2)
+       INCT @-2(R2)
+*
+FDIR90 AI   R1,12
+       CI   R1,PNTRS+>38      last subdir checked?
+       JL   FDIR00            nope
+*
+* subs checked, now calculate free/used sectors
+*
+FDIR99 CLR  @TOTSE2
+       CLR  @SECFR2
+*
+       CLR  R2                count of free sectors
+       LI   R3,100            100 words in bitmap to check
+       LI   R4,PNTRS+>38
+*
+NXTBTS MOV  *R4+,R5           get word from bitmap
+       LI   R6,16             count for 16 bits
+NBIT1  SRL  R5,1              test this bit
+       JOC  NBIT              one...used
+       INC  R2                not used, increment count
+NBIT   DEC  R6
+       JNE  NBIT1             more bits in this word
+*
+       DEC  R3
+       JNE  NXTBTS            more words in bitmap
+*
+       C    @D1600,@TOTSEC    doubled bitmap?
+       JHE  NBIT2             no
+       SLA  R2,1              yes, double our count
+       C    @D3200,@TOTSEC
+       JHE  NBIT2
+       SLA  R2,1
+       C    @D6400,@TOTSEC
+       JHE  NBIT2
+       SLA  R2,1
+NBIT2  MOV  R2,@SECFRE
+*
+       MOV  @VOLON,R2         VOLUME command?
+       JEQ  GET000            no
+       B    @NOMORE           yes, end it now!
+*-----------------------------*
+* NOW TO GET THE DISK CATALOG *
+*-----------------------------*
+GET000 BL   @GETSEC
+       DATA 1
+*
+CURNDE EQU  1
+NXTNDE EQU  2
+NEWNDE EQU  3
+POINT  EQU  4
+*
+       LI   R1,NAMES          clear out the NAME space
+NAMCLR MOVB @H20,*R1
+       AI   R1,32
+       CI   R1,NAMES+4096
+       JL   NAMCLR
+*
+* if single filename, we need to do a binary search
+* then set things up to look like a disk with only one file on
+* it was cataloged
+*
+       MOV  @WILD,R1
+       JNE  DSK000            wildcards, read whole thing
+       CB   @H20,@WILDST
+       JEQ  DSK000            no filename specified, read whole thing
+*
+       LI   R1,SORTED
+       LI   R2,PNTRS
+DSK001 MOV  *R2+,*R1+
+       CI   R2,PNTRS+256
+       JL   DSK001
+*
+       CLR  R10               low pointer
+       LI   R9,254            high pointer
+       LI   R7,7              max interation count
+BINSR  MOV  R9,R3             get high pointer
+       A    R10,R3            add low pointer
+       SRL  R3,2              get midpoint and truncate
+       SLA  R3,1              to a word boundary...
+*
+       MOV  @SORTED(R3),@B#   current pointer
+       JEQ  CLT               null pointer
+*
+       BL   @GETSEC
+B#     DATA 0                 current sector in binary search
+*
+       MOVB @2(R1),R0
+       JNE  NFND2             bad sector error
+*
+       LI   R5,WILDST
+       LI   R6,PNTRS          sector buffer
+CNAMES C    *R5+,*R6+         test
+       JH   CGRT
+       JL   CLT
+       CI   R5,WILDST+10      equal, have we checked them all?
+       JNE  CNAMES            nope...check the rest
+       B    @FFND             yep, handle an existing file
+*
+CLT    MOV  R3,R9             this one becomes next high fencepost
+       DEC  R7                all searched?
+       JNE  BINSR             nope, continue
+       JMP  NFND              not found...
+*
+CGRT   MOV  R3,R10            this one becomes next low fencepost
+       DEC  R7                all searched?
+       JNE  BINSR             nope, continue
+*
+NFND   CLR  R0
+       B    @BADDIR
+*
+NFND2  B    @DEVERR
+*
+* file found, make it look like a single dir entry
+*
+FFND   LI   R14,SORTED        next "link"
+       CLR  @2(R14)           to fake end of linked list
+       CLR  R1                index into NAMES
+       JMP  BINOK
+
+*---------------------------------------------
+* hop here if more than one file to catalog
+*---------------------------------------------
+DSK000 LI   POINT,PNTRS
+       LI   NEWNDE,SORTED
+       CLR  @HEADER
+       CLR  @HEADER+2
+*
+SORT1  LI   CURNDE,HEADER
+       CLR  @2(NEWNDE)        zero out chain pointer
+       MOV  *POINT+,*NEWNDE   init sector number in this node
+       JEQ  SORTD             if zero, we passed the last pointer
+*
+SORT2  MOV  @2(CURNDE),NXTNDE
+       JEQ  INSERT            insert after last node
+*
+       C    *NEWNDE,*NXTNDE
+       JL   INSERT            insert after current node
+*
+*************************************************************************
+       MOV  NXTNDE,CURNDE     go to next one...not there yet
+       JMP  SORT2
+
+INSERT MOV  @2(CURNDE),@2(NEWNDE)
+       MOV  NEWNDE,@2(CURNDE)
+
+       C    *NEWNDE+,*NEWNDE+
+       CI   POINT,PNTRS+256
+       JL   SORT1
+
+SORTD  MOV  POINT,R15         .
+       SRL  R15,1             . 4 new lines added for TREE function
+       ANDI R15,>007F         .
+       MOV  R15,@FSTDIR       .
+
+******************************************************************************
+*
+       LI   R15,HEADER
+*
+SORTD2 MOV  @2(R15),R14
+       JEQ  NOMORE
+*
+       MOV  *R14,@SEC#
+*
+       MOV  R15,@SAVED1
+       MOV  R14,@SAVED2
+*
+       BL   @GETSEC
+SEC#   DATA 0
+*
+       MOV  @SAVED1,R15
+       MOV  @SAVED2,R14
+*
+       MOV  R14,R1
+       LI   R2,SORTED
+       S    R2,R1
+*
+       SLA  R1,3
+BINOK  AI   R1,NAMES
+       MOV  R1,R4             save a copy of pointer to descriptor
+       LI   R3,PNTRS
+*
+       MOV  @WILD,R2
+       JEQ  SIGH1             no wildcards to match
+*
+       BLWP @MATCH
+       DATA PNTRS,WILDST
+       JEQ  SIGH1             correct match, copy info over
+*
+       CLR  *R1               no match, zap this one
+       JMP  PAUL02            and try the next one
+*
+SIGH1  MOV  *R3+,*R1+
+       CI   R3,PNTRS+32
+       JL   SIGH1
+*
+       MOVB @17(R4),R3        test record length
+       JEQ  PAUL00
+       SRL  R3,8
+       MOV  R3,@10(R4)        short records in this file
+PAUL00 MOV  @14(R4),R1
+       MOV  R1,@18(R4)
+*
+       C    @D1600,@TOTSEC   test for big disk
+       JHE  PAUL01            small disk
+*
+       INC  R1
+       ANDI R1,>FFFE          round up file size
+       MOV  R1,@14(R4)
+       INC  @14(R4)
+       C    @D3200,@TOTSEC
+       JHE  PAUL01
+       INC  @14(R4)
+       INCT @14(R4)
+       C    @D6400,@TOTSEC
+       JHE  HD3200
+       INCT @14(R4)
+       INCT @14(R4)
+HD3200 MOV  R2,@SAVR2
+       MOV  R3,@SAVR3
+       MOV  R1,@SAVR1
+HD32   MOV  R1,R2
+       CLR  R1
+       LI   R3,4
+       C    @D6400,@TOTSEC
+       JHE  HD3201
+       SLA  R3,1
+HD3201 DIV  R3,R1
+       CI   R2,0
+       JEQ  JGS
+       INCT @14(R4)
+       MOV  @14(R4),R1
+       JMP  HD32
+JGS    MOV  @SAVR3,R3
+       MOV  @SAVR2,R2
+       MOV  @SAVR1,R1
+       DEC  @14(R4)
+PAUL01 INC  @14(R4)           allow for main FCB sector
+       SOCB @PNTRS+32,@31(R4) flags for fragmentation
+       SOCB @PNTRS+33,@31(R4) "
+       CLR  @28(R4)           extra sector length
+*
+PAUL02 MOV  @WTYPE,R5         check file type?
+       JEQ  PAUL03
+*
+       BL   @MATCHT           check for type match
+       JEQ  PAUL03            match ok
+*
+       CLR  *R4               did not match
+*
+PAUL03 MOV  R14,R15           move to next file
+       B    @SORTD2
+*
+NOMORE MOV  @GETRT,R11
+       MOV  @BRKSAV,@BREAK
+       MOV  @PABLOC,R0
+       MOV  R0,R1
+       MOVB @2(R1),R1         check error code
+       RT
+*
+GETSEC MOV  @PABLOC,R0
+       MOV  R0,R1
+       CLR  @4(R1)            buffer offset.
+       MOV  *R11+,@6(R1)      set record number
+       CLR  @10(R1)           CPU, chrcnt high
+       MOV  @ONE,@12(R1)      set chrcnt with sector count
+       MOVB @SECROP,*R0
+       XOP  @EIGHT,0
+       RT
+*
+*
+* do a winchester catalog...
+*      1) read record zero of "WDSx." to get name, size, free
+*      2) read dir  entries, move the name, creation date
+*      3) read file entries,
+*           a) set flags
+*           b) set sector count #1
+*           c) set eof offset if pgm image
+*           d) set record length
+*           e) set sector count #2 (used by pgm image)
+*           f) compress creation date
+*           g) compress update   date
+*
+WINE   B    @DEVERR
+*
+; CATMAPS:
+;   NAMES BSS 128*32
+;   DIRS  BSS 16*128
+
+DOWIN
+       LI   R1,DIRS
+DOW000 MOVB @H20,*R1          clear out dirs...
+       AI   R1,16
+       CI   R1,DIRS+2048
+       JLE  DOW000
+       LI   R1,NAMES
+DOW099 MOVB @H20,*R1
+       AI   R1,32
+       CI   R1,NAMES+4096
+       JLE  DOW099
+*
+       MOV  @PABLOC,R1
+       MOVB @15(R1),@NAMLEN   save name length so we can restore it
+       CB   @19(R1),@PERIOD   volume access?
+       JEQ  DOW010
+
+*      MOV  @TIPFLG,@TIPFLG                  12.20.2020
+*      JEQ  DOW099A                          12.20.2020
+*      B    @GET001                          12.20.2020
+
+DOW099A
+       LI   R2,5
+       JMP  DOW011
+*
+DOW010 MOV  R1,R2             cursor while scanning
+       AI   R2,20
+*
+       MOV  R1,R3             pointer to char after name...
+       AI   R3,16
+       MOVB @NAMLEN,R0
+       SRL  R0,8
+       A    R0,R3
+*
+DOW001 C    R2,R3
+       JHE  DOW002
+       CB   *R2+,@PERIOD
+       JNE  DOW001
+DOW002 S    R1,R2
+       AI   R2,-16
+DOW011 SLA  R2,8
+       MOVB R2,@15(R1)        new length, to get volume info
+*
+
+DOW520D
+       MOVB @H0D,@1(R1)       fixed,internal,input,relative
+DOW520B
+       MOVB @OPENOP,*R1       OPEN root directory
+
+       CLR  @8(R1)            use default record length
+       MOVB @H00,@10(R1)      cpu transfer
+       MOVB @H00,@11(R1)      char count used is default..
+       CLR  @12(R1)
+       MOV  R1,R0
+*
+       MOV  @BRKADR,@BREAK
+*
+       XOP  @EIGHT,0
+       MOVB @2(R1),R2
+       JNE  WINE
+*
+       CLR  R2                record number to read
+
+       BL   @GETWIN           get a dir record from winchester
+       MOVB @2(R1),R2
+       JNE  WINE
+*
+       MOVB @CLOSOP,*R1
+       MOV  R1,R0
+       XOP  @EIGHT,0          close root directory
+*
+
+DOW520A
+       LI   R3,SORTED
+       LI   R4,VOLNAM
+DOW520 MOV  *R3+,*R4+
+       CI   R4,VOLNAM+10
+       JL   DOW520
+*
+       AI   R3,4
+       MOV  *R3+,@TOTSE2
+       MOV  *R3+,@TOTSEC
+       MOV  *R3+,@SECFR2
+       MOV  *R3+,@SECFRE
+*
+       MOV  @BRKSAV,@BREAK
+*
+       MOV  @VOLON,R0
+       JEQ  GET001
+
+*      MOV  @TIPFLG,@TIPFLG                  12.19.2020
+*      JNE  GET001                           12.19.2020
+
+       B    @NOMORE
+
+
+*-----------------------------------*
+* now to read in directory entries  *
+*-----------------------------------*
+GET001
+
+       MOVB @NAMLEN,@15(R1)
+       MOVB @OPENOP,*R1       OPEN this directory
+       MOVB @H0D,@1(R1)       fixed,internal,input,relative
+       CLR  @8(R1)            use default record length
+       MOVB @H00,@10(R1)      cpu transfer
+       MOVB @H00,@11(R1)      char count used is default..
+       CLR  @12(R1)            "
+       MOV  R1,R0
+*
+       MOV  @BRKADR,@BREAK
+*
+       XOP  @EIGHT,0          open this directory
+*
+       MOVB @2(R1),R2
+       JEQ  DOW101
+
+       B    @WINERR
+*
+DOW101 MOV  @WILD,R2
+       JNE  DOW100            they want wildcards, read whole thing
+*
+       CB   @WILDST,@H20
+       JEQ  DOW100            no specific filename given, read whole thing
+*
+* time to do a binary search of file entries
+*
+;; This routine is checking for one file in the entire directory.
+;;     It does NOT try to match subdirectory names
+;
+;  For TIPI, we need to consider forcing a full catalog read to find the
+;      file, since the fenceposts are not possible. BREAD FileStatus could
+;      obtain the info but we'd need to convert to floats for directory.
+
+*      LI   R2,115                           12.20.2020 removed
+*      C    @WINNAM,@16(R1)   wds1           12.20.2020
+*      JEQ  WINTER                           12.20.2020
+*      C    @SCNAME,@16(R1)
+*      JEQ  WINTER
+
+       LI   R2,1
+WINTER MOV  R2,@FIRFIL
+*
+       MOVB @TIPFLG,@TIPFLG   find file on TIPI?
+       JNE  DOTIPCON          yep
+
+; non-TIPI
+       CLR  R13               low pointer
+       LI   R14,127           high pointer
+       LI   R15,7             max iteration count
+WINSR  MOV  R14,R2            get high pointer
+       A    R13,R2            add low pointer
+       SRL  R2,1              get midpoint
+*
+       A    @FIRFIL,R2
+*
+       BL   @GETWIN           get this file entry
+; Notice: no error trapping; DSR expects all catalog records will have
+;         an entry or be blank
+*
+       LI   R6,SORTED
+       CB   *R6,@H20          empty entry?
+       JEQ  WLT               yes, continue search
+
+       C    @SORTED+12,@D6
+       JEQ  WLT
+*
+; Compare filename to entry at *r6
+; Depending on whether it is alphabetically higher/lower, new fencepost
+; is calculated. Binary search, i.e., reduce by power of 2 each iteration
+       LI   R5,WILDST
+WNAMES C    *R5+,*R6+         test
+       JH   WGT
+       JL   WLT
+       CI   R5,WILDST+10      equal, have we checked them all?
+       JNE  WNAMES            nope...check the rest
+       JMP  WFFND             yep, handle an existing file
+*
+; Fencepost= R14=R14+R13/2
+WLT    A    R13,R14           calculate high fencepost
+       SRL  R14,1             "
+       DEC  R15               all searched?
+       JNE  WINSR             nope, continue
+       JMP  WNFND             not found...
+*
+; Fencpose R13=R14+R14/2
+WGT    A    R14,R13           this one becomes next low fencepost
+       SRL  R13,1             "
+       DEC  R15               all searched? (max iteration=7)
+       JNE  WINSR             nope, continue
+*
+WNFND  MOVB @CLOSOP,*R1
+       MOV  R1,R0
+       XOP  @EIGHT,0          close this directory
+*
+       MOV  @BRKSAV,@BREAK
+*
+       CLR  R0
+       B    @BADDIR           and report not found error
+*
+* file found, make it look like a single dir entry
+*
+; TIPI single file jumps here too; what is FIRFIL/R3?
+;   Is R3 going to trip us up?
+;
+WFFND  MOV  @FIRFIL,R3
+       LI   R2,242            ending pointed
+       LI   R0,SORTED
+*      JMP  WINFND            winchester file found
+       B    @WINFND           3.27.2022 winchester file found
+
+;=======================
+; TIPI sequential read; find single file
+; 12.26.2020
+DOTIPCON
+       LI   R15,127+114       max iteration count
+
+TNAMES
+       BL   @GETWIN
+
+       LI   R6,SORTED         This is the file from device
+       CB   *R6,@H20          empty entry?
+       JEQ  WNFND             yes, END. No more entries on TIPI
+       C    @SORTED+12,@D6    dir?
+       JEQ  TNAMEN            yes, skip
+
+       LI   R5,WILDST         user entered this filename
+TNAMET C    *R5+,*R6+         test
+       JH   TNAMEN            If wildst>sorted, keep checking
+       JL   WNFND             if wilst<sorted, stop checking. NOT found.
+       CI   R5,WILDST+10      equal, have we checked them all?
+       JNE  TNAMET            nope...check the rest
+       MOV  R2,@FIRFIL   ;$$$$not sure if this is needed
+       JMP  WFFND             yep, handle an existing file
+
+TNAMEN INC  R2
+       DEC  R15               any more iterations?
+       JNE  TNAMES            yes
+       JMP  WNFND             no, not found
+
+*
+********************************************************************************
+* Start here if
+*           (1) Wildcard "*" specified     \ ie, read all files/dirs
+*           (2) Nothing specified          /
+*
+* DIRECTORIES come FIRST:
+*
+DOW100 LI   R2,1              start record number to read
+DOW200 MOV  R2,@FIRFIL
+*
+DOW020
+
+*      MOV  @TIPFLG,@TIPFLG                  12.20.2020
+*      JNE  DOW130A                          12.20.2020
+
+       BL   @GETWIN           get a dir record from winchester
+*
+; 12.26tt
+;      This is problematic. If we encounter a SPACE record while catalog
+;      a TIPI, that means we have exhausted all entries. There is no next
+;      record or file, so DW030 will generate read-past-EOF error.
+;      So we modify DOW030 to test for TIPI if we encounter blank rec
+;
+       LI   R0,SORTED
+       CB   *R0,@H20
+       JEQ  DOW030            done with dir entries, now for files
+*
+       C    @SORTED+12,@D6    is it a directory?
+       JNE  DOW130            nope, time to check out the file entries
+*
+
+       C    @DIRFLG,@D115     3.27.2022
+       JNE  WLT1A             3.27.2022
+       SETO @SUBFLG           3.27.2022 Flag to give notice maximum dir listing
+       INC  R2                3.27.2022
+       JMP  DOW020            3.27.2022
+
+
+WLT1A
+       MOV  @FSTDIR,R3        is this the first directory entry found?
+       JNE  DOW024            nope
+*
+       MOV  R2,@FSTDIR        point to first DIR, which would be FSTDIR=1
+*
+DOW024 MOV  R2,R3
+       S    @FIRFIL,R3
+       SLA  R3,4
+       AI   R3,DIRS           this is the pointer to dir entry
+*
+       ABS  @WILD
+       JEQ  DOW021            no wildcard string to match
+*
+       BLWP @MATCH
+       DATA SORTED,WILDST
+       JEQ  DOW021            matched it
+*
+DOW022 CLR  *R3               kill this entry, didn't match
+       JMP  DOW110            and go to try the next one
+*
+DOW021 ABS  @WDIR             are dirs on?
+       JEQ  DOW022            dirs aren't on
+*
+DOW023 MOVB *R0+,*R3+
+       CI   R0,SORTED+10
+       JL  DOW023             move the rest of the name over
+*
+       AI   R0,12             point at creation date
+       BL   @SMASH            smash date/time
+       MOV  @H0002,*R3        number of sectors in dir entry
+*
+DOW110 INC  R2                go to next entry
+       INC  @DIRFLG           3.27.2022
+       JMP  DOW020            continue until no more directory entries
+*
+; This is special case for reaching max DIRs or blank rec during TIPI read
+DOW030
+*      MOV  @TIPFLG,@TIPFLG                  12.20.2020
+*      JNE  DOW130A                          12.20.2020
+       MOV  @TIPFLG,@TIPFLG   ;12.26, if space, no files on TIPI
+       JNE  DOW050            ;       similar to reaching 115 on hfdc/scsi
+
+       CI   R2,115            This means DIR routine got to 115 and read a space
+       JH   DOW050            therefore ...no more file entries
+; 12-26-2020tt
+; IF R2<115, we must trap TIPI so that the relative record number
+; is not inremented; in TIPI, the files entries follow immediately in the
+;      next record, unlike the sector-driven catalog.
+*
+DOW130A
+*      MOV  @TIPFLG,@TIPFLG                  12.20.2020
+*      JEQ  DOW130B                          12.20.2020
+*      LI   R2,DIRS                          12.20.2020
+*      MOVB @H20,*R2                         12.20.2020
+*      CLR  @FSTDIR                          12.20.2020
+*      LI   R2,1                             12.20.2020
+*      JMP  DOW130                           12.20.2020
+
+DOW130B
+       MOV  @TIPFLG,@TIPFLG   ;12-26-2020tt, skip record set TT
+       JNE  DOW130            ;  iff TIPI
+
+; Is this really WD1002? I think this means hfdc/scsi now
+       LI   R2,115            1st file entry on wd1002
+
+DOW130 MOV  R2,@FIRFIL
+*
+DOW031
+
+       BL   @GETWIN
+*
+       LI   R0,SORTED
+       CB   *R0,@H20
+       JEQ  DOW050            no more file entries
+
+*      MOV  @TIPFLG,@TIPFLG   12.19.2020
+*      JNE  WINFND1           12.19.2020
+
+       C    @SORTED+12,@D6
+       JEQ  DOW200
+*
+WINFND1
+
+       MOV  R2,R3
+WINFND S    @FIRFIL,R3
+       SLA  R3,5
+       AI   R3,NAMES
+       MOV  R3,@SAVPNT
+       MOVB @H00,@31(R3)      fragmentation flag (CAN'T SHOW FRAGMENT ON HFDC)
+       CLR  @28(R3)           extra sector length,lv2 & lv3
+*                             shucks, can't do a file larger than 16MBytes!
+*                             (who the hell is gonna notice?)
+       ABS  @WILD
+       JEQ  DOW032            jump if no match string, or a definite filename
+*
+       BLWP @MATCH
+       DATA SORTED,WILDST
+       JEQ  DOW032
+*
+       CLR  *R3               entry didn't match, report it blank
+       JMP  DOW041            go to next entry
+*
+DOW032 MOVB *R0+,*R3+
+       CI   R0,SORTED+10
+       JL   DOW032            move rest of file name...
+*
+       INCT R0
+       MOV  *R0+,R4           get file type
+       MOVB @TYPES(R4),@2(R3) put it into fake FCB section
+       INCT R0
+       MOV  *R0+,@4(R3)       number of sectors w/FCB
+*
+       MOV  *R0+,R6           msw of pgm byte count
+       MOV  *R0+,R5           get reclen/pgm byte count lsw
+       ABS  R4
+       CI   R4,5
+       JL   DOW033            it's a data file
+*
+       MOVB R6,@18(R3)
+       MOVB R5,R6
+       SWPB R6                sector count
+       SWPB R5
+       MOVB R5,@6(R3)         eof offset
+       JEQ  DOW034
+       INC  R6
+       JNE  DOW034
+       AB   @H01,@18(R3)
+DOW034 MOV  R6,@8(R3)         number of data sectors
+       JMP  DOW040            now for dates...
+*
+DOW033 MOV  R5,*R3            record length
+*
+DOW040 AI   R3,10             move to creation date
+       BL   @SMASH            do creation date
+       BL   @SMASH            do update   date
+*
+DOW041 MOV  @WTYPE,R4
+       JEQ  DOW042
+*
+       MOV  @SAVPNT,R4
+       BL   @MATCHT           check for type match
+       JEQ  DOW042            they matched, ok.
+*
+       CLR  *R4               clear out this file
+*
+DOW042 INC  R2
+       CI   R2,242
+       JHE  DOW050
+*
+; 12.27.2020
+; The above test is for all legacy controllers (rec 115+117 files=242)
+;      The TIPI allows relative records in the catalog but one cannot exceed
+;      total record count. So GETCATS record (R2) is the actual record#,
+;      so 242 should never be reached. Instead, it falls to this boundary
+;      of NAMES+4096 which is incorrect; the proper boundary is one entry
+;      less and for 127 files/dir, should be two entries less.
+;;     CI   R3,NAMES+4096    ;incorrect boundary test! TT
+       CI   R3,NAMES+4096-64  ; -32 for 128 files, -64 for 127.
+
+       JL   DOW031            more files to get info for
+
+       ABS  @TIPFLG
+       JEQ  DOW050            12.27, can we flag >127 files for DIRS?
+       SETO @TIPEXC           Let's try it.
+
+*
+DOW050 MOVB @CLOSOP,*R1
+       MOV  R1,R0
+       XOP  @EIGHT,0          close this directory
+*
+       MOV  @BRKSAV,@BREAK
+*
+       B    @NOMORE           just for testing...
+WINERR
+       B    @DEVERR
+*
+* get a dir entry from winchester into PNTRS
+* convert it into good info at SORTED
+*
+GETWIN
+       MOVB @READOP,*R1
+       MOV  R2,@6(R1)
+       MOVB @H00,@10(R1)      cpu transfer
+       MOV  R1,R0
+       XOP  @EIGHT,0          read the record
+
+       MOVB @2(R1),R0
+       JNE  WINERR            bad read
+*
+GUT200
+       LI   R3,PNTRS
+       LI   R4,SORTED
+       MOVB *R3+,R5
+       SRL  R5,8              char count
+GET200 MOV  R5,R5
+       JNE  GET221
+       MOVB @H20,*R4+
+       JMP  GET222
+*
+GET221 MOVB *R3+,*R4+
+       DEC  R5
+GET222 CI   R4,SORTED+10
+       JLE  GET200            copy name over
+*
+       LI   R0,15             15 numbers to convert
+*
+GET201 CLR  @SGNNEG           positive number
+       INC  R3                skip length of floating number
+       MOV  R3,R10            save pointer to this float
+       MOVB *R3+,R5           get exponent
+       SRA  R5,8
+       JGT  GET204
+       JEQ  GET290
+*
+       MOVB *R3,R5
+       SWPB R5
+       NEG  R5
+       SWPB R5
+       MOVB R5,*R3            put back the corrected byte
+       SB   R5,R5             zero out the high byte
+       SETO @SGNNEG
+*
+GET204 AI   R5,->40           now r5 = 0,1,2,3
+       JLT  GET290            convert is as a zero
+*
+       CI   R5,3
+       JH   GET290            number too large---convert as zero
+*
+       LI   R7,NUMBER         4 byte number
+       LI   R6,3
+GET205 C    R6,R5
+       JLE  GET210
+       MOVB @H00,*R7+         fill leading zero bytes
+       DEC  R6
+       JMP  GET205
+*
+GET210 MOVB *R3+,*R7+
+       DEC  R5
+       JOC  GET210
+*
+       MOVB @NUMBER,R6
+       SRL  R6,8
+       MPY  @D100,R6
+       MOVB @NUMBER+1,R8
+       SRL  R8,8
+       A    R8,R7             r7 now has high 4 digits of result
+       MOV  R7,R6
+       MPY  @D10000,R6        r6,r7 now have result w/o low 4 digits
+*
+       MOVB @NUMBER+2,R8
+       SRL  R8,8
+       MPY  @D100,R8
+       MOVB @NUMBER+3,R8
+       SRL  R8,8
+       A    R8,R9
+*
+       A    R9,R7
+       JNC  GET212
+       INC  R6
+       JMP  GET212
+*
+GET290 CLR  R6                return a zero if number to small/large
+       CLR  R7
+*
+GET212 MOV  @SGNNEG,R3
+       JEQ  GET213
+*
+       MOV  R6,R6
+       JNE  GET290
+       NEG  R7
+*
+GET213 MOV  R6,*R4+
+       MOV  R7,*R4+
+       MOV  R10,R3
+       AI   R3,8              point to next floating point number
+       DEC  R0
+       JNE  GET201
+*
+       RT
+*
+NUMBER DATA 0,0
+*
+* routine to smash time/date into compressed format
+* from floating point
+*   r0 ++++++  -> r3 ++
+*
+SMASH  INCT R0                             3.8.2021, fix timestamp!
+       MOV  *R0+,R4           seconds      0000000000ssssss
+       ANDI R4,>FFFE                        must mask seconds/2 first!
+       SRC  R4,6                           ssssss0000000000
+       INCT R0
+       SOC  *R0+,R4           minutes      ssssss0000mmmmmm
+       SRC  R4,6                           mmmmmmssssss0000
+       INCT R0
+       SOC  *R0+,R4           hours        mmmmmmssssshhhhh
+       SRC  R4,5                           hhhhhmmmmmmsssss
+       MOV  R4,*R3+           move time...
+*
+       INCT R0
+       MOV  *R0+,R4           days
+       SRC  R4,5
+       INCT R0
+       SOC  *R0+,R4           months
+       SRC  R4,4
+       CLR  R5
+       INCT R0
+       MOV  *R0+,R6
+       DIV  @D100,R5
+       SOC  R6,R4             years sans century
+       SRC  R4,7
+       MOV  R4,*R3+
+       RT
+*
+* routine to see if filetypes match the user specified filetypes
+*
+*
+MATCHT CLR  R5
+       MOVB @12(R4),R5        get type
+       COC  @WONES,R5
+       JNE  MTCH99
+       CZC  @WZEROS,R5
+       JNE  MTCH99
+       MOV  @WRECLN,R5
+       JEQ  MTCH99
+       C    R5,@10(R4)
+MTCH99 RT
+*
+
+       BYTE >28               protected emulate
+       BYTE >00               directory
+       BYTE >09               protected pgm
+       BYTE >8A               protected i/v
+       BYTE >0A               protected i/f
+       BYTE >88               protected d/v
+       BYTE >08               protected d/f
+TYPES  BYTE >00               non-existent
+       BYTE >00               d/f
+       BYTE >80               d/v
+       BYTE >02               i/f
+       BYTE >82               i/v
+       BYTE >01               pgm
+       BYTE >40               directory for TIPI   needed in CLI\DIRS
+*       BYTE >00               directory
+       BYTE >20               emulate
+       BYTE 0                 filler byte
+*
+BRKSAV DATA 0
+BRKADR DATA $+2
+       MOV  @PABLOC,R0
+       MOVB @CLOSOP,*R0
+       XOP  @EIGHT,0
+       MOV  @BRKSAV,R0
+       MOV  R0,@BREAK
+       B    *R0               continue control-C processing
+*
+TIPFLG DATA 0            12.19.2020
+TIPEXC DATA 0            ;exceed >127 files, tipi only
+DIRFLG DATA 0            3/30/22 Tracks number of directories for TIPI
+SUBFLG DATA 0            3/30/22 Flag maximum TIPI Directories encountered
+D115   DATA 115          3/30/22 Maximum Directory + 1
+
+PABLOC DATA 0
+GETRT  DATA 0
+VOLON  DATA 0
+ONE    DATA 1
+H0002  DATA 2
+VIDEO
+D6     DATA 6
+SEVEN  DATA 7
+EIGHT  DATA 8
+D100   DATA 100
+D1600  DATA 1600
+D3200  DATA 3200
+D6400  DATA 6400
+D10000 DATA 10000
+FIRFIL DATA 0
+WINNAM DATA 'WD'
+WINNA2 DATA 'HD'
+SPACES DATA '  '
+SCNAME DATA 'SC'
+TIPNAM DATA 'TI'         12.17.2020
+*URINAM DATA 'UR'         3.14.2021
+NOWILD DATA 0
+OPENOP BYTE >00
+CLOSOP BYTE >01
+READOP BYTE >02
+STATOP BYTE >09
+SECROP BYTE >0A
+H00    BYTE >00
+H0D    BYTE >0D
+H20    BYTE >20
+ASTER  BYTE '*'
+QUEST  BYTE '?'
+PERIOD TEXT '.'
+BQUOTE TEXT '`'
+H01    BYTE >01
+H02    BYTE >02
+H04    BYTE >04
+H05    BYTE >05
+H07    BYTE >07
+H80    BYTE >80
+H85    BYTE >85
+
+D10    DATA 10
+*
+FSTDIR DATA 0
+WTYPE  DATA 0
+WDIR   DATA 0
+WRECLN DATA 0
+WONES  DATA 0
+WZEROS DATA 0
+SAVPNT DATA 0
+NAMLEN BYTE 0
+SAVED1 DATA 0
+SAVED2 DATA 0
+SGNNEG DATA 0
+SAVR1  DATA 0
+SAVR2  DATA 0
+SAVR3  DATA 0
+*
+       COPY "\MDOS\CLI\CATMAPS"
+*
+       LIST
+       END
+*

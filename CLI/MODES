@@ -1,0 +1,555 @@
+* mdos.cli.modes
+*
+* Last Modified 01/02/94 by Timothy A Tesch
+*
+* New modes:
+*
+*      MODE 60  - Graphics mode 6
+*      MODE 90  - Text mode II, 80 columns x 26.5 rows
+*
+*    - got rid of some dependencies on EMIT; use XOPS instead
+*    - added a configuration failure message
+*    - backdrop problem solved - using XOP >0C for backdrop color
+;
+; 3.20.2021 Added 38,400 speed to RS232 MODE statement
+;
+       DEF  MODE
+       REF  UWIDTH,EMIT1
+*
+MODE   MOV  R11,@MODRET
+       MOVB *R0,R1
+       SRL  R1,8
+*
+       CLR  @TATFLG           CLEAR THE 26 ROW FLAG
+
+       CI   R1,','
+       JEQ  MODE00            justify and test parameters
+*
+       LI   R2,39
+       CLR  R3
+       CI   R1,'4'
+       JEQ  MODE01
+*
+       LI   R3,1         80 COL x 24 LINES
+       LI   R2,79        SET COLUMN WIDTH
+       CI   R1,'8'
+       JEQ  MODE01
+
+       INCT @TATFLG      SET FOR 26 ROW MODE
+       LI   R3,8         GRAPHICS MODE 6
+       CI   R1,'6'
+       JEQ  MODE01
+
+       LI   R3,10        TEXT MODE 2, 26.5 rows
+       CI   R1,'9'
+       JNE  MODE90
+*
+MODE01 INC  R0
+       CB   *R0+,@H30
+       JNE  MODE99            syntax error, no trailing zero
+       CB   *R0,@COMMA
+       JEQ  MODE02
+       CB   *R0,@SPACE
+       JEQ  MODE02
+       CB   *R0,@NIL
+       JNE  MODE99            syntax error
+*
+MODE02 MOV  R2,@UWIDTH
+
+       LI   R0,>29            SET COLORS <BEFORE> SETTING VIDEO MODE!!
+       MOV  @FCOLOR,R1
+       XOP  @SIX,0
+       LI   R0,>0C            SET BORDER COLOR TO BACKGROUND
+       MOVB @BCOLOR,R1
+       SRL  R1,8
+       XOP  @SIX,0
+
+       CLR  R0                set video mode opcode
+       CLR  R2                backdrop unknown
+       MOV  R3,R1             screen mode flags
+       XOP  @SIX,0            DO IT
+
+       LI   R0,>25            set margins
+       CLR  R1
+       CLR  R2
+       LI   R3,23
+       A    @TATFLG,R3        0 IF 24 COL, 2 IF 26
+       MOV  @UWIDTH,R4
+       XOP  @SIX,0            set margins
+MODE00 JMP  MODEME            SET COLORS AND BACKDROP, RETURN
+*
+* check for color changes
+*
+MODE90 ANDI R1,>005F
+       LI   R2,FCOLOR
+       CI   R1,'F'
+       JEQ  MODE91
+       LI   R2,BCOLOR
+       CI   R1,'B'
+       JNE  MODE99
+*
+MODE91 INC  R0
+       MOVB *R0+,R1
+       SRL  R1,8
+*
+       CI   R1,'1'
+       JNE  MODE94
+*
+       MOVB *R0,R3
+       SRL  R3,8
+       CI   R3,'0'
+       JL   MODE94
+       CI   R3,'6'
+       JH   MODE94
+       ANDI R3,>000F
+       AI   R3,9
+       MOV  R3,R1
+       JMP  MODE95
+*
+MODE94 CI   R1,'9'
+       JH   MOD999
+       CI   R1,'1'
+       JL   MOD999
+       ANDI R1,>000F
+       DEC  R1
+*
+* OPCODE >29 is setcolor
+* R1h - foreground
+* R1l - background
+*
+MODE95 SLA  R1,8
+       MOVB R1,*R2
+MODEME LI   R0,>29            set color xop
+       MOV  @FCOLOR,R1        set R1 for the XOP and
+       XOP  @SIX,0            do it
+MODE98 MOV  @MODRET,R11
+       RT
+
+       EVEN
+FCOLOR BYTE >0F
+BCOLOR BYTE >04
+       EVEN
+*--------
+* here, do mode for pio/x, rs232/x
+*
+MODE99 MOV  R0,R1             do nothing for now
+       LI   R0,8              parse opcode!
+       LI   R2,PABLEN
+       CLR  R3
+       MOVB @MAXLEN,*R2
+       XOP  @NINE,0
+       JEQ  MOD100
+
+MOD999 BL   @MESG
+       DATA MFAIL1
+       MOV  @MODRET,R11       syntax error, bag out
+       RT
+*
+MOD100 C    @PABNAM,@RSNAME   rs232 port?
+       JNE  MOD201            yes
+       B    @RSP000
+*
+MOD201 C    @PABNAM,@PIONAM
+       JNE  MOD999
+*
+       CB   @PABLEN,@H05      proper PIO port?
+       JNE  MOD999            syntax error
+*
+       CB   *R0,@COLON
+       JNE  MOD101
+       INC  R0
+       CB   *R0,@EQUALS
+       JNE  MOD110            just a ":"
+       JMP  MOD120            it was ":="
+*
+MOD101 CB   *R0,@EQUALS
+       JNE  MOD999            not even an equals
+*
+* process port re-assignment
+*
+MOD120 INC  R0
+       MOV  R0,R1
+       LI   R0,8
+       LI   R2,OUTLEN
+       MOVB @MAXLEN,*R2
+       CLR  R3
+       XOP  @NINE,0
+       JNE  MOD999            invalid name to assign port to
+*
+       C    @OUTNAM,@RSNAME
+       JNE  MOD999
+       LI   R2,4
+       CB   @PABNAM+4,@CHR1
+       JEQ  MOD121
+       LI   R2,10
+MOD121 MOVB @OUTNAM+6,R1
+       SRL  R1,7
+       ANDI R1,>0006
+       MOV  @RSPORT(R1),R1    8,0,2,6
+*
+       BL   @MODCHG           change the assignment
+*
+* now to display message to the loser about port reassignment
+*
+       BL   @DNAME
+       DATA PABLEN
+       BL   @MESG
+       DATA REASGN
+       BL   @DNAME
+       DATA OUTLEN
+       BL   @MESG
+       DATA CRLF
+       MOV  @MODRET,R11
+       RT
+*
+* take two parameters from after the "PIO" name and use them
+* for chars/line,line spacing or for redirection cancel!
+*
+MOD110 MOV  R0,R1
+       CB   @1(R1),@COMMA
+       JNE  MOD130            it's not a redirection cancel
+       LI   R2,4
+       CB   @PABNAM+4,@CHR1
+       JEQ  MOD111
+       LI   R2,10
+MOD111 MOV  R2,R1
+       BL   @MODCHG
+       BL   @DNAME
+       DATA PABLEN
+       BL   @MESG
+       DATA CANRED
+       MOV  @MODRET,R11
+       RT
+*
+* fetch two numeric parameters
+*
+MOD130 MOV  R0,R9
+       CB   *R0,@COMMA
+       JEQ  MOD150            no first parameter
+*
+       CB   *R0,@CHR8
+       JNE  MOD135
+       INC  R0
+       CB   *R0+,@CHR0
+*      JNE  MOD199            01.01.94  TAT
+       JNE  MF199             if we had an 8, but no 0, ERROR.
+*
+       MOV  @ESC80,@PAB+4     buffer address
+       JMP  MOD136
+*
+MOD135 CB   *R0+,@CHR1        132 cpi
+       JNE  MOD199
+       CB   *R0+,@CHR3
+       JNE  MOD199
+       CB   *R0+,@CHR2
+*      JNE  MOD199            01.01.94 if it fails here, there was an ERROR
+       JNE  MF199             since we needed 132
+
+       MOV  @ESC132,@PAB+4    buffer address
+MOD136 MOV  R0,R10
+       MOVB @WRTCOD,@PAB
+       CLR  @PAB+2
+       MOV  @H0002,@PAB+8
+       CLR  @PAB+10
+       MOV  @H0002,@PAB+12
+       MOVB @H00,@PAB+14
+       LI   R0,PAB
+       XOP  @EIGHT,0
+       MOVB @PAB+2,R1
+       JNE  MOD137            width didn't get set!
+*
+       BL   @DNAME
+       DATA PABLEN
+       BL   @MESG
+       DATA WIDSET
+       MOV  R9,R1
+       LI   R2,2
+       CB   *R1,@CHR1
+       JNE  MOD138
+       INC  R2
+MOD138 MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  MOD138
+       BL   @MESG
+       DATA CRLF
+*
+MOD137 MOV  R10,R0
+MOD150 CB   *R0+,@COMMA
+       JNE  MOD199       put back in - not an error! 01.01.94 TAT
+*
+       LI   R2,ESC8
+       CB   *R0,@CHR8         8 lpi?
+       JEQ  MOD151            yes
+       LI   R2,ESC6           no
+MOD151 MOV  R2,@PAB+4
+       MOVB @WRTCOD,@PAB
+       CLR  @PAB+2
+       MOV  @H0002,@PAB+8
+       CLR  @PAB+10
+       MOV  @H0002,@PAB+12
+       MOVB @H00,@PAB+14
+       LI   R0,PAB
+       XOP  @EIGHT,0
+       MOVB @PAB+2,R1
+       JNE  MOD199            width didn't get set!
+*
+       BL   @MESG
+       DATA LPISET
+*
+MOD199 MOV  @MODRET,R11
+       RT
+MF199  B    @MOD999
+
+*
+RSP000 CB   *R0+,@COLON
+       JNE  MOD199
+*
+       LI   R2,SCAN
+RSP001 MOV  *R2+,R3
+RSP002 CB   *R0,@COMMA
+       JEQ  NXTPAR
+       CB   *R0,@NIL
+       JEQ  NXTPAR
+       CB   *R0,@SPACE
+       JEQ  NXTPAR
+       CB   *R0,@SEMI
+       JEQ  NXTPAR
+       CB   *R0,@SLASH
+       JEQ  NXTPAR
+*
+RSP003 MOV  R3,R4
+       INCT R4
+       MOVB *R4+,R5
+       SRL  R5,8
+       MOV  R0,R6
+RSP004 CB   *R6+,*R4+
+       JNE  NXTONE
+       DEC  R5
+       JNE  RSP004
+       MOV  R6,R0             points to next char to parse
+
+NXTPAR INC  R0
+       MOV  R3,@-10(R2)       put into one of four DATA at PORTS
+       CI   R2,SCAN+8
+       JL   RSP001            more parameters to check for
+*
+* all parameters scanned o.k., now to set port
+*
+       LI   R3,PABNAM+7
+       CLR  R2
+SET000 MOV  @DESC(R2),R4
+       MOVB *R4+,*R3+         SET UP .BA=, .PA=, .DA= STRING
+       MOVB *R4+,*R3+
+       MOVB *R4+,*R3+
+       MOVB *R4+,*R3+
+       MOV  @PORTS(R2),R4     PARM COMPILED EARLIER
+       INCT R4                SKIP POINTER TO NEXT ENTRY IN TABLE
+       MOVB *R4+,R5           GET LENGTH BYTE
+       SRL  R5,8              MAKE IT A WORD
+SET001 MOVB *R4+,*R3+         PUT THE VALUES INTO OUR STRING
+       DEC  R5                DONE?
+       JNE  SET001            NO, GET ANOTHR BYTE
+*
+       INCT R2                SET ALL THREE IN SUCCESION
+       CI   R2,6              DONE?
+       JL   SET000            NO, SET THE NEXT PARM
+*
+       MOV  @PORTS(R2),R4
+       MOV  *R4,*R4           test if two stopbits
+       JNE  SET002
+       MOVB @PERIOD,*R3+
+       MOVB @CHRT,*R3+
+       MOVB @CHRW,*R3+
+SET002 LI   R4,PABNAM
+       S    R4,R3
+       SLA  R3,8
+       MOVB R3,@PABLEN        new length of name
+*
+       MOV  @H0080,@PAB       open opcode
+       CLR  @PAB+2
+       LI   R0,PAB
+       XOP  @EIGHT,0          open port with parse flag on
+       MOV  @H0002,@PAB
+       MOVB @PAB+2,R1
+       JEQ  REPORT            01.01.94 TAT  set ok, report characteristics
+       B    @MOD999           01.01.94 TAT  failed, so tell 'em
+
+*      JNE  RSEXIT            set failed...don't report port characteristics
+*      JMP  REPORT
+*
+NXTONE MOV  *R3,R3
+       JNE  RSP003            try next parameter
+       B    @MOD999           01.01.94 TAT if none left, we failed...
+*      JMP  RSEXIT            01.01.94 TAT
+*
+REPORT MOVB @H07,@PABLEN
+       BL   @DNAME
+       DATA PABLEN
+       BL   @MESG
+       DATA REP1
+*
+REPOR2 LI   R3,PORTS
+REPOR3 MOV  *R3+,R1
+       INCT R1
+       BL   @DNAME#
+       CI   R3,PORTS+8
+       JHE  REPOR4
+       LI   R0,', '
+       BLWP @EMIT1
+       JMP  REPOR3
+*
+REPOR4 BL   @MESG
+       DATA CRLF
+*
+RSEXIT MOV  @MODRET,R11
+       RT
+*
+* change the assignment buried in the rs232 code
+*
+MODCHG MOV  @>F114,@MAPSAV
+       CLR  @>F114            system zero page
+       MOVB @>8441,@>F115     dsr page 1
+       MOV  @>A016,R3         address of low-level map table
+       MOV  R3,R4
+       SRL  R3,13
+       ANDI R4,>1FFF
+       A    R2,R4             index into table
+       MOVB @>8440(R3),@>F115 page with the data table on it
+       MOV  R1,@>A000(R4)     change the table!
+       MOV  @MAPSAV,@>F114
+       RT
+*
+DNAME  MOV  *R11+,R1
+DNAME# MOVB *R1+,R2
+       SRL  R2,8
+DNAME2 MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  DNAME2
+MESGR  RT
+*
+MESG   MOV  *R11+,R1
+MESG2  MOVB *R1+,R0
+       JEQ  MESGR
+       BLWP @EMIT1
+       JMP  MESG2
+*
+PAB    DATA >0002,0,0,0
+       DATA 0,0,0
+       BYTE 0
+PABLEN BYTE 0
+PABNAM BSS  40
+       EVEN
+       BYTE 0
+OUTLEN BYTE 0
+OUTNAM BSS  8
+*
+
+CRLF   BYTE >0D,>0A,0
+MFAIL1 BYTE 13,10
+       TEXT 'Error: MODE failure!'
+       BYTE 13,10,10,0
+
+REASGN TEXT ': redirected to '
+       BYTE 0
+CANRED TEXT ': assigned to default port'
+       BYTE >0D,>0A,0
+WIDSET TEXT ': set for '
+       BYTE 0
+LPISET TEXT 'Printer lines per inch set'
+       BYTE >0D,>0A,0
+REP1   BYTE ':',' ',0
+*
+PORTS  DATA 0,0,0,0           port parameters compiled by scan
+SCAN   DATA V1,V2,V3,V4
+*
+V1     DATA V10
+       BYTE 4
+       TEXT '9600'
+V10    DATA V384
+       BYTE 5
+       TEXT '19200'
+V384   DATA V11          3.20.2021
+       BYTE 5
+       TEXT '38400'
+V11    DATA V12
+       BYTE 3
+       TEXT '110'
+V12    DATA V13
+       BYTE 3
+       TEXT '300'
+V13    DATA V14
+       BYTE 3
+       TEXT '600'
+V14    DATA V15
+       BYTE 4
+       TEXT '1200'
+V15    DATA V16
+       BYTE 4
+       TEXT '2400'
+V16    DATA 0
+       BYTE 4
+       TEXT '4800'
+*
+V2     DATA V20
+       BYTE 1,'N'
+V20    DATA V21
+       BYTE 1,'O'
+V21    DATA 0
+       BYTE 1,'E'
+*
+V3     DATA V30
+       BYTE 1,'8'
+V30    DATA 0
+       BYTE 1,'7'
+*
+V4     DATA V40
+       BYTE 1,'1'
+V40    DATA 0
+       BYTE 1,'2'
+*
+DESC   DATA PA1,PA2,PA3
+PA1    TEXT '.BA='
+PA2    TEXT '.PA='
+PA3    TEXT '.DA='
+*
+MAPSAV DATA 0
+MODRET DATA 0
+RSNAME DATA 'RS'
+PIONAM DATA 'PI'
+H0002  DATA >0002
+H0080  DATA >0080
+SIX    DATA 6
+EIGHT  DATA 8
+NINE   DATA 9
+H00
+NIL    BYTE 0
+H05    BYTE >05
+H07    BYTE >07
+MAXLEN BYTE 7                 "RS232/X" is max!
+COMMA  BYTE ','
+COLON  BYTE ':'
+CHR0   BYTE '0'
+CHR1   BYTE '1'
+CHR2   BYTE '2'
+CHR3   BYTE '3'
+CHR8   BYTE '8'
+PERIOD BYTE '.'
+CHRT   BYTE 'T'
+CHRW   BYTE 'W'
+SEMI   BYTE ';'
+SLASH  BYTE '/'
+WRTCOD BYTE >03
+EQUALS BYTE '='
+SPACE  BYTE ' '
+H30    BYTE '0'
+RSPORT DATA 8,0,2,6
+ESC80  DATA $+2,>1200
+ESC132 DATA $+2,>0F00
+ESC6   DATA >1B32
+ESC8   DATA >1B30
+TATFLG DATA 0
+*
+       END
+*

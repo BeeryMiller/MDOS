@@ -1,0 +1,1650 @@
+* test if OPEN APPEND with fixed type file (not allowed)
+OPEN   COC  @H0006,R6         append?
+       JNE  LOAD              no
+       CZC  @H0010,R6         yes, so is it fixed?
+       JNE  LOAD              no
+BAD022 LI   R0,>4000          illegal open mode
+RES0   B    @BADOP
+*
+* FIRST CHECK TO SEE IF PATH NAME ALREADY OPEN
+BREAD
+BWRITE
+PROTCT
+RENAME
+LOAD
+SAVE
+       CI   R2,WBUFEN     TEST IF FOUND
+       JNE  BAD022        BRANCH IF FILE ALREADY OPEN
+* NOW ZERO OUT FILE NAME BUFFER
+ISNOPN CLR  @DIRAUN           LOCATION OF CURRENT DIR ON DISK
+       CLR  @ANDIR            LOCATION OF PARENT DIR ON DISK
+       MOV  R3,R5
+       CLR  *R5+              ZERO OUT: USED BUFFER, DRIVE NUM
+       CLR  *R5+              ZERO OUT: FDR AU NUMBER
+       CLR  *R5+              ZERO OUT: DDR AU NUMBER
+       CLR  *R5+              ZERO OUT: MID AND LSB WHERE DATA POINTER IS
+       CLR  *R5+              ZERO OUT: SCINAU FDR,DATA AND LOCGICAL REC OFF
+       CLR  *R5+              ZERO OUT: MSB WHERE DAT POINTER IS,MSB SECTOR ALLC
+       CLR  *R5+       ZERO OUT: HIGHEST SECTOR USED IN FIXED/VARIABLE (MID+LSB)
+       CLR  *R5+             ZERO OUT: MSB USED IN VARIABLEL,HIGHEST BYTE IN SEC
+       CLR  *R5+             ZERO OUT: MID&LSB OF HIGHEST SECTOR ALLOCATED
+* NOW LOAD THE PATHNAME IN THE BUFFER
+       LI   R4,OPTLN
+       MOVB *R4+,R7
+       MOV  R3,R5
+       AI   R5,PATNAM
+       MOVB R7,*R5+
+       SRL  R7,8
+MPTNAM MOVB *R4+,*R5+
+       DEC  R7
+       JNE  MPTNAM
+
+* NOW DO PATHNAME SEARCH
+       MOV  @SCNOFF,R4        GET PATHNAME LENGTH (by getting scnoff and pathnm)
+       SZCB R4,R4             zero out screen offset
+       MOV  @STSRCH,R5        HERE IS WHERE TO START THE SEARCH
+*NOW THAT PATHNAME MOVED, WE KNOW THE FOLLOWING
+*R4=#OF CHARS IN PATH NAME
+*R3=FILE NAME BUFFER LOCATION POINTER
+*R5=PTR TO CHAR AFTER FIRST DPT
+*NOW START PARSING PATHNAME AND FINDING IF DIRIFILE EXISTS
+       S    @VSERCH,R4        SUBTRACT IF AMOUNT ALREADY PARSED
+       JEQ  BAD022       TEST LENGTH BRANCH IF ERROR
+       DEC  R4           SUBTRACT 1 FROM CHARS LEFT (for dpt)
+*NOW MOVE IN VOLUME DIR BLOCK UNLESS VOLUME NAME ACCESS
+       CLR  @AUNUM       READ DIRECTORY BLOCK
+* NOW ARE WE SUPPOSED TO TEST IF VOLUME NAME ACCESS
+       MOVB @VOLUME,R2
+       JNE  NAMESR
+**
+*
+*  OTHERWISE SET UP ACCESS TI DISK DRIVE DIR
+*
+*OTHERWISE SET UP ACCESS TO DISK DRIVE DIR
+GP2707 CLR  @DIRAUN
+       CLR  @ANDIR
+       MOV  R8,@RAMBUF        SET UP BUFFER PTR FOR DATA
+       BLWP @RSECDR      GO TO READ DIR SECTOR TO BUF
+       JNE  DSNM00       GOOD READ SECTOR
+       ABS  @DSKDIR      IS IT DSK DIR?
+       JEQ  RES0         NO, SO REAL ERROR
+       JMP  FLPRTN
+*
+DSNM00 MOV  @AUNUM,@DIRAUN SAVE FOR LATER USE
+       MOV  @FBKPTR(R8),@AUNUM
+* NOW TEST FOR DSK OR DSK1 DIR ACCESS
+       ABS  @DSKDIR
+       JNE  DKET         BRANCH IF DISKETTE DIR ACCESS
+       B    @VOLFND
+*
+DKET
+* TO BE HERE DISKETTE ACCESS SO SET UP CORRECT POINTERS AND LENGTH TO PARSE
+* R4 MUST BE ENTIRE CHARACTER COUNT AND R5 THE START
+       LI   R5,PATHNM       START FOR SEARCH AT BEGINNING
+       MOV  @SCNOFF,R4      USE ENTIRE OPTION LENGTH
+       SZCB R4,R4             RIGht JUSTIFY
+* NOW GO DIRECTLY TO NAME SEARCH
+       PAGE
+* NAME SEARCH R4=CHARS LEFT
+*             R3=FILE NAME BUFFER LOC PTR
+*             R5=PTR TO PATHNAME IN FILE NAME BUFFERS
+*TO BE HERE, LOOKING FOR NAME IN PATHNAME
+*
+NAMESR LI   R10,COMBUF        FOR PARSING LIMIT
+       MOV  R10,R2            init r2
+BLCBUF MOVB @BLANK,*R10+
+       CI   R10,COMBUF+10
+       JNE  BLCBUF
+NAMSR1 MOV  R4,R4        TEST IF ALL CHARS PARSED
+       JEQ  ALPARD       BRANCH IF ALL CAHRACTERS PARSED
+       B    @PARCON       BRANCH TO CONTINUE
+*
+*TO BE HERE, PARSING COMPLETE SO TEST IF VOL STILL SET
+*
+ALPARD MOVB @VOLUME,R10  TEST IF LOOKING FOR VOLUME
+       JNE  BAD022       IF YES THEN ERROR   R0 ALREADY LOADED
+*THE ABOVE BRANCH IS TAKEN FOR WIN. OR WIN.XXX ERROR
+*TO BE HERE, WE KNOW THAT A FILE NAME IS TO BE SEARCHED
+*SO GET THE NUMBER OF FILES AND THE FILE POINTERS
+*
+       MOV  R8,@PARPTR(R3)
+       MOV  R9,@SIBPTR(R3)
+*      MOV  @FBKPTR(R8),@AUNUM        THIS IS SECTOR PTR TO FILE PTRS
+       MOV  @AUNUM,@INDPTR(R3)       SAVE FOR LATER USE
+*
+* READ DIR
+* NOW GET NUMBER OF FILE PTRS
+* GET DATA BUF+MANAGEMENT
+*
+       MOV  @NUMFIL(R8),R11
+       MOV  R11,@NOPTRS        SAVE FOR LATER USE
+       SRL  R11,8              RIGH JUSTIFY
+* NOW READ IN FILE OF POINTERS
+       MOV  R8,@RAMBUF        PUT IN PARENT BUFFER
+       BLWP @RSECTR
+       JEQ  BAD003            BAD READ SECTOR
+       MOV  R9,@RAMBUF        use child buffer for search
+       MOV  R8,R10            START OF SEARCH
+ALPAR1 BLWP @FINDFL           search current dir for FILE
+       JNE  NFND              not found
+       B    @FFND             found
+*
+NFND   ABS  @DSKDIR           WAS IT FLOPPY?
+       JEQ  NFNDZ
+
+FLPRTN B    @FLPRT1           PASS THE CALL ON TO FLOPPY
+*
+NFNDZ  MOV  R0,R0             WAS IT A HARDWARE ERROR
+       JNE  BAD003            YES, SO BOMB OUT
+       CB   R6,@CBH07    IS IT DELETE?
+       JEQ  DKAR         YES, SO ALL DONE, RETURN NO ERROR
+* TEST IF SAVE
+       CB   R6,@CBH06
+       JEQ  NFND1             BRANCH IF SAVE MODE
+* NOW TEST IF OPEN OPCODE
+       MOVB R6,R6             TEST FOR OPEN
+       JEQ  OPUO
+       CB   R6,@CBH09         TEST FOR STATUS
+       JEQ  NFNDST            RETURN STATUS FILE DOES NOT EXIST
+*   MUST BE LOAD,BIO,PROT,RENAME SO GIVE ERROR OF 7 FILE DOES NOT EXIST
+       CB   R6,@CBH0B         IF BINARY WRITE 0 (CREATE) THEN OKAY
+       JEQ  BW0100            OKAY
+BADOP7 LI   R0,>E000          ERROR TRYING TO LOAD/OPEN INPUT A NON EX FIL
+BAD003 B    @BADOP
+*
+* TO BE HERE STATUS, file does not exist
+NFNDST MOVB @CBH80,@SCNOFF    FILE DOES NOT EXIST
+DKAR   B    @SYSRTN           BRANCH TO SYSTEM RETURN
+*
+OPUO
+* TO BE HERE IT IS OPEN, NON EXISTENT FILE, ACCEPT ONLY UPDATE/OUTPUT/append
+       COC  @H0004,R6    CHECK for update or output
+       JNE  NFND1        IS UPdate or output
+       COC  @H0002,R6    TEST IF INPUT
+       JEQ  NFND1        BRANCH IF NOT INPUT MODE
+
+       ABS  @DSKDIR      DSK RETURN?
+       JNE  FLPRTN
+       JMP  BADOP7
+*
+BW0100 MOV  @CHRCNT,R0        IS IT CREATE?
+       JNE  BADOP7            NO, SO IT IS A NO-NO
+*
+* is there ROOM FOR THIS FILE?
+GP2505
+NFND1  LI   R0,>8000          DIRECTORY CAN'T HOLD MORE FILES
+H4000  EQU  $-2
+       MOV  @252(R8),R11
+       JNE  BAD003            ERROR,DIRECTORY OF FILES FULL
+* CREATE THE FILE, STEPS ARE:
+*            GET A SECTOR
+*            PUT THE FCB IN IT
+*            ADD ONE TO NUMBER OF FILES IN DIRECTORY
+*            PUT PTR TO FCB IN PTRS.
+* FIRST GET A FREE SECTOR
+       CLR  R0           TRY TO GET SECTOR AT BEGINNING OF DISK
+       MOV  R9,R1             can use siblin buffer
+       LI   R5,1              get 1 sector
+       BLWP @GETSEC
+       MOV  R0,R0             error?
+       JNE  BAD003
+*
+* TO BE HERE, NO ERROR, POINTER IN R0
+* USE SIBLIN AS FIRST DATA BUF FOR FCB
+* NOW FILL FILE NAME BUFFER WITH INFORMATION
+* AT THIS TIME R1 = AU of the FDR
+*              R3 = PTR TO FILENAME BUFFER
+*
+       CLR  @DOCONT
+       JMP  CONT10
+*
+DOCONT DATA 0
+TIM1SV DATA 0            7-4-96, save old create date/time
+TIM2SV DATA 0
+
+*
+CONTIN SETO @DOCONT
+*
+CONT10 MOV  R3,R7        RESERVE FILE NAME
+       CLR  *R7               buffer is not reserved yet.
+       INC  R7
+       MOVB @DRIVID,*R7+ STORE DRIVE ID
+       MOV  R1,*R7+      STORE LOCATION OF FDR ON WINDCHESTER
+       LI   R11,LSTUP1-FNLOCD/2
+CONTT1 CLR  *R7+
+       DEC  R11
+       JNE  CONTT1
+       MOV  @TIMCM1+2,*R7+
+       MOV  @TIMCM1,*R7+
+       C    *R7+,*R7+    AI   R7,4 SKIP FLOPPY/WIN AND INDPTR
+       MOV  R8,*R7+      SAVE LOCATION OF PARENT BUFFER
+       MOV  R9,*R7+      SAVE LOCATION OF SIBLIN BUFFER
+*
+* NOW finish up the file DESCRIPTOR RECORD
+* write it out before updating pointers or DIR, for data security and errors.
+*
+       MOV  R9,R7             INIT R2
+       LI   R5,COMBUF
+PATHF1 MOV  *R5+,*R7+
+       CI   R5,COMBUF+10
+       JNE  PATHF1
+
+       MOV  @DATCRF+2(R9),@TIM1SV
+       MOV  @DATCRF(R9),@TIM2SV
+
+       LI   R5,123
+ZERBF  CLR  *R7+
+       DEC  R5
+       JNE  ZERBF
+*
+       LI   R5,TIMCM1         load update time
+       MOV  *R5+,@DATLUF+2(R9)
+       MOV  *R5,@DATLUF(R9)
+*
+       MOV  @DOCONT,R7        check if file already existed
+       JEQ  TTXXTT            doesn't exist - put new time/date
+*      JNE  CONT20       already exists
+*
+       MOV  @TIM1SV,@DATCRF+2(R9)       RESTORE DATE/TIME
+       MOV  @TIM2SV,@DATCRF(R9)         of creation 7.4.96
+       JMP  CONT20
+
+TTXXTT DECT R5
+       MOV  *R5+,@DATCRF+2(R9) new file, load creation time
+       MOV  *R5,@DATCRF(R9)
+*
+CONT20 MOV  @INDPTR(R3),@PARFPT(R9)
+       MOV  @CHRFI,@FI(R9)
+       SOCB @CBH10,@FSTATF(R9)               file has changed
+*
+       BL   @WRTFCB
+       JEQ  BAD003
+*
+       MOV  @DOCONT,R5
+       JNE  CONT90            skip directory update
+*
+* sector in R1, it goes to where R2 points
+* NOW PUT POINTER IN SECTOR OF FILE POINTERS
+* THIS IS POINTED TO BY PARENT AND R2 CONTAINS LOCATION OF ENTRY
+*
+       MOV  R8,R7        POINT TO FILE OF POINTERS IN RAM
+       AI   R7,256       POINT TO END
+       MOV  R1,R10       SAVE sector gotten for later use
+PUSHST MOV  *R2,R11      GET POINTER TO BE PUSHED DOWN
+       MOV  R10,*R2+
+       MOV  R11,R10
+       C    R7,R2
+       JNE  PUSHST
+       DECT R2           NOW STORE BACK THE PTR TO THE DIRECTORY BLOCK SEC
+       MOV  R10,*R2
+       MOV  @INDPTR(R3),@AUNUM    SAVE SECTOR OF POINTERS
+       MOV  R8,@RAMBUF
+       BLWP @WSECTR
+       JNE  TTSS1
+       B    @BAD003
+* NOW GET THE DIR BLOCK AND ADD ONE TO NUMBER OF FILES. POINTER IS IN R8,9
+TTSS1  MOV  R10,@AUNUM        SECTOR SHOULD ALREADY BE 0
+       BLWP @RSECTR      GET THE DIRECTORY
+       JNE  TTSS2
+       B    @BAD003       CAN'T GET DIR BACK
+TTSS2  AB   @CBH01,@NUMFIL(R8)
+* NOW WRITE DIRECTORY CONTROL BLOCK BACK TO DISK
+       BLWP @WSECTR      WRITE  IT BACK
+TTSS3  JNE  CONT90       CAN'T WRITE NEW # OF FILES
+       B    @BAD003
+*
+CONT90 MOVB @CBHFF,*R3        reserve buffer now...
+*
+* NOW TEST IF SAVE OR OPEN OR WRITE DIRECT
+*
+       CB   R6,@CBH06         TEST IF SAVE OPCODE
+       JEQ  S10               BRANCH IF NOT SAVE
+       CB   R6,@CBH0B         TEST FOR WRITE DIRECT
+       JEQ  GP255P            IS WRITE DIRECT
+       B    @NTSAVE
+*
+GP255P B    @BINWRP
+*
+* NOW THE ONLY THING TO DO IS SAVE
+*
+S10    MOV  R9,R7
+       AI   R7,FSTATF         set up FDR
+       MOV  @PFILE,*R7        set flags and records per AU
+       SOCB @CBH10,*R7+       file changed since last archive
+       INCT R7                skip for now lev2rc
+       INC  R7                yalfu
+       MOV  @CHRCNT,R5
+       SWPB R5                get last sector offset
+       MOVB R5,*R7
+       MOVB @CHRCNH,R5        get high byte
+       MOVB *R7,R11           now test if zero allocation
+       JNE  S11               it is not zero
+       MOV  R5,R5             zero offset, so 0 sectors?
+       JEQ  SAVED2            zero sectors
+       DEC  R5
+S11    CLR  R4
+       LI   R0,>4000          out of room
+       CI   R5,>FFFE          can only do >FFFF sectors
+       JH   BADOP
+       BLWP @GETAUS           get r5 sectors
+       MOV  R0,R0             error?
+       JNE  BADOP
+       MOV  @PTRPRE(R9),R0    get to the first FDR
+       JEQ  S9
+       BL   @WRTFCB           MAKE SURE FCB WRITTEN
+       JEQ  BADOP
+       BL   @TOPFCB           GET TO TOP FCB
+       JEQ  BADOP
+S9     INC  R5                NUMBER OF SECTORS
+       MOV  R5,@LEV2RC(R9)
+       BL   @WRTFCB
+       JEQ  BADOP
+* NOW JUST SAVE DATA
+* AT TOP FCB SO START SAVING
+       MOV  R5,R10       NUMBER OF SECTORS TO SAVE
+       CLR  R5           START TO SAVE AT FIRST SECTOR
+       CLR  R4
+FILSE4 BLWP @GETAUS      POSITION TO THAT SECTOR
+* NOW GET 256 CHARACTERS TO THE RAM BUFFER
+       LI   R6,>0100
+H0100  EQU  $-2
+PFILE  EQU  $-2
+       MOV  R6,@PASCNT      256 BYTES
+       SETO @PASRW          READ FROM USER TO DSR
+       MOVB @CPUFLG,@PASVDP CPU OR VDP
+       MOV  @MYUADL,@PASADL ADDRESS
+       MOVB @MYUADH+1,@PASADH
+       MOV  R8,@PASDSR
+       BLWP @PASDAT
+       BLWP @ADDADR
+       MOV  R8,@RAMBUF
+       BLWP @WSECTR
+       JEQ  BADOP
+       INC  R5
+       DEC  R10
+       JNE  FILSE4
+       JMP  SYSRTN
+*
+* NOW WRITE OUT FCB
+SAVED2 BL   @WRTFCB
+       PAGE
+* NOW FREE UP FILE NAME BUFFER AND DATA BUFFERS
+SYSRTN CLR  R0
+BADOPC CLR  *R3          CLEAR DATA BUFFER
+BADOP  SOCB R0,@PABERR       SET ERROR BITS IN STATUS  BITS
+
+FINISH
+SYSRT2
+RTNOPB
+* NOW DO RETURN TO SYSTEM
+RTNORS
+RTNORG SBZ  0                 TURN OFF CARD
+
+RTNHGG B    @SYSRT1           GOOD RETURN
+*
+       PAGE
+PARCON
+*TO BE HERE, CONTINUE PARSING PATH NAME
+       LI   R0,>4000     ERROR ".." OR BLANK EMBEDDED IN PATHNAME
+       DEC  R4           DECREMENT TOTAL LENGTH COUNTER
+       MOVB *R5+,R1      COMPARE TO BLANK
+       JLT  LIKEDP       IN CASE OF FLOPPY VOLUME SEARCH
+       CB   R1,@BLANK
+**THE ERROR IS BLANK IN PATH NAME
+       JEQ  BADOP        IF BLANK THEN ERROR BRANCH
+************
+       CB   R1,@DPT      COMPARE TO DPT
+       JEQ  LIKEDP       BRANCH IF NOT
+* TEST IF MORE THAN 10 CHARS PARSED
+       CI   R2,COMBUF+10
+       JEQ  BADOP             11 OR MORE CHARS
+       MOVB R1,*R2+
+       B   @NAMSR1
+*
+LIKEDP CI   R2,COMBUF    IF DPT TEST IF XXX....
+**THE ERROR IS XX..
+       JEQ  BADOP        BRANCH IF ERROR
+PARCO1 MOVB @VOLUME,R2   TEST IF VOLUME NAME SEARCH
+       JEQ  NOTVOL       JUMP IF NOT
+       LI   R2,1         USUALLY START SEARCH AT 1
+NXTDRV MOV  R2,@VOLUME
+       MOV  R8,@RAMBUF   GET POINTER TO DATA BUFFER
+       MOV  R8,R11
+       BLWP @RSECDR      (DRIVE=0 ALREADY)
+NXTDR4 JEQ  BADOP
+* ABOVE BRANCH IF NOT READABLE TO ERROR
+* NOW TEST IF NAME MATCHES
+* COMPARE COMBUF WITH VOL/DIR NAME IN DATA BUFFER IN R1
+       LI   R7,COMBUF
+NXTCS  C    *R7+,*R11+   COMPARE
+       JNE  NXTDR1
+       CI   R7,COMBUF+10
+       JNE  NXTCS
+       B    @NAMESR           CONTINUE
+*
+NXTDR1 INC  R2
+       C    R2,@MAXDRV
+       JLE  NXTDRV       JUMP IF NOT THROUGH ERROR BRANCH
+* NOW IF NONE OF THE DRIVES ARE WDS.VOL NAME SO TEST IF DSK.
+FPDNF  LI   R0,>E000         VOLUME NAME CALLED FOR NOT FOUND ERROR
+BAD010 JMP  BADOP             error, volume name not found
+*
+*
+* NOW SEARCH THROUGH DIRECTORY FOR NAME IN COMBUF
+*
+NOTVOL MOV  R8,R10       NOW GET TOP POINTER AND PUT IN R8,# IN DIRECTORY IN R9
+       AI   R10,DIRPTS          MOVE POINTER TO FIRST ENTRY
+       MOV  @NUMFIL(R8),R11
+       SZCB R11,R11
+       MOV  R9,@RAMBUF
+       BLWP @FINDFL           do binary search of current SUBDIRS
+       JEQ  DIRFND            name found
+       ABS  @DSKDIR
+       JEQ  NOTVO6
+       B    @FLPRTN           COULDN'T FIND IT
+*
+NOTVO6 MOV  R0,R0
+       JNE  BAD010            hardware error
+********************************************************************************
+*  NOW THE ONLY WAY WE CAN BE HERE IS:
+*      1) WDS1.XXX. ETC.   IN WHICH CASE WE BOMB IF LOAD,SAVE,OPEN,DELETE
+*                                    AND IN CASE OF STATUS, RETURN A NOT EXISTS
+*
+*      2) DSK.XXXXXX. ETC   IN WHICH CASE WE TRY THE FLOPPY DSK.XXXXX
+*
+*      3) DSK1.YYYYY. ETC  IN WHICH CASE WE MAY WANT TO TRY THE FLOPPY IF EXISTS
+*                          OR PASS THE CALL ON IF WE ARE NOT DSK1
+********************************************************************************
+*
+* THE ONLY OPCODES OF INTEREST ARE STATUS (DIR DOESN'T EXIST)
+*                                  SAVE IF CREATION OF DIR
+*                                  DELETE (THEN NO ERROR)
+*        ERROR 7 IF OPEN,LOAD,SAVE,BREAD,BWRITE,PROTECT,RENAME
+*
+       MOV  R4,R4             R0 = 0 AT THIS POINT
+       JNE  DNFN00            CAN NOT BE CREATE DIR
+       CB   R6,@SAVEOP        IS IT SAVE?   BECAUSE ALL PARSED
+       JNE  DNFN00            NO
+       B    @DCRE00           TRY TO CREATE THE DIR
+*
+* NOW IF OPEN OR SAVE, BAD OP 7
+DNFN00 LI   R0,>E000
+       CB   R6,@DELOP
+       JEQ  BADOP
+       CB   R6,@STATOP
+       JNE  FPDNF
+       B    @NFNDST
+TSWITCH DATA 0
+*
+DIRFND
+*
+* TO BE HERE, DIRECTORY WAS FOUND
+* NOW SEE IF DIR READ
+* UPDATE POINTERS
+*
+
+
+       MOV  R8,@TSWITCH
+       MOV  R9,R8
+       MOV  @TSWITCH,R9
+*      XOR  R8,R9             exchange r8,r9
+*      XOR  R9,R8
+*      XOR  R8,R9             NOW R8 POINTS TO SUB DIR, R9 TO DIR ITSELF
+       MOV  @DIRAUN,@ANDIR    save parent of current dir
+       MOV  @AUNUM,@DIRAUN    current dir
+VOLFND MOV  @FBKPTR(R8),@AUNUM  POINTER TO THE ASSOC FILE POINTER ON DISK
+       MOV  R4,R4             no chars left in pathname
+       JEQ  DIREAD            it must be a dir access
+       B    @NAMESR           more to search
+       PAGE
+DIREAD
+* IT IS A DIRECTORY SITUATION
+       CB   R6,@DIROP         SET PATHNAME?
+       JHE  GP3BZZ            IT IS CALL DIR
+*
+*     TO BE HERE, IT CAN BE THE FOLLOWING
+*   OPEN
+*   SAVE (CREATE DIRECTORY)        SHOULD NOT BE CLOSE,READ,WRITE,RESTORE
+*   DELETE (DELETE DIRECTORY)                    LOAD,PROTECT
+*   BREAD (ONLY OF "WDSX.")
+*   BWRITE (ONLY OF "WDSX.")
+*   RENAME (RENAME DIRECTORY)
+*   STATUS (STATUS IE IT DOES EXIST)
+*
+       LI   R0,>6000          BAD OPERATION
+       MOV  R6,R1
+       SRL  R1,8
+       SLA  R1,1              GET THE BRANCH TABLE INDEX
+       MOV  @DIRTBL(R1),R1
+       B    *R1
+*
+DIRTBL DATA DFOPN,BADOP,BADOP,BADOP,BADOP    OPEN,CLOSE,READ,WRITE,RESTORE
+       DATA BADOP,BAD022,DELDIR,BADOP,STADIR LOAD,SAVE,DELETE,NA,STATUS
+       DATA BIO,BIO,BADOP,RNDIR              BREAD,BWRITE,PROTECT,RENAME
+*
+STADIR CLR  R0
+       MOVB @H54,@SCNOFF
+BAD310 JMP  BAD010
+*
+H54    BYTE >54
+*
+DFOPN  LI   R0,>4000          BAD PARMS
+       CI   R6,>000D          ACCEPT INTERNAL,FIXED,INPUT,RELATIVE
+       JEQ  DIREA1            BRANCH IF CORRECT PARMS
+       CI   R6,>000C          ACCEPT OR INTERNAL,FIXED,INPUT,SEQUENTIAL
+       JNE  BAD010            BRANCH IF BAD PARMS
+DIREA1 MOV  @LRECLN,R11       LENGTH IS char length 11,and (3+6+6)*9
+       JNE  DIREA2                    or 11+15*9=146 or >92
+       MOV  @H0092,@LRECLN
+       JMP  DIREA1
+*
+DIREA2 CI   R11,>0092
+H0092  EQU  $-2
+       JNE  BAD010
+* THE PATHNAME IS ALREADY THERE
+GP3BZZ
+*
+*  NOW SET FLAG IF TOP LEVEL DIR OR SUB DIR
+*   THIS CAN BE GOTTEN FROM THE FLAG FNDDIR
+*
+       MOV  @ANDIR,@FNVSOF(R3)  PUT IN FILE CONTROL BLOCK
+       MOV  R9,@RAMBUF
+       BLWP @RSECTR           GET SECTOR OF FILE POINTERS
+       JEQ  BAD010
+       MOV  R8,@PARPTR(R3)
+       MOV  R9,@SIBPTR(R3)
+       CLR  @RECNUM
+       MOVB R6,R6             OPEN OR CALL DIR?
+       JEQ  DIREA4
+       B    @CDIR2            CONTINUE WITH CALL DIR
+*
+DIREA4 SETO *R3
+       MOVB @VOLUME+1,@1(R3)  RESERVE BUFFER
+DIREA3 B    @FINISH
+*
+DELDIR
+********************************************************************************
+*      DELETE DIRECTORY
+*           1) YOU CAN NOT DELETE THE MAIN DIRECTORIES
+*           1) REMOVE FROM PARENT DIRECTORY AND DECREMENT # OF SUBS
+*           2) RESTORE BIT MAP AU'S
+********************************************************************************
+       LI   R0,>2000          write protect error on dirs which can't go
+       MOV  @DIRAUN,R11       can't delete the main dir
+       JEQ  BAD310            even though the idiot was trying
+       MOV  @NUMFIL(R8),R11   test for children of this dir
+       JNE  BAD310            it has children, can't delete it
+*
+       DEC  @NUMFIL(R9)       one less subdir under parent
+       MOV  R9,R10
+       AI   R10,DIRPTS
+       MOV  R9,R11
+       AI   R11,256
+       MOV  @DIRAUN,R1
+GP2901 C    *R10+,R1       IS THIS THE ONE?
+       JNE  GP2901
+       MOV  R10,R5
+       DECT R5
+GP2903 C    R10,R11
+       JEQ  GP2902
+       MOV  *R10+,*R5+
+       JMP  GP2903
+*
+GP2902 MOV  R9,@RAMBUF
+       MOV  @PARDIR(R8),@AUNUM
+       BLWP @WSECTR      WRITE IT BACK
+       JEQ  BAD110       ERROR
+       CLR  R2           ONLY 1 SECTOR, AUNUM SET IN R1 ABOVE
+       MOV  @FBKPTR(R8),R7
+       BLWP @FRBITM           this call maps out *r8 ...
+       MOV  R0,R0
+       JNE  BAD110
+       MOV  R7,R1
+       BLWP @FRBITM
+       JMP  BAD110            ERROR CODE IN R0
+       PAGE
+********************************************************************************
+*      CREATE DIRECTORY       r8 = parent, r9 = subdir
+*      1) IS THERE ROOM IN CURRENT DIR FOR A SUB DIR?
+*      2) DOES IT EXIST ALREADY
+*      3) GET 2 SECTORS
+*      4) UPDATE THE CURRENT DIRECTORY
+*      5) CREATE DIR AND POINTERS FILE
+********************************************************************************
+DCRE00 LI   R0,>8000          OUT OF ROOM
+       CB   @NUMDIR(R8),@CBD114 CAN ANOTHER DIRECTORY BE GOTTEN?
+       JHE  BAD110             NO
+       CLR  R0           GET 2 SECTORS STARTING AT THE BEGINNING
+       LI   R5,2
+       BLWP @GETSEC
+       MOV  R0,R0
+       JNE  BAD110
+       MOV  R1,R3        FIRST SECTOR
+       INC  R1           SECOND SECTOR?
+       CI   R5,2
+       JEQ  GP2800       2 CONTIGUOUS SECTORS STARTING AT R1
+       MOV  R1,R0        START AT SECTOR R1
+       LI   R5,1         R5 MUST BE 1 ALREADY
+       BLWP @GETSEC
+       MOV  R0,R0
+       JNE  BAD110
+GP2800 INC  @NUMFIL(R8)  ONE MORE DIR
+       MOV  R8,R10
+       AI   R10,256
+       MOV  *R2,R4
+       MOV  R3,R7        SAVE STARTING SECTOR
+GP2801 MOV  R3,*R2+      PUT THE NEW SECTOR IN
+       MOV  R4,R3
+       MOV  *R2,R4
+       C    R2,R10
+       JL   GP2801
+       MOV  R8,@RAMBUF
+       MOV  @VOLUME,R11
+       SLA  R11,2
+       MOV  @DIRAUN,@AUNUM  PUT BACK THE PARENT DIRECTORY
+DEB000 BLWP @WSECTR
+       JEQ  BAD110
+       MOV  R8,R2
+       LI   R4,COMBUF    MOVE NAME FROM COMBUF
+       MOV  *R4+,*R2+
+       MOV  *R4+,*R2+
+       MOV  *R4+,*R2+
+       MOV  *R4+,*R2+
+       MOV  *R4,*R2+
+       AI   R2,3         MAINTAIN # OF AU'S AND SEC/TRK
+       LI   R4,CHRDIR
+       MOVB *R4+,*R2+
+       MOVB *R4+,*R2+
+       MOVB *R4+,*R2+
+       CLR  *R2+
+       MOV  @TIMCM2,*R2+ DATE AND TIME OF CREATION
+       MOV  @TIMCM1,*R2+
+       CLR  *R2+         NO FILES OR DIRS
+       MOV  R1,*R2+      POINTER TO FILES
+       MOV  @DIRAUN,*R2+   POINTER TO PARENT DIR
+GP2802 CLR  *R2+         CLEAR OUT SUBDIR POINTERS
+       C    R2,R10
+       JL   GP2802
+       MOV  R7,@AUNUM
+       BLWP @WSECTR      WRITE OUT THE NEW DIR
+       JEQ  BAD110
+       MOV  R8,R2
+GP2803 CLR  *R2+         CLEAR THE POINTERS
+       C    R2,R10
+       JL   GP2803
+       MOV  R7,@254(R8)  BACK POINTER
+GP2A05 MOV  R1,@AUNUM
+       BLWP @WSECTR
+BAD110 B    @BADOP
+
+RNDIR2 LI   R0,>4000          duplicate filename
+       JMP  BAD110
+       PAGE
+********************************************************************************
+*      RENAME DIRECTORY
+*
+********************************************************************************
+RNDIR  BL   @PBTOCB      MOVE NEW NAME TO COMBUF  USES R0
+       MOV  @DIRAUN,@AUNUM     IS IT SECTOR 0?
+       JEQ  RNDIR1            YES, SO JUST RENAME
+       MOV  @NUMFIL(R9),R11
+       SZCB R11,R11
+       MOV  R9,R10
+       AI   R10,DIRPTS   SEARCH TAKES PLACE IN R8 BUFFER
+       BLWP @FINDFL      SEE IF NEW NAME ALREADY EXISTS
+       JEQ  RNDIR2       YES, SO BOMB
+       MOV  R0,R0
+       JNE  BAD110       HARDWARE ERROR
+       MOV  R8,@RAMBUF     GET THE SECTOR HERE
+       MOV  @DIRAUN,@AUNUM    get sector to update
+       BLWP @RSECTR
+       JEQ  BAD110       READ ERROR
+RNDIR1 LI   R11,COMBUF   MOVE NAME IN COMBUF TO DIR CONTROL RECORD
+       MOV  R8,R0
+       MOV  *R11+,*R0+
+       MOV  *R11+,*R0+
+       MOV  *R11+,*R0+
+       MOV  *R11+,*R0+
+       MOV  *R11,*R0
+       BLWP @WSECTR
+       JEQ  BAD110
+       MOV  @AUNUM,R7
+       JEQ  BAD110            ALL DONE WITH SECTOR 0 RENAME
+       MOV  R9,R10
+       AI   R10,256+2         allow overflow during insertion
+       MOV  R9,R11
+       AI   R11,DIRPTS
+       MOV  R2,R3             save new pointer location
+*                             insert pointer at new location
+GP2A01 MOV  *R2,R6
+       MOV  R7,*R2+
+       MOV  R6,R7
+       C    R2,R10
+       JL   GP2A01
+*
+       INCT R3                allow for fact that R11 is incremented after comp.
+GP2A02 C    *R11+,@AUNUM
+       JNE  GP2A02            there's no way to miss the old pointer.
+       C    R11,R3            we found the new pointer...
+       JEQ  GP2A02
+       MOV  R11,R5
+       DECT R5                pointer to remove
+GP2A03 MOV  *R11+,*R5+
+       C    R11,R10
+       JL   GP2A03
+       MOV  R9,@RAMBUF
+       MOV  @ANDIR,R1
+       JMP  GP2A05
+       PAGE
+       DATA >1234
+BIO
+*
+*      BREAD        pab in         read sectors from any disk file
+*                        CAN BE USED WITH MAIN DIRECTORY OF HARD DISK
+*      byte  0      0A
+*            1      -
+*            2      -
+*            3      \
+*            4       \
+*            5        \ buffer address
+*            6      \
+*            7       \ sector offset within file to begin read
+*            8      -
+*            9      -
+*           10      transfer flag, 0 is cpu, non-zero is VDP
+*           11      0
+*           12      \  number of sectors to read from file
+*           13       \ if zero, transfers files ID info into buffer
+*           14      MSB OF SECTOR OFFSET
+*           15      name length <byte count>
+*           16+     text of name
+*
+*      BREAD        pab out
+*
+*      byte  0      -
+*            1      -
+*            2      error code
+*            3      \ updated to point to location in memory after the
+*            4       \ last byte successfully read from disk
+*            5        \
+*            6      \  (sector offset of last sector read)+1
+*            7       \ if read error, points to the bad sector
+*            8      -
+*            9      -
+*           10      -
+*           11      0
+*           12      \  count of number of sectors
+*           13       \ not read due to error condition
+*           14      MSB OF SECTOR OFFSET
+*           15      name length <byte count>
+*           16+     text of name
+*
+* @buffer is file ID info as follows:
+*
+*      byte:
+*=           0,1     extended record length, used for files with records
+*=                   longer than 255 bytes
+*=           2       file status flags
+*=
+*= BIT:  Msb 7 6 5 4 3 2 1 0   MEANING
+*=           | | | | | | | +-> 0-DATA 1-PROGRAM
+*=           | | | | | | +---> 0-ASCII 1-BINARY
+*=           | | | | | +-----> 2              RESERVED
+*=           | | | | +-------> 3              0-NOT PROTECTED 1-PROTECTED
+*=           | +-+-+---------> 4-6            RESERVED
+*=           +---------------> 7              0-FIXED RECORD 1-VARIABLE LENGTH
+*=
+*=           3       number of records which can fit in a sector (256 bytes)
+*=                   0 for program image, extended record lengths
+*=           4,5     number of sectors reserved for file
+*=           6       number of bytes used in last sector of file
+*=                   (0 means all 256 are used)
+*=           7       logical record length
+*=                   0 for program image, extended record lengths
+*=           8,9     (bytes reversed)
+*=                   for fixed files, (highest used record number)+1
+*=                   for program image, variable files, number of sectors
+*=                   actually used
+*=           10,11   date of creation     bits: yyyy yyyM MMMd dddd
+*=           12,13   time of creation           hhhh hmmm mmms ssss
+*=                                              seconds are / 2, with remainder
+*=                                              discarded
+*=           14,15   date of last change   "
+*=           16,17   time of last change   "
+*=           18      MSB LEVEL 2
+*=           19      MSB LEVEL 3
+*
+*
+*
+*      BWRITE       pab in         write sectors to any disk file
+*                      CAN BE USED WITH MAIN DIRECTORY OF HARD DISK
+*      byte  0      0B
+*            1      -
+*            2      -
+*            3      \
+*            4       \
+*            5        \ buffer address
+*            6      \
+*            7       \ sector offset within file to begin write
+*            8      -
+*            9      -
+*           10      transfer flag, 0 is cpu, non-zero is VDP
+*           11      0
+*           12      \  number of sectors to write to file
+*           13       \ if zero, creates file with ID info from buffer
+*                     \ buffer info described in BREAD
+*           14      MSB OF SECTOR OFFSET
+*           15      name length <byte count>
+*           16+     text of name
+*
+*      BWRITE       pab out
+*
+*      byte  0      -
+*            1      -
+*            2      error code
+*            3      \  points to location in memory after last byte
+*            4       \ successfully written to disk
+*            5        \
+*            6      \  (sector offset of last sector written)+1
+*            7       \ if write error, points to the bad sector
+*            8      -
+*            9      -
+*           10      -
+*           11      0
+*           12      \  count of number of sectors not
+*           13       \ written due to error condition
+*           14      MSB OF SECTOR OFFSET
+*           15      name length <byte count>
+*           16+     text of name
+*
+       LI   R0,>6000          BINARY I/O ONLY ON MAIN DIR
+       ABS  @ANDIR            IS IT 0?
+       JNE  BAD110            NO, CAN'T DO IT
+*
+       MOV  @CHRCNT,R1        sector count
+       JEQ  BIO008            done already...
+* DIRECT SECTOR I/O ROUTINE
+* TEST IF DISK IS FORMATTED WITH PARTITION COMMAND
+* THEN TEST IF IN DSK1 EMULATION MODE, THEN CONTINUE OPERATION
+       SETO @DSECIO           RETURN "RAW" SECTOR ERROR CODES
+       MOV  @VOLUME,R2
+       SLA  R2,3
+       AI   R2,CYLPLT-8       POINT TO THE DRIVES PARMS
+BIO005 MOV  @RECNUM,R5        MID AND LSB OF SECTOR NUMBER
+       MOVB @SCNOFF,R4        GET SECTOR OFFSET MSB
+       SRL  R4,8
+       MOV  @6(R2),R11        GET THE NUMBER OF SECTORS PER AU
+       SRL  R11,12
+       INC  R11
+       DIV  R11,R4            NOW AU # IN R0 AND SECTOR IN AU IN R1
+       JNO  BIO007            NO OVERFLOW
+       LI   R0,>8000          OVERFLOW CODE
+BIO010 JMP  BAD110
+*
+BIO007 MOV  R4,@AUNUM         SET UP FOR SECTOR I/O
+       MOV  R5,@SCINAU
+       MOV  R8,@RAMBUF        BUFFER TO USE
+       MOV  @BUFADR,@PASADL   ADDRESS IN RAM FOR DATA
+       MOVB @BUFADH,@PASADH
+       MOV  R8,@PASDSR        ADDRESS IN DSR SPACE
+       MOV  @H0100,@PASCNT    256 BYTES
+       MOVB @CPUFLG,@PASVDP
+* NOW THE NUMBER OF SECTORS TO TRANSFER IS IN R1
+       CB   @OPCODE,@BREDOP   IS IT BINARY READ?
+       JEQ  BIO003            YES
+       SETO @PASRW            READ THE DATA FIRST
+       BLWP @PASDAT           IT IS WRITE, SO WRITE THE DATA TO THE BUFFER
+       BLWP @WSECTR
+       JEQ  BIO010
+       JMP  BIO002
+*
+BIO003 BLWP @RSECTR
+       JEQ  BIO010
+       CLR  @PASRW            WRITE THE DATA TO THE TASK
+       BLWP @PASDAT
+BIO002 INC  @RECNUM           POINT TO NEXT SECTOR
+       JNC  BIO004
+       AB   @CBH01,@SCNOFF
+BIO004 A    @H0100,@BUFADR    UP THE TASK DATA PTR
+       JNC  BIO006
+       AB   @CBH01,@BUFADH
+BIO006 DEC  @CHRCNT
+       JNE  BIO005
+BIO008 B    @SYSRTN           ALL DONE
+       PAGE
+BIO000 MOV  @CHRCNT,R0        IS IT GET PARMS, OR CREATE PARMS?
+       JNE  BIO100            NO, JUST SIMPLE DATA SECTOR I/O
+       CLR  R0                flag to say that file existed already
+       JMP  BIO050
+*
+BINWRP SETO R0                flag to say that FCB is already done
+*
+BIO050 MOV  @H0014,@PASCNT    20 BYTES TO TRANSFER
+       MOV  @BUFADR,@PASADL   ADDRESS TO SEND DATA
+       MOVB @BUFADH,@PASADH
+       MOVB @CPUFLG,@PASVDP
+       MOV  R9,R10
+       AI   R10,XRECLN
+       MOV  R10,@PASDSR       START TRANSFER AT EXTENDED RECORD LENGTH
+       CB   R6,@BREDOP        IS IT GET PARMS?
+       JEQ  FB0000            YES, GET THE PARMS
+       SETO @PASRW            FROM TASK TO DSR
+       MOV  R0,R0             new FCB already in place?
+       JNE  BIO055            yes, no delete necessary now
+*
+* don't do a delete...to allow append using BWRITE!
+*
+       B    @ATTOP            FIRST GO TO DELETE THE EXISTING FILE  @@ no!
+*
+BIO055 CLR  *R3               WRITE BINARY PARAMETERS
+       BLWP @PASDAT           GET THE PARMS
+       MOV  @FI(R9),R4        GET THE MSB OF THE # OF SECTORS
+       SWPB R4
+       MOVB R4,@NIBLES(R9)    SAVE # ALLOCATED IF VARIABLE
+       SZCB R4,R4             NOW HAVE THE MSB OF # OF SECTORS
+       MOV  @LEV2RC(R9),R5    NOW THE MID AND LSB OF # OF SECTORS
+       CLR  @LEV2RC(R9)       ZERO OUT THE INITIAL ALLOCATION
+       CLR  R7                USE R7 FOR ANY ERROR CODE
+* now adjust FOR BASE 0 AU'S
+       DEC  R5                THIS ROUTINE ALSO TESTS FOR 0 ALLOCATION
+       JOC  BINW00            OKAY, NO ALLOCATION
+       DEC  R4
+       JNC  BINW01
+BINW00 BLWP @GETAUS
+       MOV  R0,R7
+BINW01 SOCB @CBH10,@FSTATF(R9)               file has changed
+*
+       INC  R5                yalfu
+       JNC  BINW03
+       INC  R4
+BINW03 SLA  R4,12
+       SOCB R4,@NIBLES(R9)
+       MOV  R5,@LEV2RC(R9)
+*
+       BL   @WRTFCB
+       MOV  R0,R0             ERROR?
+       JNE  BINW02
+       MOV  R7,R0             ERROR IF ANY
+BINW02 B    @BADOP
+*
+FB0000 CLR  @PASRW            PASS THE FILE PARMS BACK TO THE CALLER
+       MOVB @NIBLES(R9),R10   NOW GET THE EXTENDED LENGTH LVL2/USED
+       MOVB R10,R11           FIX IT UP    NEED TO RETURN LEVEL2/USED WORD
+       ANDI R10,>0F00
+       SWPB R10
+       SRL  R11,4
+       MOVB R11,R10
+       MOV  R10,@FI(R9)
+       BLWP @PASDAT           READ IT ALL
+       MOV  @CHRFI,@FI(R9)    REPLACE FI
+       B    @SYSRTN           ALL DONE
+*
+BIO100 MOV  @LEV2RC(R9),@BINMX1
+       MOV  @NIBLES(R9),R4
+       SRL  R4,12
+       MOV  R4,@BINMX2
+*
+BIO101
+       MOV  @RECNUM,R5        SET UP FOR SECTOR I/O
+       MOVB @SCNOFF,R4
+       SRL  R4,8
+*
+       C    R4,@BINMX2
+       JL   BIO110
+       JH   BIOEOF
+       C    R5,@BINMX1
+       JL   BIO110
+*
+BIOEOF LI   R0,>A000          eof error
+       JMP  BINW02
+*
+BINMX1 DATA 0
+BINMX2 DATA 0
+*
+BIO110 MOV  @BUFADR,@PASADL   ADDRESS IN RAM FOR DATA
+       MOVB @BUFADH,@PASADH
+       MOV  R8,@PASDSR        ADDRESS IN DSR SPACE
+       MOV  @H0100,@PASCNT    256 BYTES
+       MOVB @CPUFLG,@PASVDP
+       BLWP @GETAUS           GET THE SECTOR SET UP
+       MOV  R0,R0
+       JNE  BINW02
+*
+       MOV  R8,@RAMBUF        BUFFER TO USE  yalfu
+*
+       CB   @OPCODE,@BREDOP   IS IT BINARY READ?
+       JEQ  BIO103            YES
+       SETO @PASRW            READ THE DATA FIRST
+       BLWP @PASDAT           IT IS WRITE, SO WRITE THE DATA TO THE BUFFER
+       BLWP @WSECTR
+       JEQ  BINW02
+       JMP  BIO102
+*
+BIO103 BLWP @RSECTR
+       JEQ  BINW02
+       CLR  @PASRW            WRITE THE DATA TO THE TASK
+       BLWP @PASDAT
+BIO102 INC  @RECNUM           POINT TO NEXT SECTOR
+       JNC  BIO104
+       AB   @CBH01,@SCNOFF
+BIO104 A    @H0100,@BUFADR    UP THE TASK DATA PTR
+       JNC  BIO106
+       AB   @CBH01,@BUFADH
+BIO106 DEC  @CHRCNT
+       JNE  BIO101
+       B    @SYSRTN           ALL DONE
+
+       PAGE
+********************************************************************************
+*
+*      RENAME FILE, SO TEST IF THE NEW NAME EXISTS
+*      IF NOT THEN PUT NEW NAME IN ALL FDR'S AND ADJUST POINTER
+*        IN INDEX OF POINTERS
+*         POINTERS ARE IN THE R8 BUF AND THE R9 BUF CONTAINS THE TOP FDR
+********************************************************************************
+FREN   MOV  @AUNUM,R7         SAVE THE LOCATION OF TOP FDR FOR LATER USE
+       BL   @PBTOCB           MOVE THE NEW FILE NAME TO THE COMBUFFER
+       MOV  @NOPTRS,R11
+       SRL  R11,8             GET NUMBER OF ENTRIES TO LOOK AT
+       BLWP @FINDFL           LOOK FOR IT AND HOPE WE DON'T FIND IT
+       JEQ  FNEXT             FOUND IT SO ERROR 7
+       MOV  R0,R0
+       JNE  BAD211            HAREWARE ERROR
+       MOV  R8,R11            FIRST PUT POINTER IN CORRECT ORDER
+       AI   R11,256
+       MOV  R7,R1             LOCATION ON DISK
+       MOV  R2,R4
+FRNAM1 MOV  *R2,R0            PUT THE NEW POINTER IN THE LIST
+       MOV  R1,*R2+
+       MOV  R0,R1
+       C    R2,R11            ARE WE AT THE END?
+       JL   FRNAM1
+       MOV  R8,R5
+       INCT R4
+FRNAM2 C    *R5+,R7            NOW MOVE OUT THE PREVIOUS POINTER
+       JNE  FRNAM2
+       C    R5,R4
+       JEQ  FRNAM2
+       MOV  R5,R10
+       DECT R10
+FRNAM3 MOV  *R5+,*R10+
+       C    R5,R11
+       JL   FRNAM3
+       MOV  R1,@-2(R11)
+       MOV  R8,@RAMBUF
+       MOV  @INDPTR(R3),@AUNUM
+       BLWP @WSECTR           WRITE THE POINTERS BACK
+       JEQ  BAD211
+       MOV  R9,@RAMBUF
+       MOV  R7,@AUNUM
+       BLWP @RSECTR           READ THE FDR
+       JEQ  BAD211
+FRNAM4 LI   R0,COMBUF         COMBUF TO R9 BUFFER
+       MOV  R9,R11
+       MOV  *R0+,*R11+
+       MOV  *R0+,*R11+
+       MOV  *R0+,*R11+
+       MOV  *R0+,*R11+
+       MOV  *R0,*R11
+       BLWP @WSECTR
+       JEQ  BAD211
+       BL   @GETCLD
+       JEQ  BAD211            DONE OR ERROR
+       JMP  FRNAM4
+*
+FNEXT  LI   R0,>E000          FILE EXISTANCE PROBLEM
+       JMP  BAD211
+       PAGE
+FFND
+* TO BE HERE, FILE WAS FOUND DURING SEARCH
+* THEREFORE CAN DO ALL FILE OPERATIONS EXCEPT,
+* IF FILE IS PROTECTED THEN CAN'T SAVE OR IF OPEN, THEN CAN ONLY INPUT
+* WE KNOW THE FOLLOWING
+*  r8 POINTS TO SECTOR BUFFER OF FILE POINTERS
+*  r9 POINTS TO FCB AS IT EXISTS NOW
+*  R3 POINTS TO FILE NAME BUFFER
+* SAVE TOP FCB IN FILE NAME PTR
+       MOV  @AUNUM,@FNLOCF(R3)
+*  OPCODE AND FLAGS in r6 already
+       CLR  R2
+       MOVB @FSTATF(R9),R2    GET FILE STATUS FLAGS
+* FIRST CHECK IF OPCODE STATUS
+       CB   R6,@CBH09
+       JNE  NSTAT             BRANCH IF NOT STATUS
+* TO BE HERE OPCODE IS STATUS OF NOT OPEN FILE
+* SO TEST ALL STATIC TESTS IN ROUTINE GETSTT
+GETSTT
+* TO BE HERE, FIND THE STATIC PARAMTERS OF A FILE
+* FILE STATUS FLAGS msb R2
+* RETURNS BYTE IN R0 MSBYTE
+* USES R0,R2
+* BITS ARE MSB     1        2        3          4         5         6        LSB
+* FDR 0  fixed           NORMAL  NO UPDATE  not prot             Display Dat fil
+*     1  variab          "DSK1"   UPDATED   protect              Intern  Pgm fil
+*
+* STT 0 F EXIST NOT PRO  future   DISPLAY   DATA FILE   FIXED    NOT EOM  NOT EF
+*     1 NOWHERE PROTECT           INTERNAL  PROG FILE   VARIABLE EO MEDIA  EOF
+*
+       MOV  R2,R1
+       SLA  R2,3
+       SRL  R1,5
+       SOCB R1,R2
+       ANDI R2,>5C00
+       MOVB R2,@SCNOFF        PLACE STATUS FLAGS IN SCREEN OFFSET
+LOADED B    @SYSRTN           RETURN TO SYSTEM
+       PAGE
+FBWR
+FBRD   B    @BIO000
+*
+NSTAT  CB   R6,@CBH0A         IS IT BINARY READ?
+       JL   NSTAT9            NO, NORMAL DSR CALL
+       JEQ  FBRD              YES, IT IS BREAD
+       CB   R6,@CBH0C         IS IT PROTECT?
+       JL   FBWR              IT IS BWRITE
+       JH   FREN              IT IS RENAME
+*  TO BE HERE, IT IS PROTECT FILE, SO SET THE FDR CORRECTLY
+       LI   R2,>0800          PROTECT BIT
+       CLR  R1
+       MOVB @FLGSTS,R0        IF 0 THEN UNPROTECT
+       JEQ  FPROT0            UNPROTECT
+       MOVB R2,R1
+FPROT0 SZCB R2,@FSTATF(R9)    ZERO OUT THE BIT
+       SOCB R1,@FSTATF(R9)    SET THE BIT IF SUPPOSED TO
+       BLWP @WSECTR
+       JEQ  BAD211            WRITE ERROR
+       BL   @GETCLD
+       JEQ  BAD211            ALL DONE, NO CHILD FDR AND 0 IN R0 OR ERROR IN R0
+       JMP  FPROT0
+*
+NSTAT9 COC  @H0800,R2         TEST IF FILE IS PROTECTED
+       JNE  NOTPRO            BRANCH IF NOT PROTECTED
+* FILE IS PROTECTED SO TEST IF SAVE
+       CB   R6,@CBH06
+       JNE  NPRO1             ERROR BRANCH IF TRYING TO SAVE OVER PROT FILE
+BADOP1 LI   R0,>2000          ERROR TRYING TO MODIFY PROTECTED FILE
+BAD211 B    @BADOP
+*
+* TEST IF DELETE
+NPRO1  CB   R6,@CBH07
+       JEQ  BADOP1            ERROR BRANCH TRYINNG TO DELETE PROT FILLE
+* NOW TEST IF OPEN
+       MOVB R6,R6
+       JNE  NOTPRO            BRANCH IF NOT OPEN
+* NOW TEST IF INPUT MODE
+       COC  @H0004,R6
+       JNE  BADOP1            JUMP TRYING TO UPDATE PROTECTED FILE
+       CZC  @H0002,R6
+       JNE  BADOP1            JUMP IF TRYING TO UPDATE PROTECTED FILE
+NOTPRO
+* TO BE HERE, ALL FILE OPERATIONS ARE FINE
+       CB   R6,@CBH07      TEST IF DELETE
+       JNE  NDEL         BRANNCH IF NNOT DELETE
+       B    @DELOOP
+*
+* NOW TEST IF SAVE
+NDEL   CB   R6,@CBH06      TEST IF SAVE
+       JNE  NOPNOT       IF SAVE THEN DELETE FILE FIRST
+DSAVE
+* TO BE HERE, FREE UP ALL SECTORS POINTED TO BY FCB EXCEPT FCB ITSELF
+* WE KNOW THE FOLLOWING
+* PARENT POINTS TO WORK DATA BUFFER
+* SIBLIN POINTS RO TOP LEVEL FCB IN RAM
+* R3 POINTS TO FILE NAME POINTER BLOCK
+* THEREFORE, NEED TO FREE ALL SECTORS OF DATA + FCB'S GOTO ATTOP
+       B    @ATTOP
+*
+NOPNOT
+* NOW TEST FOR OPCODE LOAD
+* WE KNOW THE FOLLOWING
+* FCB IN SIBLIN, DATA BUF INN PARENT R3 HAS FILENNAME BUF
+       CB   @CBH05,R6      TEST IF LOAD
+       JEQ  LOAD1        BRANCH IF NNOT LOAD
+       B    @NLOAD            BRANCH TO OPEN
+*
+* FIRST TEST IF PROG FILE
+LOAD1  LI   R0,>4000          ERROR CODE FOR NON PROG FILE
+       COC  @H0100,R2         TEST IF PROG FILE
+       JNE  BAD211            ERROR TRYING TO LOAD A NNONE PROG FILE
+* NOW TEST FOR SUFFICIENT AREA (GET LSW OF LENGTH IN R2)
+       MOV  @LEV2RC(R9),R2    NUMBER OF SECTORS IN LENGTH
+       MOVB @EOFOST(R9),R11   IF SECTOR OFFSET IS ZERO
+       JEQ  L2A                 THEN CORRECT # OF SECTORS
+       DEC  R2                   ELSE ADJUST DOWNWARD
+L2A    LI   R0,>8000          ERROR CODE FOR NOT ENOUGH MEM
+       MOVB @CHRCNH,R4        SAVE MEMORY SPACE PARMS
+       MOV  @CHRCNT,R5
+*
+       CLR  @RECNUM           return true program image length
+       MOV  R2,R6
+       SRL  R6,8
+       MOV  R6,@RECNUM
+       MOV  R2,R6
+       MOVB R11,R6
+       SWPB R6
+       MOV  R6,@LRECLN        RETURN LSW
+*
+       CB   R2,R4           TEST MSB
+       JH   BAD211            FILE TOO LARGE FOR MEMORY
+       JL   L4C               SMALL ENOUGH TO FIT
+       C    R6,R5           MSB'S EQUAL SO TEST LSW
+       JH   BAD211
+* TEST IF LENGTH IS ZERO AND IF SO, THEN DONE
+L4C    SRL  R11,8
+       CLR  R5                STARTING SECTOR IS ALWAYS 0
+       CLR  R4
+L4E    MOV  R2,R2             TEST FULL SECTORS LEFT
+       JNE  L4B               YES, IT IS NON ZERO
+       MOV  R11,R11           TEST OFFSET FOR 0
+       JEQ  LOADED            ALL DONE
+* NOW LOAD PROGRAM, WE KNOW THE FOLLOWING
+*      R2 CONTAINS THE NUMBER OF FULL SECTORS
+*      R11 MSB CONTAINS THE NUMBER OF BYTES IN ANY LAST SECTOR
+*               IF NON 0
+L4B    MOV  R8,R7             START OF SECTOR
+       BLWP @GETAUS
+       MOV  R0,R0             DEVICE ERROR
+       JNE  BAD211
+       MOV  R8,@RAMBUF
+       BLWP @RSECTR           GET DATA SECTOR
+       JEQ  BAD211            READ SECTOR ERROR
+* NOW CALCULATE THE NUMBER OF BYTES TO USE OF THIS SECTOR
+       LI   R6,256
+       MOV  R2,R2             IS THIS THE LAST SECTOR?
+       JNE  L4A               YES, SO IT IS A PARTIAL
+       MOV  R11,R6            LAST SECTOR
+       CLR  R11
+       INC  R2                JUST TO MAKE IT EQUAL
+L4A    DEC  R2
+* NOW LOAD BYTE BY BYTE IN MEMORY
+       MOVB @CPUFLG,@PASVDP   VDP/CPU
+       CLR  @PASRW            DSR TO USER
+       MOV  @MYUADL,@PASADL   USER ADDRESS
+       MOVB @MYUADH+1,@PASADH
+       MOV  R6,@PASCNT       NUMBER OF BYTES
+       MOV  R8,@PASDSR        WHERE IT IS IN CPU RAM
+       BLWP @PASDAT
+       BLWP @ADDADR
+* TO BE HERE SECTOR COMPLETE SO GET NEXT SECTOR OF DATA
+L6     INC  R5                TEST IF THIS CONTIGUOUS SECTORS COMPLETE
+       JMP  L4E
+       PAGE
+NTSAVE
+* TO BE HERE WE HAVE AN OPEN OUTPUT OR UPDATE TO A NONEXIST FILE
+* WE KNOW IN THE FILE NAME BLOCK, THERE IS
+* 1 A PTR TO THE FCB                         2 DATA BUFFER NOT IN RAM=0
+* 3 LOGICAL OFFSET LEVEL  2=0                4 PHYSICAL LOC OF FCB ON DISK
+* 5 PHYSICAL LOC OF DATA BUF ON DISK=0       6 OFFSET =0, DRIVE # LOADED
+* 7 PATHANME IS LOADED 40 CHAR
+*
+* WE KNOW IN THE FCB BLOCK
+* 1 FILE NAME (10 CHAR)                      2 CHARACTERS "FI"
+* ALL OTHER BYTES ARE ZERO
+* NOW GET FLAGS TO STORE IN FILE FCB
+       BL   @PBFST
+*
+* NOW LOAD TIME OF CREATION AND LAST UPDATE (NOW ONE AND THE SAME)
+*
+FNLR   SOCB @CBH10,R5         file has changed since last archive
+       MOVB R5,@FSTATF(R9)    STORE FLAGS IN FCB
+*
+* NOW TEST LOGICAL RECORD LENGTH
+*
+RLEN1  MOV  @LRECLN,R5           TEST AND STORE LOG REC LENGTH
+       JNE  RLEN2             BRANCH IF NOT ZERO
+       LI   R5,80             SET DEFAULT TO 80 IN PAB
+*
+* FILE NAME BUFFER HAS PHYSICAL LOCATION OF FCB ON DISK
+* NOW GET INITIAL ALLOCATION
+*
+RLEN2  MOV  R5,@LRECLN        yalfu
+       MOVB R5,R5             IS IT GREATER THAN 255?
+       JNE  RLEN5             YES, SO USE EXTENDED RECORD LENGTH
+       COC  @H0010,R6         IS IT VARIABLE LENGTH
+       JNE  RLEN2A            NO
+       CI   R5,255            IS IT 255?
+       JHE  RLEN5             YES, SO USE EXTENDED LENGTH
+RLEN2A SWPB R5
+       MOVB R5,@RECLEN(R9)    STORE RECORD LENGTH
+       SWPB R5
+       COC  @H0010,R6         FIXED?
+       JNE  RLEN2C            IT IS FIXED
+       INC  R5
+RLEN2C CLR  R10               GET NUMBER OF REC PER AU
+       LI   R11,256
+       DIV  R5,R10            R10 HAS # OF REC/AU
+       SWPB R10
+       MOVB R10,@RECPAU(R9)
+       SWPB R10
+       MOV  @RECNUM,R5
+       JEQ  RLEN3
+       CLR  R4
+       DIV  R10,R4
+       MOV  R5,R5             IS THERE A REMAINDER?
+       JNE  RLEN2B            YES
+       DEC  R4                ELSE MAKE BASE 0 FOR # OF SECTORS
+RLEN2B MOV  R4,R5
+       CLR  R4
+RLEN5B BLWP @GETAUS           GET PHYSICAL AU'S
+       MOV  R0,R0             ERROR?
+       JNE  BAD012            ERROR, I/O OR OVERFLOW ERROR
+RLEN3  BL   @WRTFCB           WRITE FCB FOR FUTURE REF
+       JEQ  BAD012            ERROR IN I/O
+RLENPC CLR  @RECNUM           ZERO OUT #OF RECORDS FOR FUTURE
+       B    @FINISH
+*
+RLEN5  MOVB @CBH00,@RECLEN(R9)  IT IS A EXTENDED RECORD LENGTH TYPE FILE
+       MOV  R5,@XRECLN(R9)
+*  NOW FOR INITIAL ALLOCATION PROBLEM
+*   NEED TO ADD 2 TO VARIABLE RECORD FILES
+       COC  @H0010,R6         TEST IF VARIABLE
+       JNE  RLEN5A            IT IS FIXED
+       LI   R0,>4000
+       INCT R5
+       JOC  BAD012            RECORD LENGTH TOO LARGE
+RLEN5A MOV  @RECNUM,R11
+       JEQ  RLEN3             NO INITIAL ALLOCATION
+       MOV  R5,R4
+       MPY  R11,R4            # OF BYTES IN R4,R5
+       SWPB R5                GET SECTORS, NOT BYTES
+       MOVB R5,R11            SAVE ROUND OFF
+       SWPB R4
+       MOVB R4,R5
+       SZCB R4,R4
+       MOVB R11,R11           IS THERE A REMAINDER?
+       JNE  RLEN5B            YES, SO CORRECT
+       DEC  R5
+       JNC  RLEN5B
+       DEC  R4
+       JMP  RLEN5B
+       PAGE
+NLOAD
+* TO BE HERE MUST BE OPEN
+* IF OPEN OUTPUT THEN USE THE NEW PARAMETERS AND ZERO RECORD LENGTHS
+* TEST FOR OUTPUT BUT FIRST GET FLAGS
+       BL   @PBFST            GET FILE STATUS FLAGS FROM PAB
+       SETO *R3             RESERVE FILE BLOCKS
+       MOVB @DRIVID,@1(R3)
+* R6 HAS RAW OPEN STATUS FLAGS
+       COC  @H0002,R6
+       JNE  RLENV
+       CZC  @H0004,R6
+       JNE  RLENV
+* TO BE HERE THEN OPEN OUTPUT SO GO TO DELETE IT FIRST IF FLOPPY
+       CLR  @FSTATF(R9)       ZERO FLAGS AND REC/AU
+       CLR  @EOFOST(R9)       ZERO EOF AND REC LEN
+       CLR  @LEV3RC(R9)       ZERO HIGHEST FIXED WRITTEN OR VAR USED
+       SZCB @CBH0F,@NIBLES(R9)
+       JMP  NTSAVE       GO TO GET FLAGS AND REC LENNGTH
+*
+*  TO BE HERE, MUST BE OPEN NOT OUTPUT SO SEE IF FILE PARMS MATCH
+*  SIBLIN POINTS TO FILE BUFFER
+*
+RLENV  MOVB @FSTATF(R9),R7    GET FILE STATUS FLAGS
+       LI   R0,>4000          ERROR CODE TRYING TO OPEN PROG FILE FOR READ
+       ANDI R7,>8300          TEST IF PROGRAM FILE
+*  NOW TEST IF FILE TYPES COMPATIBLE
+* R5 HAS PAB STATUS IN FCB FORM R5 HAS STATUS IN PAB FORM
+       CB   R5,R7             TEST IF COMPATIBLE
+       JEQ  COMPTB
+BAD012 B    @BADOPC           CLEAR OUT THE PAB IN USE AND ERROR OUT
+*
+*  NOW IF FLAGS ARE COMPATIBLE,TEST RECORD LENGTH
+COMPTB MOVB @RECLEN(R9),R7    GET RECORD LENGTH OF FILE
+       SRL  R7,8
+       JNE  COMPTC            THIS IS THE RECORD LENGTH
+       MOV  @XRECLN(R9),R7    USE EXTENDED
+COMPTC MOV  @LRECLN,R11       TEST IF PAB REC LENGTH IS ZERO
+       JNE  TRLN              BRANCH IF NOT ZERO
+       MOV  R7,@LRECLN        IF ZERO PUT IN CORRECT LENGTH
+TRLN   C    R7,@LRECLN        TEST IF LENGTHS ARE EQUAL
+       JNE  BAD012            ERROR RECORD LENGTHS UNEQUAL
+*
+* set EOF offset parameters...
+*
+       MOV  @LEV3RC(R9),R0    GET MID AND LSB IF VARIABLE USED
+       SWPB R0                    HIGHEST RECORD IF FIXED USED
+       MOV  R0,@FNVNAU(R3)
+*
+       MOVB @EOFOST(R9),@FNVROF(R3)
+       CLR  R4
+       MOVB @NIBLES(R9),R4
+       ANDI R4,EFOSMS
+       MOVB R4,@FNVSOF(R3)
+*
+       CZC  @H0002,R6         test for open input
+       JNE  OAP010            not input --- either output or append
+       COC  @H0004,R6         test if open input
+       JEQ  RLENPC
+*
+OAP010 COC  @H0010,R6         test fixed/variable records
+*
+* MODSET to correct problem with relative file access    Clint Pulley 92/11/22
+* If opening in update mode, get sector and date/time data
+*
+       JEQ  OAP003            IF VARIABLE
+*
+* FIXED, MUST BE UPDATE MODE SO COPY REQUIRED DATA TO FCB
+*
+       MOV  @LEV2RC(R9),@HSALML(R3)
+       MOVB @NIBLES(R9),R4
+       SRL  R4,4
+       MOVB R4,@HSALMS(R3)
+       MOV  @DATLUF(R9),@LSTUP2(R3)
+       MOV  @DATLUF+2(R9),@LSTUP1(R3)
+       JMP  OAP002
+*
+* End of MODSET
+*
+* NOW TEST APPEND MODE
+OAP003 COC  @H0006,R6         TEST IF APPEND MODE
+       JNE  OAP002            NO
+*
+       MOV  @FNVNAU(R3),R5    IT IS APPEND SO MOVE # USED TO POINTER
+       MOV  R5,@FNLOF2(R3)    GET MID AND LSB
+       MOVB @EOFOST(R9),@FNLROF(R3) GET BYTE POINTER IN SECTOR
+       MOVB R4,@FNLOFM(R3)    GET THE MSB OF THE SECTOR
+       SRL  R4,8
+       JNE  OAP000
+       MOV  R5,R5
+       JEQ  OAP002
+OAP000 DEC  R5
+       JOC  OAP001
+       DEC  R4
+OAP001 BLWP @GETAUS
+       MOV  R0,R0
+       JNE  BAD012
+       MOV  R8,@RAMBUF
+       BLWP @RSECTR           GET THE SECTOR TO APPEND TO
+       JEQ  BAD012
+       BL   @PUTDSL
+OAP002 B    @RLEN1
+       PAGE
+*    DELETE FILE COMMAND
+*
+*
+*
+DELETE CI   R2,WBUFEN
+       JNE  ISOPEN            BRANCH IF OPEN
+       B    @ISNOPN
+*
+* TO BE HERE, TRYING TO DELETE A FILE ALREADY OPEN
+* THEREFORE, GET TO TOP FCB
+* R2 POINTS TO FILE NAME POINTER BLOCK
+* GET FCB DATA BUFFER POINTER TO R3
+*
+ISOPEN
+*
+* TEST IF PROTECTED
+*
+TSTPRO MOVB @FSTATF(R9),R1
+       COC  @H0800,R1
+       JNE  DELOOP            BRANCH IF TRYING TO DELETE PROTECTED FILE
+DELEMD B    @BADOP1
+*
+* NOW START DELETING AT THE TOP FCB
+DELOOP BL   @TOPFCB
+       JEQ  BAD012
+*
+       C    @AUNUM,@EMDKCB+2  yalfu
+       JEQ  DELEMD            can't delete an active emulate file...
+*
+* TO BE HERE, AT THE TOP MOST FCB SO START DELETING
+*
+ATTOP  MOV  @FNLOCF(R3),@STRTSR  SAVE PTR TO FIRST FCB ON DISK
+ATTOP1
+* THIS ROUTINE DELETES OR FREES ALL SECTORS IN THE VIB
+       MOV  R9,R6             GET PTR IN R6
+       AI   R6,SEPTRS         TO DATA POINTERS
+       MOV  R9,R5
+       AI   R5,256            R5 IS ENDING CRITERION
+       MOV  @AUTSFD(R9),R11   ANY TO RELEASE?
+       JEQ  FRESE1            NO
+* NOW USE TEST FOR END OF PTRS
+FRESE2 C    R6,R5
+       JEQ  FRESE1            HAVE GONE TROUGH SECTOR
+       MOV  *R6+,R1
+       JEQ  FRESE1            A NON EXISTANT POINTER
+       MOV  *R6+,R2           OTHERWISE CONTINUE
+       S    R1,R2             NOW R9 CONTAINS THE NUMBER TO DELETE
+       INC  R2
+       S    R2,R11
+       JOC  FRESE3
+       A    R2,R11
+       JEQ  FRESE1
+       MOV  R11,R2
+* NOW GET DISK MAP FROM TRACK 0
+FRESE3 DEC  R2
+       BLWP @FRBITM           ZERO OUT BITS
+       MOV  R0,R0             CHECK FOR ERROR
+       JEQ  FRESE2            NO ERROR
+FRSER0 B    @BADOPC           CLEAR OUT THE PAB IN USE AND ERROR
+*
+* NOW FREE UP THIS SECTOR ITSELF
+* R3 POINTS TO FILE NAME BUFFER SO GET SECTOR THERE
+*
+FRESE1 MOV  @FNLOCF(R3),R1
+       CLR  R2
+       BLWP @FRBITM
+       MOV  R0,R0
+       JNE  FRSER0
+* NOW GET NEXT IN STRING
+* SIBLIN POINTS TO FCB SO SEE IF A NEXT FCB IN CHAIN
+       MOV  @PTRNXT(R9),@FNLOCF(R3)
+       JEQ  DELNAM            JUMP IF COMPLETE
+* OTHERWISE BRING IN NEXT FCB
+       MOV  @NIBLES(R9),R1    GET AU NUMBER
+       ANDI R1,>000F
+H000F  EQU  $-2
+       MOV  R1,@SCINAU        FIRST SECTOR
+       MOV  R9,@RAMBUF
+       MOV  @FNLOCF(R3),@AUNUM
+*      SRL  R1,12
+*      MOVB R1,@FNSEC0(R3)
+       BLWP @RSECTR
+       JEQ  FRSER0            READ ERROR
+       JMP  ATTOP1            CONTINUE UNTIL ALL SECTORS FREED
+*
+* TO BE HERE, IT COULD BE DELETE, OR SAVE, OR WRITE DIRECT, OR OPEN OUTPUT
+*
+DELNAM SZCB @FNSEC0(R9),@FNSEC0(R9)  ZERO OUT POINTERS TO SIBLINS
+       MOV  @OPCODE,R6    GET OPCODE
+       CB   R6,@CBH07           TEST IF DELETE
+       JEQ  DELNA1            BRANCH IF DELETE
+* OTHERWISE GET TOP FCB BACK FROM BIT MAP
+       MOV  @STRTSR,R0
+       MOV  @PARFPT(R9),@STRTSR SAVE PTR TO DIR OF FILE PTRS
+       MOV  R8,R1              BUFFER USED BY GETSEC
+COT001 LI   R5,1
+       BLWP @GETSEC
+       MOV  R0,R0             ERROR IN DEVICE?
+       JNE  FRSER0
+* NOW JUST CONTINUE
+COT000 B    @CONTIN
+*
+* NOW MUST DELETE THE NAME FROM THE DIRECTORY AND FREE THE TWO OR THREE DATA
+* BUFFERS USED.
+* PTR TO DIRECTORY IS IN THE FILE BLOCK DESCRIPTOR. R3 POINTS TO FCB
+* TO FCB
+*
+DELNA1 MOV  @INDPTR(R3),@AUNUM  GET POINTER
+       MOV  R8,@RAMBUF        GET BUFFER
+       CLR  @SCINAU           FIRST SECTOR IN AU
+       BLWP @RSECTR           GET PTR TO FILES
+       JEQ  FRSER0
+*
+* NOW GET THE PTR FROM NOPTRS WHERE IT IS IN STACK, DELETE IT AND MOVE UP THE
+* REST.
+*
+       MOV  @STRTSR,R5        R5 HAS VALUE TO LOOK FOR
+       MOV  R8,R7             R7 PTS TO TOP
+       CLR  R6                R6 IS COUNTER
+DEL1   C    *R7+,R5
+       JEQ  MAT               BRANCH IF A MATCH
+       INCT R6                OTHERWISE INCR6
+       JMP  DEL1
+*
+MAT    CI   R6,252            NOW TEST IF COMPLETE
+       JEQ  DEL2
+HFFFE  EQU  $+2
+CBHFE  EQU  $+3
+       MOV  *R7,@-2(R7)
+       INCT R7
+       INCT R6
+       JMP  MAT
+*
+DEL2   CLR  @-2(R7)
+* NOW SUBTRACT 1 FROM NUMBER OF FILE PTRS BUT FIRST WRITE THIS
+       BLWP @WSECTR
+       JEQ  FRSER0            ERROR?
+DEL3   MOV  @254(R8),@AUNUM
+       BLWP @RSECTR
+       JEQ  FRSER0
+* NOW TO SUBTRACT
+       AB   @CBHFF,@NUMFIL(R8)
+* WRITE IT BACK
+       BLWP @WSECTR
+       JMP  FRSER0            WILL REPORT ERROR IF NECESSARY
+*
+FRESEC DATA WRKREG,FRESEF
+*
+FRESEF MOV  @2(R13),R1
+       MOV  R1,R0
+       SRL  R1,3
+       AI   R1,FDKVIB+BITMAP
+       LI   R10,>0100
+       MOVB R10,@VIBCHG
+       ANDI R0,>0007
+       JEQ  ZNBYTE
+       SLA  R10,0
+ZNBYTE MOVB *R1,R8
+       SZCB R10,R8
+       MOVB R8,*R1
+       RTWP
+*
+PBFST  CLR  R5
+       COC  @H0010,R6
+       JNE  NVAR1
+       SOCB @CBH80,R5
+NVAR1  COC  @H0008,R6
+       JNE  NINTE
+       SOCB @CBH02,R5
+NINTE  RT
+*
+GETCLD MOV  @PTRNXT(R9),R0      GET THE CHILD FCB
+       JEQ  GETC00            NONE TO GET
+       MOV  R0,@AUNUM
+       MOV  @NIBLES(R9),R7
+       ANDI R7,>000F
+       MOV  R7,@SCINAU
+       BLWP @RSECTR           EQ BIT SET IF ERROR IN READ, AND R0 SET
+GETC00 RT                     CONTINUE
+*
+PBTOCB MOV  @BUFADR,@PASADL   MOVE THE NEW NAME POINTED TO
+       MOVB @BUFADH,@PASADH   BY THE ADDRESS BUFFER POINTER
+       SETO @PASRW            USER TO DSR
+       MOV  @H000A,@PASCNT    ONLY 10 CHARACTERS
+       MOVB @CPUFLG,@PASVDP
+       LI   R0,COMBUF         TO COMBUF
+       MOV  R0,@PASDSR
+       BLWP @PASDAT           MOVE IT
+       RT

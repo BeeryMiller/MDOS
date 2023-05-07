@@ -1,0 +1,114 @@
+       DEF  MATCH
+*
+MREG   DATA 0,0,0,0,0,0,0,0
+       DATA 0,0,0,0,0,0,0,0
+QSTR   TEXT '          '
+ASTR   TEXT '          '
+ACNT   DATA 0
+ASTK   DATA 0,0,0,0,0
+*
+MATCH  DATA MREG,$+2
+*
+       MOV  *R14+,R1          get user string address
+       MOV  *R14+,R2          get address of string to match
+       MOV  R2,R10
+       CLR  R3                flag for asterisk
+       LI   R4,10             count of chars moved
+       LI   R5,ASTR
+       LI   R6,10             number of chars which asterisks can occupy
+       CLR  @ACNT
+*
+CRUS00 MOV  R2,R9
+       S    R10,R9
+       CI   R9,10
+       JHE  CRUS04
+*
+       MOVB *R2+,R0
+       JEQ  CRUS03
+       CB   R0,@H20
+       JEQ  CRUS03
+*
+       CB   R0,@ASTER
+       JNE  CRUS01
+       MOV  R3,R3
+       JEQ  CRUS12            last was an asterisk, don't copy this one
+       DEC  R6                duplicate asterisk is another postition to slide
+       JMP  CRUS02
+*
+CRUS12 SETO R3
+       INC  @ACNT             another usable asterisk
+       JMP  CRUS11
+*
+CRUS01 CLR  R3                this one was not an asterisk
+       DEC  R6                one less char for asterisk fill
+CRUS11 MOVB R0,*R5+           move a char into our string
+CRUS02 DEC  R4
+       JNE  CRUS00            more chars to read from user
+CRUS03 CI   R5,ASTR+10
+       JHE  CRUS04
+       MOVB @H20,*R5+
+       JMP  CRUS03
+*
+* ASTR has crushed match string, r6 has leftover count
+*      r0 is current char from string
+*      r1 is cursor into user string
+*      r2 is cursor into match string
+*      r3 is count of number of postions we can still slide
+*
+CRUS04 CLR  R0
+       LI   R2,ASTR
+       MOV  R6,R3
+       CLR  R4
+       CLR  R5
+       CLR  R6
+       MOV  R1,R7
+       AI   R7,10             end pointer for caller string
+*
+SCAN00 MOVB *R2+,R0
+       CI   R0,'*'*256
+       JEQ  SCAN10            process an asterisk
+       CI   R0,'?'*256
+       JEQ  SCAN30            matchs anything
+*
+       CB   R0,*R1
+       JEQ  SCAN30            they match
+*
+       INC  R4                point at next
+       DEC  R6                one less char to slide
+       JLT  BAD               compare failed!
+       MOV  R4,R1
+       MOV  R5,R2
+       MOV  R6,R3
+       JMP  SCAN00
+*
+SCAN10 CB   *R2,@H20          asterisk, is it last one in string?
+       JEQ  GOOD              yes
+       CI   R2,ASTR+10        is it last one in buffer?
+       JHE  GOOD              yes
+*
+       MOV  R1,R4             asterisk, set up backstep vector
+       MOV  R2,R5
+       MOV  R3,R6
+       JMP  SCAN00
+*
+*SCAN30 CB   *R1,@H20          end of user string & match string?
+*      JEQ  GOOD
+SCAN30 INC  R1                character matched, try next one
+       C    R1,R7
+       JL   SCAN31            not finshed with user string
+       CB   *R2,@H20
+       JEQ  GOOD              done with user string and match string
+*
+SCAN31 CI   R2,ASTR+10        as long as we're not done!
+       JL   SCAN00
+GOOD   ORI  R15,>2000
+       JMP  EXIT
+*
+BAD    ANDI R15,>DFFF
+EXIT   RTWP
+*
+H20    BYTE >20
+ASTER  BYTE '*'
+*
+       END
+*

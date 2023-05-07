@@ -1,0 +1,73 @@
+*
+* read compressed time
+*      callers r0 points to 2 word buffer
+*
+*
+       EVEN
+NULSEC BSS  32
+REDCOM DATA NULSEC,$+2
+*
+       CLR  R0
+       CLR  R1
+       JMP  DCHFF1
+*
+DCHFF1 LI   R3,NULSEC+12      POINT TO R6
+       LI   R4,>F132          seconds in clock chip
+*
+       MOVB @>F130,R6         CLEAR DATA CHANGED FLAG
+CLOCK2 MOV  *R4+,*R3+
+       CI   R4,>F13E          READ THEM ALL YET?
+       JL   CLOCK2
+*
+       MOVB @>F130,R3         CHECK FOR DATA CHANGED
+       ANDI R3,>0800
+       JNE  DCHFF1            we're real fast...can't change again on us!
+*
+* NOW ALL DATA GOOD SO DO COMPRESSION
+*
+       MOV  R11,R2       YEAR
+       BL   @PRODUT
+       SLA  R2,9
+       MOV  R2,R0
+*
+       MOV  R10,R2       MONTH
+       BL   @PRODUT
+       SLA  R2,5
+       A    R2,R0
+*
+       MOV  R9,R2        DATE OF MONTH (OR DAY OF MONTH)
+       BL   @PRODUT
+       A    R2,R0
+*
+*************************
+*
+       MOV  R8,R2        HOUR (0-23)
+       BL   @PRODUT
+       SLA  R2,11
+       MOV  R2,R1
+*
+       MOV  R7,R2        MINUTE
+       BL   @PRODUT
+       SLA  R2,5
+       A    R2,R1
+*
+       MOV  R6,R2        SECOND
+       BL   @PRODUT
+       SRL  R2,1         ONLY INTERVALS OF EVERY 2 SECONDS
+       A    R2,R1
+*
+DCHFF4 MOV  *R13,R2
+       MOV  R1,*R2+
+       MOV  R0,*R2
+       RTWP
+*
+PRODUT SWPB R2           paul's fix
+       MOV  R2,R3        SAVE R3 FOR LSB
+       SRL  R3,8
+       ANDI R3,>000F     MASK OFF JUNK
+       LI   R4,>000A     MULTIPLIER
+       MPY  R3,R4        PRODUCT IN R5 AND R6
+       ANDI R2,>000F     MASK OFF JUNK FROM LSB
+       A    R5,R2        GET BINARY NUMBER
+       RT                RETURN TO CALLER
+*

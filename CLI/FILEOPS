@@ -1,0 +1,470 @@
+       REF  EMIT1
+       REF  SETCAT,RELCAT,GETCAT,VOLON
+       REF  NAMBUF
+*
+       REF  TIPEXC       12.27.2020, DEF IN GETCATS Flag for 127+ files
+       REF  FCNTIP       12.27.2020, DEF IN COPYS   Flag mesg for 127+ files
+
+
+       DEF  RENAME,ATTRIB,ERASE
+       DEF  MKDIR,RMDIR
+       REF  CSFLG                  added, 24 feb 93, jj - for case sensitivity
+       COPY "\MDOS\HEAD\PAGENUMS"  added, 24 feb 93, jj - to resolve P_MEM
+*
+MKDIR  MOVB @MKDIRO,@PABR
+       JMP  COMDIR            jump to common code for rmdir,mkdir
+*
+RMDIR  MOVB @DELEOP,@PABR
+*
+COMDIR MOV  R0,R1
+       LI   R0,8
+       LI   R2,PABLEN
+       MOVB @MAXLEN,*R2
+       CLR  R3
+       XOP  @NINE,0
+       JNE  COMD90            bad directory name
+*
+       AB   @H01,@PABLEN      add one for trailing period
+       MOVB @PABLEN,R2
+       SRL  R2,8
+       AI   R2,PABLEN
+       MOVB @PERIOD,*R2
+*
+       LI   R0,PABR
+       XOP  @EIGHT,0
+*
+       MOVB @PABR+2,R1        error code
+       JEQ  COMD98            no error
+*
+       SRL  R1,13
+       CI   R1,1
+       JEQ  COMD90
+       CI   R1,4
+       JEQ  COMD91
+       CI   R1,7
+       JEQ  COMD92
+*
+       LI   R1,DEVMSG         disk error
+       JMP  COMD99
+*
+COMD90 LI   R1,DIRM1          not empty directory
+       JMP  COMD99
+*
+COMD91 LI   R1,DIRM2          not enough room for directory
+       JMP  COMD99
+*
+COMD92 LI   R1,DIRM3          no such directory
+       JMP  COMD99
+*
+COMD98 LI   R1,RENMSG         completion ok
+COMD99 B    @MESG2            print message and return to caller
+*
+*      rename path1 file2
+*
+RENAME MOV  R0,R1
+       LI   R0,8
+       LI   R2,PABLEN
+       MOVB @MAXLEN,*R2
+       CLR  R3
+       XOP  @NINE,0
+       JNE  REN008
+*
+REN000 CB   *R0,@NIL
+       JEQ  REN008
+       CB   *R0,@H20
+       JNE  REN001
+       INC  R0
+       JMP  REN000
+*
+REN001 LI   R1,NAMBUF
+       LI   R2,10
+REN002 MOVB @H20,*R1+
+       DEC  R2
+       JNE  REN002
+*
+* code added by jj, 24 Feb 93
+* masks lowercase to upper if CASE is OFF (CSFLG in L9\PARSEFS is low)
+*
+       LI   R5,CSFLG          case flag in parser routine
+       AI   R5,>8000
+       MOVB @>F115,R2         save >F115 page
+       LI   R1,P_MEM*256      >05 for parser page
+       MOVB R1,@>F115         map parser page in
+       MOV  *R5,R5            get csflg condition from PARSEF - store in r5
+       MOVB R2,@>F115         map parser page out
+
+       LI   R1,NAMBUF
+       LI   R2,10
+REN003 MOVB *R0+,R3           jj, 24 Feb 93
+       MOV  R5,R5             case flag from parser
+       JNE  REN0U1            if hi
+       CB   R3,@RENLA         else compare to an 'a'
+       JL   REN0U1            if lower
+       CB   R3,@RENLZ         else compare to a 'z'
+       JH   REN0U1            if higher
+       ANDI R3,>DFFF          in between - mask to uppercase
+REN0U1 MOVB R3,*R1+           end of jj kludge
+       CB   *R0,@PERIOD       3/24/90...disallow period in dest name.
+       JEQ  REN004
+       CB   *R0,@H20
+       JEQ  REN004
+       CB   *R0,@NIL
+       JEQ  REN004
+       DEC  R2
+       JNE  REN003
+REN004 LI   R0,PABR
+       MOVB @RENAOP,*R0
+       LI   R1,NAMBUF
+*      AI   R1,->2000         7/31/88
+       MOV  R1,@PABR+4
+       XOP  @EIGHT,0
+       MOVB @PABR+2,R1
+       SRL  R1,13
+       CI   R1,7              file not found?
+       JEQ  REN005
+       CI   R1,2
+       JEQ  REN006
+       MOV  R1,R1
+       JNE  REN007
+       LI   R1,RENMSG
+       JMP  RENX
+RENLA  BYTE 'a'              \   jj, 24 feb 93
+RENLZ  BYTE 'z'               \  added for case blind routine
+*
+REN008 LI   R1,RENFER
+       JMP  RENX
+*
+REN007 LI   R1,RENERR
+       JMP  RENX
+*
+REN006 LI   R1,RENM2
+       JMP  RENX
+*
+REN005 LI   R1,RENM7
+RENX   B    @MESG2
+*
+*
+* erase command  ... should add a "/Yes" option or query for each file
+*
+ERASE  MOV  R11,@OPRET
+       MOV  R0,R12
+       BL   @SETCAT
+       JEQ  ERASE$
+       B    @MEMERR
+*
+ERASE$ MOV  @SIX,@ATYPE
+*
+       LI   R0,8
+       MOV  R12,R1
+       LI   R2,DIRLEN
+       MOVB @MAXLEN,*R2
+       CLR  R3
+       XOP  @NINE,0           parse their filename
+       JNE  BF0000
+*
+       MOVB @DIRLEN,R3
+       SRL  R3,8
+       AI   R3,DIRLEN         now we point to last char in name
+       CB   *R3,@PERIOD
+       JEQ  BF0000
+*
+       CB   *R3,@ASTER
+       JNE  GETEM
+*
+       CB   @-1(R3),@PERIOD
+       JNE  GETEM
+*
+       MOV  R0,R12
+       BL   @MESG
+       DATA YNMESG
+*
+ERASE0 LI   R0,4
+       XOP  @FIVE,0
+       JNE  ERASE0
+*
+       ANDI R1,>5F00
+       CI   R1,'Y'*256
+       JEQ  ERASE1
+       CI   R1,'N'*256
+       JNE  ERASE0
+*
+ERASE1 MOV  R1,R2
+       MOV  R1,R0
+       BLWP @EMIT1
+       BL   @MESG
+       DATA CRLF
+*
+       CI   R2,'Y'*256
+       JEQ  GETEM
+*
+       B    @ATLS99
+*
+*
+* ATTRIB COMMAND
+*
+*      set flag from prefix:  -p
+*                             +p
+*                             nil
+*
+*      parse name
+*      if dskx. then getcat   (winchester valid only for "nil")
+*      process list
+*
+*
+ATTRIB MOV  R0,R12
+       MOV  R11,@OPRET
+       BL   @SETCAT
+       JNE  MEMERR
+*
+       MOV  R12,R1
+       CLR  @ATYPE            assume nil parameter
+       MOVB @1(R1),R2
+       SWPB R2
+       MOVB @2(R1),R2
+       ANDI R2,>FF5F
+       CI   R2,' P'
+       JNE  ATR002            not "P ", can't be the right thing
+*
+       CB   *R1,@MINUS
+       JEQ  ATR000
+       CB   *R1,@PLUS
+       JNE  ATR002            nil parameter
+       INCT @ATYPE            +p is type 4
+ATR000 INCT @ATYPE            -p is type 2
+       AI   R1,3
+ATR001 CB   *R1,@H20          skip intervening spaces
+       JNE  ATR002
+       INC  R1
+       JMP  ATR001
+*
+ATR002 LI   R0,8              parse opcode
+       LI   R2,DIRLEN
+       MOVB @MAXLEN,*R2
+       CLR  R3
+       XOP  @NINE,0
+       JEQ  ATR022
+BF0000 B    @BADFIL
+*
+* if +p,-p, enforce floppy access for now    "dsk"+x
+*
+ATR022 MOV  @ATYPE,R1
+       JEQ  ATR004
+*
+GETEM
+ATR004 LI   R0,PAB
+       CLR  @VOLON
+       BL   @GETCAT
+       JEQ  ATR003
+*
+DEVERR LI   R1,DEVMSG
+       JMP  ERRDIS
+*
+MEMERR LI   R1,MEMMSG         release memory
+ERRDIS BL   @MESG2
+       B    @ERROR2
+*
+ATR003 MOV  @ATYPE,R1
+       MOV  @ACALL(R1),R1
+       B    *R1
+*
+*      this is the entry for "nil"
+*      list protection status, filename
+*
+ATLS00 LI   R2,NAMES
+ATLS01 CB   *R2,@H20
+       JEQ  ATLS99
+*
+       CB   *R2,@NIL
+       JEQ  ATLS98
+*
+       LI   R0,'P '
+       MOVB @12(R2),R3
+       ANDI R3,>0800          protected?
+       JNE  ATLS02            yep
+       LI   R0,'  '
+ATLS02 BLWP @EMIT1
+       SWPB R0
+       BLWP @EMIT1
+*
+       MOVB @DIRLEN,R4
+       SRL  R4,8
+       LI   R3,PAB+16
+ATLS04 MOVB *R3+,R0
+       BLWP @EMIT1
+       DEC  R4
+       JNE  ATLS04
+*
+       LI   R4,10
+       MOV  R2,R3
+ATLS03 MOVB *R3+,R0
+       BLWP @EMIT1
+       DEC  R4
+       JNE  ATLS03
+       BL   @MESG
+       DATA CRLF
+*
+ATLS98 AI   R2,32
+       JMP  ATLS01
+*
+UNPR00 MOVB @PROTOP,@PAB
+       MOVB @H00,@FLAGBY
+       JMP  SCAN00
+*
+PROT00 MOVB @PROTOP,@PAB
+       MOVB @HFF,@FLAGBY
+       JMP  SCAN00
+*
+ERAS00 MOVB @DELEOP,@PAB
+       JMP  SCAN00
+*
+SCAN00 MOVB @DIRLEN,R3
+       SRL  R3,8
+       AI   R3,PAB+16
+       LI   R2,NAMES
+SCAN01 CB   *R2,@H20
+       JEQ  ATLS99
+*
+       CB   *R2,@NIL
+       JEQ  SCAN99
+*
+       MOV  R2,R4
+       MOV  R2,R5
+       AI   R5,10
+       MOV  R3,R6
+*
+SCAN02 MOVB *R4+,*R6+
+       CB   *R4,@H20
+       JEQ  SCAN03
+       C    R4,R5
+       JL   SCAN02
+*
+SCAN03 AI   R6,-PAB-16
+       SLA  R6,8
+       MOVB R6,@DIRLEN
+*
+       MOVB @FLAGBY,@PAB+1
+       LI   R0,PAB
+       XOP  @EIGHT,0
+       MOVB @PAB+2,R1
+       JEQ  SCAN05
+*
+       LI   R1,FILERR         "File error:"
+       JMP  SCAN06
+*
+SCAN05 MOV  @ATYPE,R1
+       MOV  @COMMSG(R1),R1
+SCAN06 BL   @MESG2
+*
+       LI   R4,PAB+15
+       MOVB *R4+,R5
+       JEQ  SCAN99
+       SRL  R5,8
+SCAN04 MOVB *R4+,R0
+       BLWP @EMIT1
+       DEC  R5
+       JNE  SCAN04
+       BL   @MESG
+       DATA CRLF
+*
+SCAN99 AI   R2,32
+       JMP  SCAN01
+*
+BADFIL BL   @MESG
+       DATA BADFN
+ERROR2
+ATLS99
+       ABS  @TIPEXC      12.27.2020  TIPI, If we exceed 127 files
+       JEQ  ATLS99A      12.27.2020
+       BL   @MESG        12.27.2020
+       DATA FCNTIP       12.27.2020
+ATLS99A
+       MOV  @OPRET,R11
+       B    @RELCAT
+*
+MESG   MOV  *R11+,R1
+MESG2  MOVB *R1+,R0
+       JEQ  MESG3
+       BLWP @EMIT1
+       JMP  MESG2
+MESG3  RT
+*
+PABR   DATA >0D00,0,NAMBUF,0
+       DATA 0,0,0
+       BYTE 0
+PABLEN BYTE 0
+       BSS  40
+*
+H00    BYTE >00
+H01    BYTE >01
+ASTER  BYTE '*'
+NIL    BYTE >00
+H20    BYTE >20
+MINUS  BYTE '-'
+PLUS   BYTE '+'
+PERIOD BYTE '.'
+MAXLEN BYTE 40
+CRLF   BYTE >0D,>0A,0
+PROTOP BYTE >0C
+RENAOP BYTE >0D
+DELEOP BYTE >07
+MKDIRO BYTE >06
+HFF    BYTE >FF
+*
+FLAGBY BYTE 0
+*
+FIVE   DATA 5
+SIX    DATA 6
+SEVEN  DATA 7
+EIGHT  DATA 8
+NINE   DATA 9
+*
+ATYPE  DATA 0
+OPRET  DATA 0
+*
+ACALL  DATA ATLS00,UNPR00,PROT00,ERAS00
+COMMSG DATA CRLF,UNPROM,PROTM,ERASM
+*
+YNMESG TEXT 'Are you sure (Y/N)? '
+       BYTE 0
+*
+UNPROM TEXT 'Unprotected: '
+       BYTE 0
+PROTM  TEXT 'Protected: '
+       BYTE 0
+ERASM  TEXT 'Erased: '
+       BYTE 0
+RENMSG TEXT 'Done.'
+       BYTE >0D,>0A,0
+*
+DEVMSG TEXT 'Device error'
+       BYTE >0D,>0A,0
+MEMMSG TEXT 'Insufficient memory'
+       BYTE >0D,>0A,0
+FILERR TEXT 'File error: '
+       BYTE 0
+*
+RENERR TEXT 'File error.'
+       BYTE >0D,>0A,0
+BADFN
+RENFER TEXT 'Bad file name.'
+       BYTE >0D,>0A,0
+*
+RENM7  TEXT 'File not found'
+       BYTE >0D,>0A,0
+*
+RENM2  TEXT 'Duplicate filename'
+       BYTE >0D,>0A,0
+*
+DIRM1  TEXT 'Error: directory not empty'
+       BYTE >0D,>0A,0
+*
+DIRM2  TEXT 'Not enough space for directory'
+       BYTE >0D,>0A,0
+*
+DIRM3  TEXT 'No such directory'
+       BYTE >0D,>0A,0
+*
+       COPY "\MDOS\CLI\CATMAPS"
+*
+       END
+*

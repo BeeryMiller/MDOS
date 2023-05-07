@@ -1,0 +1,164 @@
+*
+*  Revision History (add new updates to top)
+*
+*     1/Sept/1992   A.Beard     If in batch mode, don't query for time
+*                               or date
+*
+       DEF  DTIME,DDATE,GTIME,GDATE
+       DEF  CTIME,CDATE
+       DEF  DATBL
+       REF  GETSTR,EMIT1
+       REF  BATFLG              in batch mode (<>0) or not (0)
+*
+       COPY "\MDOS\HEAD\PAGENUMS"
+*
+       RORG 0
+CLKMAX BYTE 9,5,9,5,9,2
+DATMAX BYTE 9,3,9,1
+*
+CDATE  LI   R0,3
+       JMP  CTIME2
+*
+CTIME  CLR  R0
+CTIME2 XOP  @NINE,0
+       RT
+*
+NINE   DATA 9
+SAVTIM DATA 0
+GTIME  MOV  R11,@SAVTIM
+       BL   @CTIME
+       JNE  GTIME0
+       LI   R1,CUTIME
+       BL   @MESG
+       BL   @DTIME
+       MOV  @BATFLG,R1      are we in batch mode?
+       JEQ  GTIME0
+       LI   R1,CRLF
+       BL   @MESG
+       JMP  GTIME4
+GTIME0 LI   R1,GTMSG
+       BL   @MESG
+       LI   R1,TIMBUF
+       LI   R2,8
+       LI   R0,'  '
+GTIME2 MOVB R0,*R1+
+       DEC  R2
+       JNE  GTIME2
+       LI   R1,TIMBUF
+       LI   R2,8
+       BL   @GETSTR
+*
+       LI   R0,2
+       XOP  @NINE,0      set clock from string
+       JEQ  GTIME4
+*
+       LI   R1,IVTIME
+       BL   @MESG
+       JMP  GTIME0
+*
+GTIME4 MOV  @SAVTIM,R11
+       RT
+*
+GTMSG  BYTE >0D,>0A
+       TEXT 'Enter new time: '
+       BYTE 0
+IVTIME TEXT 'Invalid time'
+       BYTE 0
+       BYTE 8
+TIMBUF TEXT '        '
+       BYTE 0
+CRLF   BYTE >0D,>0A,>00
+*
+*
+***************************
+*
+GDATE  MOV  R11,@SAVTIM
+       BL   @CDATE
+       JNE  GDATE0
+       LI   R1,CUDATE
+       BL   @MESG
+       LI   R0,7
+       XOP  @NINE,0
+       SLA  R1,1
+       MOV  @DATBL(R1),R1
+       BL   @MESG
+       BL   @DDATE
+*
+       MOV  @BATFLG,R1          are we in batch mode?
+       JEQ  GDATE0              brif no, get user date
+       LI   R1,CRLF
+       BL   @MESG
+       JMP  GDATE4
+*
+GDATE0 LI   R1,GDMSG
+       BL   @MESG
+       LI   R1,TIMBUF
+       LI   R2,8
+       LI   R0,'  '
+GDATE2 MOVB R0,*R1+
+       DEC  R2
+       JNE  GDATE2
+       LI   R1,TIMBUF
+       LI   R2,8
+       BL   @GETSTR
+       LI   R0,5
+       XOP  @NINE,0
+       JEQ  GDATE4
+*
+       LI   R1,IVDATE
+       BL   @MESG
+       JMP  GDATE0
+*
+GDATE4 MOV  @SAVTIM,R11
+       RT
+IVDATE TEXT 'Invalid date'
+       BYTE 0
+*
+***************************
+*
+DTIME  LI   R0,1
+       JMP  DDATE1
+ 
+*
+DDATE  LI   R0,4
+DDATE1 LI   R1,NEWSTR
+       XOP  @NINE,0
+*
+MESG   MOVB *R1+,R0
+       JEQ  MESG1
+       BLWP @EMIT1
+       JMP  MESG
+*
+MESG1  RT
+*
+       BYTE 8
+NEWSTR TEXT '01234567'
+       BYTE 0
+*
+CUTIME TEXT 'Current time is '
+       BYTE 0
+CUDATE TEXT 'Current date is '
+       BYTE 0
+GDMSG  BYTE >0D,>0A
+       TEXT 'Enter new date (mm-dd-yy): '
+       BYTE 0
+*
+DATBL  DATA WDY1,WDY1,DAY2,DAY3,DAY4,DAY5,DAY6,DAY7
+*
+WDY1   TEXT 'Sunday '
+       BYTE 0
+DAY2   TEXT 'Monday '
+       BYTE 0
+DAY3   TEXT 'Tuesday '
+       BYTE 0
+DAY4   TEXT 'Wednesday '
+       BYTE 0
+DAY5   TEXT 'Thursday '
+       BYTE 0
+DAY6   TEXT 'Friday '
+       BYTE 0
+DAY7   TEXT 'Saturday '
+       BYTE 0
+*
+       EVEN
+       END

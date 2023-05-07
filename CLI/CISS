@@ -1,0 +1,67 @@
+       REF  EMIT1
+       DEF  CISNIL,CISSPC
+*
+CISNIL CLR  @ZEROES
+       JMP  CIS00
+*
+CISSPC MOV  @SPACES,@ZEROES
+CIS00  CLR  R4
+       CLR  R5
+       CLR  R6
+       CLR  R7
+       DIV  @D10,R7           r8 = 1's
+       DIV  @D10,R6           r7 = 10's
+       DIV  @D10,R5           r6 = 100's
+       DIV  @D10,R4           r5 = 1000's r4 = 10000's
+*
+       MOV  R4,R0
+       JNE  CIS01
+       MOV  @ZEROES,R0
+       JMP  CIS02
+CIS01  AI   R0,'0'
+       SLA  R0,8
+       MOV  @ZERZER,@ZEROES
+CIS02  BLWP @EMIT1
+*
+       MOV  R5,R0
+       JNE  CIS03
+       MOV  @ZEROES,R0
+       JMP  CIS04
+CIS03  AI   R0,'0'
+       SLA  R0,8
+       MOV  @ZERZER,@ZEROES
+CIS04  BLWP @EMIT1
+*
+       MOV  R6,R0
+       JNE  CIS05
+       MOV  @ZEROES,R0
+       JMP  CIS06
+CIS05  AI   R0,'0'
+       SLA  R0,8
+       MOV  @ZERZER,@ZEROES
+CIS06  BLWP @EMIT1
+*
+       MOV  R7,R0
+       JNE  CIS07
+       MOV  @ZEROES,R0
+       JMP  CIS08
+CIS07  AI   R0,'0'
+       SLA  R0,8
+       MOV  @ZERZER,@ZEROES
+CIS08  BLWP @EMIT1
+*
+       MOV  R8,R0
+       AI   R0,' 0'
+       SWPB R0
+       BLWP @EMIT1
+       SWPB R0
+       BLWP @EMIT1
+       RT
+*
+D10    DATA 10
+ZERZER DATA '00'
+SPACES DATA '  '
+ZEROES DATA 0
+*
+       END
+*

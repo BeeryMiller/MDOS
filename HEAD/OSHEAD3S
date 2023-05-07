@@ -1,0 +1,10 @@
+*  OSHEAD3S for mid testing
+
+       AORG >1D00             3/24/90 (to fix chardef pattern table overrun)
+*
+TASK#0 DATA TASK#0       NEXT TASK
+       BYTE 6,0          NUMBER OF SLICES : PAGE ZERO FOR TASK
+TASK#N EQU  $
+       AORG >1F00
+       BSS  256          RESERVED FOR CURRENT TASK'S MAP FOR DSR ROUTINE
+*

@@ -1,0 +1,478 @@
+* 07.18.2022  Split source file out from NEWCMDS
+* 07.18.2022  Updated with AUTO ANSI Autodetect
+* 07.24.2022  Updated F6 handling and added ANSIDRIVER flag
+* 07.25.2022  Added abort for no TIPI present
+* line 240 at 1 byte length fixes heatwave issue, but not implemented
+
+
+
+***********************************************
+
+ANSITEXT  DATA 0         ANSI TEXT FLAG
+ANSIFLAG  DATA 0         ANSI FLAG
+TELNETRTN DATA 0
+H0106     DATA >0106
+HEXVAL    DATA 0         DEBUG
+ANSIDRIVE DATA 0         0 = NO DRIVER  >FFFF = DRIVER PRESENT
+CTRLCEXIT DATA 0
+
+ABORT4 B    @ABORT2
+
+ABORTNOTIPIEXIT
+       B    @ABORTNOTIPI
+
+TELNET
+       MOV  R11,@TELNETRTN
+
+       MOV  @>00FE,@CTRLCEXIT
+       CLR  @>00FE
+
+       MOV  R0,R1        STORE
+
+       LI   R0,>0001     TEST IF TIPI PRESENT
+       XOP  @TIPI,0
+       MOV  R0,R0        CRU OF TIPI IF NOT >0000
+       JEQ  ABORTNOTIPIEXIT
+TELNET2
+       MOV  R1,R0        RECOVER
+       CLR  @ANSIDRIVE
+       CLR  R6
+       CLR  @ANSIFLAG
+       CLR  @ANSITEXT
+TELNET3
+
+TELNET1
+       LI   R2,URL1
+       LI   R3,>2020
+       LI   R4,40
+
+OPENNT1
+       MOV  R3,*R2+
+       DEC  R4
+       JNE  OPENNT1
+
+* Lets get connection URL
+       LI   R2,URL1
+       LI   R4,80
+OPENNT2
+       DEC  R4
+       JEQ  OPENNT3
+       MOVB *R0+,R3
+
+       INC  R6           Length of URL
+
+       CB   R3,@SPACE
+       JEQ  OPENNT2B
+       CB   R3,@CRLF+0
+       JEQ  OPENNT2
+       CB   R3,@CRLF+1
+       JEQ  OPENNT2B
+       CB   R3,@CRLF+2
+       JEQ  OPENNT2B
+       CB   R3,@NUL
+       JEQ  OPENNT2B
+
+       MOVB R3,*R2+
+       JMP  OPENNT2
+
+SLASH  BYTE '/'
+SLASHT BYTE 'T'
+SLASHG BYTE 'G'
+       BYTE 0
+
+OPENNT2B
+       DEC  R6           Subtract space character from length
+       MOVB *R0+,R1      terminate string with space
+
+       CB   R1,@SPACE
+       JEQ  OPENNT3
+
+       CB   R1,@SLASH
+       JNE  OPENNT3
+
+       MOVB *R0+,R1
+       ANDI R1,>DF00     7.2.2019
+
+       CB   R1,@SLASHG   ANSI GRAPHICS MODE
+       JNE  OPENNT3C
+       SETO @ANSIFLAG
+       SETO R1           SET GRAPHICS MODE FOR ANSI DRIVER
+       JMP  OPENNT3B
+OPENNT3C
+       CB   R1,@SLASHT   ANSI TEXT MODE
+       JNE  OPENNT3
+       SETO @ANSIFLAG
+       SETO @ANSITEXT
+
+       CLR  R1           SET TEXT MODE FOR ANSI DRIVER
+
+OPENNT3B
+
+       CLR  R0
+       MOVB @TELNETPORT,R2
+       XOP  @ANSI,0
+
+       LI   R0,2
+       XOP  @ANSI,0
+
+       CI   R0,>FFFF     TEST FOR ANSI DRIVER INSTALLATION
+       JEQ  OPENNT3
+
+       LI   R1,ANSINOTINSTALLED
+       BL   @MESG
+
+       B    @ABORT
+
+OPENNT3
+       SETO @ANSIDRIVE
+
+OPENNT4
+
+       LI   R0,5                             CLOSE ANY OPEN CONNECTIONS
+       MOVB @TELNETPORT,R1
+       XOP  @TIPI,0
+
+       LI   R0,2                             Open URL
+       LI   R1,URL1                          URL
+       MOVB @TELNETPORT,R3
+       MOV  R6,R2                            Lenth of URL
+       XOP  @TIPI,0
+
+       MOV  R1,R1
+       JEQ  ABORT5                           no connection made
+
+TESTKEY
+
+       BL   @CHECKVIDEOA                     Blinking cursor routine
+
+       LI   R0,4
+       CLR  R1
+       XOP  @KEY,0
+       JNE  CHECKVIDEOC                      no keys selected, look for inbound
+
+       CB   R1,@BACKSPACE
+       JNE  TESTKEY1
+       AI   R1,>8000
+       B    @ANSICHARSENDA
+TESTKEY1
+       CB   R1,@F9KEY                        look for exit
+       JNE  KEYTEST
+
+       B    @ABORT
+
+CHECKVIDEOC
+       B    @CHECKVIDEO  Needed routine as CHECKVIDEO out of range
+
+ABORT5 B    @ABORT2
+
+KEYTEST
+
+ANSIUP
+       CB   R1,@KEYUP
+       JNE  ANSIDOWN
+
+       LI   R0,7
+       MOVB @TELNETPORT,R1
+       XOP  @TIPI,0
+
+       JMP  CHECKVIDEO
+
+ANSIDOWN
+       CB   R1,@KEYDN
+       JNE  ANSIRIGHT
+
+       LI   R0,8
+       MOVB @TELNETPORT,R1
+       XOP  @TIPI,0
+
+       JMP  CHECKVIDEO
+
+ANSIRIGHT
+       CB   R1,@KEYRA
+       JNE  ANSILEFT
+
+       LI   R0,>000A
+       MOVB @TELNETPORT,R1
+       XOP  @TIPI,0
+
+       JMP  CHECKVIDEO
+
+ANSILEFT
+       CB   R1,@KEYLA
+       JNE  ANSIPGUP
+
+       LI   R0,9
+       MOVB @TELNETPORT,R1
+       XOP  @TIPI,0
+
+       JMP  CHECKVIDEO
+
+ANSIPGUP
+       CB   R1,@ANSIPAGEUP
+       JNE  ANSIPGDN
+
+       LI   R0,11
+       MOVB @TELNETPORT,R1
+       XOP  @TIPI,0
+
+       JMP  CHECKVIDEO
+
+ANSIPGDN
+       CB   R1,@ANSIPAGEDN
+       JNE  ANSICHARSENDA
+
+       LI   R0,12
+       MOVB @TELNETPORT,R1
+       XOP  @TIPI,0
+
+       JMP  CHECKVIDEO
+
+ANSICHARSENDA
+       LI   R0,4                             Sending character
+       MOVB @TELNETPORT,R2
+       XOP  @TIPI,0
+
+CHECKVIDEO
+
+       LI   R2,1
+       MOV  @ANSIFLAG,@ANSIFLAG
+       JEQ  CHECKV5
+*      LI   R2,74                            was 80
+*      LI   R2,1
+*      LI   R2,40
+
+CHECKV5
+
+       CLR  @URL1
+
+       CLR  R3
+       LI   R0,6
+       LI   R1,URL1
+       MOVB @TELNETPORT,R3
+       XOP  @TIPI,0                          check for character from socket
+
+       MOV  R0,R0                            ZERO LENGTH
+       JEQ  TESTKEYA
+
+       LI   R1,URL1                          12.29.2021
+       MOV  R0,R6
+       JMP  MUIN77A
+
+TESTKEYA B  @TESTKEY
+
+MAIN777
+       MOV  @IACGRABR1,R1
+MUIN77A
+
+       CLR  R3
+       MOVB *R1,@SENDKEY1
+       MOVB *R1+,R3
+       CI   R3,>FF00
+       JNE  MAIN888
+       B    @IACGRAB
+
+MAIN888
+       MOV  @ANSIFLAG,@ANSIFLAG
+       JEQ  CHECKVIDEO3
+
+       MOV  R1,@IACGRABR1
+
+       LI   R0,1
+       LI   R1,SENDKEY1
+       LI   R2,1
+       XOP  @ANSI,0
+
+       DEC  R6
+*      MOV  R6,R6
+       JNE  MAIN777
+
+       B    @TESTKEY
+
+CHECKVIDEO3
+
+       CI   R1,>FF00                         special IAC negotiation
+       JEQ  IACGRAB                          used on some telnet connections
+
+       MOVB R1,@TTYSEND
+
+       LI   R1,TTYSEND
+
+       MOV  @ANSIFLAG,@ANSIFLAG
+       JEQ  CHECKVIDEO1
+
+       LI   R0,1
+       LI   R2,1
+       XOP  @ANSI,0
+
+       B    @TESTKEY
+
+CHECKVIDEO1
+       MOVB @URL1,@TTYSEND
+       BL   @MESG
+
+       B    @TESTKEY                          Repeat
+
+CHECKVIDEOA
+
+       LI   R0,3             FLASHING CURSOR ROUTINE
+       XOP  @VID,0
+
+       MOV  R1,R2
+       MOV  R0,R1
+
+       LI   R0,>000B
+       XOP  @VID,0
+
+       SWPB R0
+       MOVB R0,@CHARSAVE
+
+       LI   R0,>002A
+       LI   R1,CHARSAVE+1
+       LI   R2,1
+       SETO R3
+       XOP  @VID,0
+
+       LI   R0,>002A
+       LI   R1,CHARSAVE
+       LI   R2,1
+       SETO R3
+       XOP  @VID,0                           END OF FLASHING CURSOR ROUTINE
+
+       RT
+
+
+IACGRABR6 DATA 0
+IACGRABR1 DATA 0
+SENDKEY1  DATA 0
+
+TEMPREG   DATA 0
+
+IACGRAB
+       MOVB *R1+,@TEMPREG                    THIS LINE MAY NOT BE NEEDED
+       DEC  R6
+       JEQ  IACGRABA
+       MOVB *R1+,@TEMPREG
+       DEC  R6
+       JEQ  IACGRAB1
+       MOVB *R1+,@IACGRABMSG+2
+       DEC  R6
+
+       MOV  R6,@IACGRABR6
+       MOV  R1,@IACGRABR1
+       JMP  IACGRABB
+IACGRABA
+       LI   R0,3
+       MOVB @TELNETPORT,R1
+       XOP  @TIPI,0
+       MOV  R0,R0
+       JEQ  IACGRABA
+IACGRAB1
+       LI   R0,3
+       MOVB @TELNETPORT,R1
+       XOP  @TIPI,0
+       MOV  R0,R0
+       JEQ  IACGRAB1
+       MOVB R1,@IACGRABMSG+2
+       CLR  R0
+       CLR  R1
+       MOV  R6,@IACGRABR6
+IACGRABB
+       LI   R0,4
+       CLR  R1
+       LI   R3,IACGRABMSG
+       MOVB *R3+,R1
+       MOVB @TELNETPORT,R2
+       XOP  @TIPI,0
+       MOVB *R3+,R1
+       MOVB @TELNETPORT,R2
+       XOP  @TIPI,0
+       MOVB *R3+,R1
+       MOVB @TELNETPORT,R2
+       XOP  @TIPI,0
+       MOV  @IACGRABR1,R1
+       MOV  @IACGRABR6,R6
+       MOV  R6,R6
+
+       JEQ  MAIN000
+       B    @MAIN777
+
+MAIN000
+
+       B    @TESTKEY
+
+ANSIPAGEUP  BYTE >8C
+ANSIPAGEDN  BYTE >82
+KEYUP       BYTE >8B
+KEYRA       BYTE >89
+KEYLA       BYTE >88
+KEYDN       BYTE >8A
+BACKSPACE   BYTE >88     KEYMODE 0 AND KEYMODE 4
+F9KEY       BYTE >8F
+ESC         BYTE >1B
+TELNETPORT  BYTE >A4     CLIENT TELNET HANDLE/PORT
+            EVEN
+CHARSAVE    TEXT ' _'
+
+
+IACGRABMSG
+       DATA >FFFC,>0000
+
+TIPIRECEIVEMSG DATA 0
+
+ABORTNOTIPI
+       LI   R1,NOTIPI
+       BL   @MESG
+       JMP  ABORT6
+ABORT2
+       LI   R1,NOCONNECT
+       BL   @MESG
+       JMP  ABORT3
+ABORT
+       LI   R1,CRLF
+       BL   @MESG
+
+       LI   R0,5
+       XOP  @TIPI,0
+
+       LI   R0,>29
+       MOV  @FCOLOR,R1
+       XOP  @VIDEO,0
+
+       LI   R0,>0C
+       MOVB @BCOLOR,R1
+       SRL  R1,8
+       XOP  @VIDEO,0
+
+ABORT3
+
+       CLR  R0
+       LI   R1,>0001
+       XOP  @VIDEO,0
+
+ABORT6
+       MOV  @TELNETRTN,R11
+       MOV  @CTRLCEXIT,@>00FE                RESTORE ^C EXIT
+
+       B    *R11
+
+TTYSEND DATA 0
+
+FCOLOR BYTE >0F
+BCOLOR BYTE >04
+
+NUL
+KEY     DATA >0005        Keyboard scan library
+TIPI    DATA >000C        TIPI library
+SPACE   DATA >2020
+OPENING TEXT 'Connecting...'
+CRLF1   BYTE >0D,>0A,0
+NOCONNECT TEXT 'Not connected, exiting...'
+        BYTE >0D,>0A,0
+ANSINOTINSTALLED
+        TEXT 'ANSI driver not installed!'
+        BYTE >0D,>0A,0
+NOTIPI
+        TEXT 'No TIPI present, exiting...'
+        BYTE >0D,>0A,0
+        EVEN
+

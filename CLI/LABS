@@ -1,0 +1,152 @@
+       REF  EMIT1
+       REF  GETSTR
+       DEF  LABCOD
+*
+LABCOD MOV  R11,@LABRET
+       MOV  R0,R11            save string pointer
+*
+       MOV  R11,R1            get pointer to option buffer
+       LI   R2,PABLEN
+       CLR  R3
+       MOVB @MAXLEN,*R2       to point to string rather than length byte @@
+       LI   R0,8              parse opcode
+       XOP  @NINE,0
+       JEQ  GETLAB
+       JMP  BADDIR
+*
+ERRM1  TEXT 'Insufficient memory'
+       BYTE >0D,>0A,0
+ERRM2  TEXT 'Device error'
+       BYTE >0D,>0A,0
+ERRM3  TEXT 'Bad device name'
+       BYTE >0D,>0A,0
+*
+MEMERR LI   R1,ERRM1          not enough memory
+       JMP  ERR1Z
+*
+DEVERR LI   R1,ERRM2          device error
+       JMP  ERR1Z
+*
+BADDIR LI   R1,ERRM3          not a diskette device
+*
+ERR1Z  BL   @MESG
+       B    @ERRORX
+*
+GETLAB LI   R0,PABLEN
+       MOVB *R0+,R1
+       SRL  R1,8
+       JEQ  DEVERR
+       CI   R1,4
+       JLE  DEVERR
+*
+       LI   R2,DSKNAM
+       AI   R2,3
+*      CB   *R0+,*R2+
+*      JNE  DEVERR
+*      CB   *R0+,*R2+
+*      JNE  DEVERR
+*      CB   *R0+,*R2+
+*      JNE  DEVERR
+*
+       LI   R3,PABLEN
+       A    R1,R3             r3 points to last char in name
+       CB   *R3,@PERIOD
+       JEQ  LABNAM
+*
+       MOV  R3,R4
+CNAM00 DEC  R3
+       C    R3,R2
+       JLE  DEVERR            no periods in name
+       CB   *R3,@PERIOD       period?
+       JNE  CNAM00
+       LI   R5,PABNAM
+       S    R3,R5
+       NEG  R5
+       INC  R5
+       SLA  R5,8
+       MOVB R5,@PABLEN
+*
+       INC  R3                r3 points to volume name
+       LI   R5,VOLNAM
+CNAM01 CI   R5,VOLNAM+10
+       JHE  DEVERR            new name too long
+       MOVB *R3+,*R5+
+       C    R3,R4
+       JLE  CNAM01
+*
+CNAM02 CI   R5,VOLNAM+10
+       JHE  SECZER
+       MOVB @H20,*R5+
+       JMP  CNAM02
+*
+LABNAM LI   R1,VOLNAM
+LABN00 MOVB @H20,*R1+
+       CI   R1,VOLNAM+10
+       JL   LABN00
+       LI   R1,US1
+       BL   @MESG
+       LI   R1,VOLNAM
+       LI   R2,10
+       BL   @GETSTR
+       CB   @VOLNAM,@H20
+       JEQ  ERRORX
+*
+SECZER MOVB @REDSEC,@PAB
+       LI   R0,PAB
+       LI   R3,SECTOR
+       MOV  R3,@PAB+4
+       CLR  @PAB+6
+       MOV  @ONE,@PAB+12
+       XOP  @EIGHT,0
+       MOVB @PAB+1,R1
+       JNE  ERRORX            @@
+*
+       LI   R1,SECTOR
+       LI   R2,VOLNAM
+SECZ00 MOVB *R2+,*R1+
+       CI   R2,VOLNAM+10
+       JL   SECZ00
+*
+       MOVB @WRTSEC,@PAB
+       LI   R0,PAB
+       MOV  R3,@PAB+4
+       CLR  @PAB+6
+       MOV  @ONE,@PAB+12
+       XOP  @EIGHT,0
+       MOVB @PAB+1,R1
+       JNE  ERRORX            @@
+*
+ERRORX MOV  @LABRET,R11
+       RT
+*
+MESG   MOVB *R1+,R0
+       JEQ  MESGR
+       BLWP @EMIT1
+       JMP  MESG
+MESGR  RT
+*
+US1    TEXT 'Volume label?'
+       BYTE >0D,>0A
+       TEXT '(10 characters, "Enter" to abort)'
+US2    BYTE >0D,>0A,0
+PERIOD BYTE '.'
+H20    BYTE ' '
+MAXLEN BYTE 40
+DSKNAM TEXT 'DSK'
+*
+REDSEC BYTE >0A
+WRTSEC BYTE >0B
+LABRET DATA 0
+ONE    DATA 1
+EIGHT  DATA 8
+NINE   DATA 9
+VOLNAM DATA 0,0,0,0,0,0
+SECTOR EQU  >7F00             sigh buffer    7/31/88
+PAB    DATA >0000,>0000,SECTOR,>0000
+       DATA >0000,>0000,>0001
+       BYTE 0
+PABLEN BYTE 0
+PABNAM TEXT '0123456789 123456789 123456789 123456789'
+*
+       END
+*

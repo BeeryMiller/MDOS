@@ -1,0 +1,122 @@
+****************************************************************************&
+*                                                                           *
+* CYA Patch Table for MDOS > V7.40                                          *
+*                                                                           *
+*****************************************************************************
+
+* 7.29.2022 Updated PAGE mapping for file compression.  If HEAD\PAGENUMS
+* changes page listing, then this page must be changed as well for pages
+* P_HFC1, P_HFC2, and P_SCSI
+
+* 8.06.2022 Updated adding CYAMPE
+
+
+         COPY "\MDOS\HEAD\PAGENUMS"
+
+         REF  CYAMP1
+         REF  CYAMP2
+         REF  CYAMP3
+         REF  CYAMP4
+         REF  CYAMP5
+         REF  CYAMP6
+         REF  CYAMP7
+         REF  CYAMP8
+         REF  CYAMP9
+         REF  CYAMPA
+         REF  CYAMPB
+         REF  CYAMPC
+         REF  CYAMPD
+         REF  CYAMPE
+
+         AORG >1F00
+
+*****************************************************************************
+* >1F00
+CYAVER   DATA >0001     Version 1 of table
+
+* >1F02
+CYAVER1  BYTE P_CLI1,0  PAGE                               CLI\HTITLES
+         DATA 0,CYAMP1  MDOS Version number
+*****************************************************************************
+
+* >1F08
+* P_HFDC2 is copied to P_RESV during file compression
+
+CYASTEP1 BYTE P_RESV,0  COMPRESSED PAGE
+*CYASTEP1 BYTE P_HFC2,0  COMPRESSED PAGE                    HD\FLPPRM  +2
+         DATA 0,CYAMP2  HFDC FLOPPY STEP RATES 360
+*****************************************************************************
+
+* >1F0E
+* P_HFC2 is copied to P_RESV during file compression
+
+CYASTEP2 BYTE P_RESV,0  COMPRESSED PAGE
+*CYASTEP2 BYTE P_HFC2,0  COMPRESSED PAGE                    HD\FLPPRM  +2
+         DATA 0,CYAMP3  HFDC FLOPPY STEP RATES 720
+*****************************************************************************
+
+* >1F14
+* P_HFC2 is copied to P_RESV during file compression
+
+CYASTEP3 BYTE P_RESV,0  COMPRESSED PAGE
+*CYASTEP3 BYTE P_HFC2,0  COMPRESSED PAGE                    HD\FLPPRM  +2
+         DATA 0,CYAMP4  HFDC FLOPPY STEP RATES 1.44
+*****************************************************************************
+
+* >1F1A                                                    L9\PARSEFS
+CYACASE  BYTE P_MEM,0   PAGE
+         DATA 0,CYAMP5  CASE FOR FILENAME CAP/ALLOW LOWER CASE
+*****************************************************************************
+
+* >1F20                                                    SCSI2\SECTOR_S
+* P_SCSI  is copied to P_LAST+2 during file compression
+*         We will need to INCT P_LAST during CYA patching
+
+CYASCSI  BYTE P_LAST+2,0  COMPRESSED PAGE
+* CYASCSI  BYTE P_SCSI,0  COMPRESSED PAGE
+         DATA 0,CYAMP6  SCSI REMAP
+*****************************************************************************
+
+* >1F26                                                    L8\SECT3-P3
+CYAREMAP BYTE P_DSR1,0  PAGE
+         DATA 0,CYAMP7  DSK REMAP 1 THROUGH 9
+*****************************************************************************
+
+* >1F2C
+CYACHARS BYTE P_VID1,0  PAGE                               L6\CHARSETS
+         DATA 0,CYAMP8  REPLACE CHARSET 2048 BYTES
+*****************************************************************************
+
+* >1F32
+CYAAUTO1 BYTE P_CLI1,0  PAGE                               CLI\HCLIS
+         DATA 0,CYAMP9  AUTOEXEC 1
+*****************************************************************************
+
+* >1F38
+CYAAUTO2 BYTE P_CLI1,0  PAGE                               CLI\HCLIS
+         DATA 0,CYAMPA  AUTOEXEC 2
+*****************************************************************************
+
+* >1F3E
+CYAAUTO3 BYTE P_CLI1,0  PAGE                               CLI\HCLIS
+         DATA 0,CYAMPB  AUTOEXEC 3
+*****************************************************************************
+
+* >1F44
+* P_HFC1 is copied to P_LAST during file compression
+
+CYAHFDC1 BYTE P_LAST,0  COMPRESSED PAGE
+*CYAHFDC1 BYTE P_HFC1,0  COMPRESSED PAGE                  HD\SECTOR_IOW +2
+         DATA 0,CYAMPC  HFDC HD STEP RATE
+*****************************************************************************
+
+* >1F4A                                                    CLI\HCLIS
+CYACOLOR BYTE P_CLI1,0  PAGE
+         DATA 0,CYAMPD  COLOR CODES FOR TEXT
+*****************************************************************************
+
+* >1F50                                                    L8\DSRPASS-S
+         BYTE P_DSR1,0  PAGE
+         DATA 0,CYAMPE
+*****************************************************************************
+

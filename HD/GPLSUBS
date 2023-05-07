@@ -1,0 +1,366 @@
+* NOW FOR ASSEMBLY LIBRARY EQUATES
+GPLLNK EQU  >20FC
+XMLLNK EQU  >2100
+KSCAN  EQU  >2104
+VSBW   EQU  >2108
+VMBW   EQU  >210C
+VSBR   EQU  >2110
+VMBR   EQU  >2114
+VWTR   EQU  >2118
+DSRLNK EQU  >211C
+LOADER EQU  >2120
+NAMLNK EQU  >2002
+TGOBLD EQU  >2004
+* Call Files for 99/4 Basic 5/16/84
+* allocates buffer space and sets number of files to be open
+*
+*PG2    EQU  6
+*VWA    EQU  >8C02
+*VRD    EQU  >8800-VWA
+*VWD    EQU  >8C00-VWA
+*
+MAXCFV EQU  9       max call files value
+*MAXDRV EQU  4       max number of drives base 1
+CHRPTR EQU  >2C+PAD current char pointer in Basic
+STLN   EQU  >30+PAD start of line # table
+ENLN   EQU  >32+PAD end of line # table
+STRSP  EQU  >18+PAD string space pointer
+STREND EQU  >1A+PAD end of string space pointer
+CFERR  EQU  >50+PAD error code addr
+MEMTOP EQU  >70+PAD top of memory pointer
+FACACT EQU  >834A
+       PAGE
+*
+* NOW SET UP FOR THE NEXT ROUND
+*
+CDIR3  MOV  R7,@COMBUF+8
+       LI   R5,MESTB2
+       MOV  @COMBUF+4,R0
+       MOV  @COMBUF+6,R1
+       CLR  R10
+       MOV  @COMBUF+2,R11
+       JMP  CDIRFF
+*
+CDIR31 SRL  R7,8
+CDIR26 CI   R2,>8D00
+       JEQ  CDR266
+       MOVB *R5+,R2
+       AI   R2,>6000
+CDR266 MOVB R2,@VWD
+       DEC  R7
+       JNE  CDIR26
+       JMP  CDIR21
+*
+********************************************************************************
+*      ROUTINE TO PROVIDE STATEMENTS TO SCREEN
+*
+*
+********************************************************************************
+MESTBL BYTE 6
+       TEXT 'DRIVE='
+HF9    BYTE >F9,11            NUMBER,LENGTH,SCROLL,MESS LENGTH
+       TEXT ' DIRECTORY='
+HFD    BYTE >FD,>FF,5         NAME, SCROLL, MESS LENGTH
+       TEXT 'USED='
+HFE    BYTE >FE,12,11            NUMBER,LENGTH, MESS LENGTH
+       TEXT ' AVAILABLE='
+       BYTE >FE,12,>FF,28        NUMBER,LENGTH,SCROLL,MESS LENGTH
+       TEXT ' FILENAME   SIZE    TYPE   P'
+       BYTE >FF,10            SCROLL, MESS LENGTH
+       TEXT '-'
+       BYTE 1,>20,6
+       TEXT '-'
+       BYTE 1,>20,8
+       TEXT '-'
+       BYTE 2
+       TEXT ' -'
+HFC    BYTE >FC               FINISHED
+*
+MESTB2
+* NOW FOR MESSAGE TABLE FOR FILE ENTRIES IN CALL DIR(X)
+       BYTE >FD,1,>20     NAME, BLANK SPACE
+HFB    EQU  $+2
+HFA    EQU  $+5
+       BYTE >FE,12,>FB,>FE,10,>FA  SCROLL, NAME, SIZE,TYPE,LEN,P END
+       EVEN
+* WE KNOW THE FOLLOWING
+* COMBUF=TOTAL # OF AU'S
+* R7= NUMBER OF AU'S AVAILABLE
+* DIRECTORY NAME IS POINTED TO BY R8
+* FIRST ADJUST R10 TO NUMBER AVAILABLE
+CDIR2  MOV  @FNDDIR,R11
+       JNE  CDIR2Z
+       MOV  R8,R11
+CDIR2Z MOV  R11,@COMBUF+8
+       MOV  @COMBUF,R0    GET THE NUMBER HERE
+       S    R7,R0         NOW HAVE THE # OF USED ON THE DISK
+       MOV  R7,R10        NOW THE NUMBER AVAILABLE
+       MOV  @VOLUME,R5
+       SLA  R5,3
+       MOV  @CYLPLT-8+6(R5),R5
+       SRL  R5,12
+       INC  R5
+       MPY  R5,R10
+       MPY  R5,R0
+* NOW ENTER TABLE DRIVEN SYSTEM
+       LI   R5,MESTBL
+*
+CDIRFF
+********************************************************************************
+*      SCROLL SCREEN ROUTINE
+*      USE FCB BUFFER AS A BUFFER
+*      CLEARS BOTTOM LINE AND
+*      POSITIONS VDP WRITE POINTER AT BEGINNING OF LINE
+********************************************************************************
+* MOVE A LINE AT A TIME
+       BLWP @SCROLL
+CDIR21 CLR  R7
+       CLR  R2
+       MOVB *R5+,R7
+       CB   R7,@HF9      TEST FOR SCROLL
+       JL   CDIR31       BRANCH IF NOT
+       SRL  R7,7         GET POINTER TO TABLE
+       MOV  @BRTBL->1F2(R7),R7 GET JUMP ADDRESS
+       B    *R7
+*
+BRTBL  DATA CDIRF9
+       DATA CDIRFA
+       DATA CDIRFB
+       DATA CDIR32       DONE
+       DATA CDIRFD
+       DATA CDIRFE
+       DATA CDIRFF
+*
+CDIRF9 LI   R2,>9000
+       AB   @VOLUME+1,R2
+       MOVB R2,@VWD
+       JMP  CDIR21
+*
+CDIRFE MOVB *R5+,R7           # OF DIGITS TO DISPLAY
+       SRL  R7,8              # OF DIGITS
+       BLWP @HEXASC
+       MOV  R10,R0            READY FOR NEXT NUMBER
+       MOV  R11,R1
+       JMP  CDIR21
+*
+CDIRFD MOV  @COMBUF+8,R6
+       LI   R7,10
+CDIR25 MOVB *R6+,R2
+       AI   R2,>6000
+       MOVB R2,@VWD
+       DEC  R7
+       JNE  CDIR25
+       JMP  CDIR21
+*
+CDIRFB MOV  @COMBUF,R6    FILE TYPE STORED IN IOBUF
+       ABS  R6           MAKE POSITIVE
+       SLA  R6,2         MULTIPLY BY 4
+       AI   R6,FINMTB-4
+       LI   R7,4
+       JMP  CDIR25       NOW MOVE FILE TYPE
+*
+CDIRFA MOV  @COMBUF,R7
+       JGT  CDIR32
+       MOVB @CBH80,@VWD    MOVE BLANK
+H1000  NOP
+       MOVB @CBHB0,@VWD    MOVE "P"
+CDIR32 MOV  R12,@SAVCRU
+       BL   @KSCANG      TEST IF KEY JUST PRESSED
+       MOV  @SAVCRU,R12
+       MOVB @>837C,R1    BRANCH IF NOT
+       JEQ  NKDN2
+* A NEW KEY HAS BEEN PRESSED, SO SEE IF IT IS F4
+       CB   @>8375,@CBH02
+       JEQ  NKDN              IT IS F4, SO STOP FOR GOOD
+* TO BE HERE, KEY PRESSED, SO WAIT FOR NEW ONE
+NKDN1  BL   @KSCANG
+       MOV  @SAVCRU,R12
+       MOVB @>837C,R1
+       JEQ  NKDN1        WAIT FOR NEW KEY PUSH
+       CB   @>8375,@CBH02
+       JEQ  NKDN
+NKDN2  INC  @RECNUM
+       B    @CDIRP2
+*
+NKDN   SZCB @CHAT,@CHAT       >8374 WILL BE RESTORED BY ITSELF
+CFILEX B    @RET994           RETURN TO 99/4A OS
+*
+FINMTB
+* NOW FOR FILE TYPE TABLE
+       TEXT ' D/F'
+       TEXT ' D/V'
+       TEXT ' I/F'
+       TEXT ' I/V'
+       TEXT ' PGM'
+       TEXT ' DIR'
+       TEXT ' EMU'
+       PAGE
+*
+*   DON'T NEED CALL FILES(X)
+*
+       PAGE
+CDIR   LI   R1,4              MAKE SURE CHRPTR,VWA AND VRD ARE CORRECT
+*
+*------------------------>
+* this routine may already exist !!!!!
+* R0=returned word
+* R1=vdp addr
+*------------------------>
+*
+*FIRST VALIDATE THE ARGUMENT 1-4
+STRSET A    @CHRPTR,R1        REMEMBER BAD RETURN IN R10
+VRWD$  SWPB R1
+       MOVB R1,@VWA
+       SWPB R1
+       MOVB R1,@VWA
+       NOP
+VRWD1  MOVB @VRD,R0
+       SWPB R0
+       MOVB @VRD,R0
+       SWPB R0
+       AI   R0,->B7C7
+       JNE  CFILEX            IT IS NOT THE CORRECT FORMAT
+*
+*  NOW IT IS A PATHNAME THAT HAS BEEN GIVEN, SO MOVE IT TO BUFFER
+*  we KNOW THAT THE VDP READ POINTER IS TO THE PATHNAME LENGTH
+       A    @CW8,@CHRPTR
+       MOVB @VRD,R0
+       SRL  R0,8
+       A    R0,@CHRPTR
+       SLA  R0,8
+       LI   R2,OPTLN
+       CB   R0,@CBH04
+       JL   CFILEX       ERROR OUT IF LENGTH IS < 4
+       CB   R0,@CBH27    MAX LENGTH IS 39 DECIMAL
+       JH   CFILEX
+       MOVB R0,*R2+
+       SRL  R0,8
+GP2702 MOVB @VRD,*R2+
+       DEC  R0
+       JNE  GP2702
+* NOW TEST IF THINGS COMPARE CORRECTLY
+*  COMPARE FOR "WDSX." AND X MUST EQUAL DRIVE NUMBER
+       MOVB @DPT,*R2
+       LI   R4,TEXWDS
+*      LI   R5,PTNAME
+       LI   R0,3
+GP2704 CB   *R4+,*R5+
+       JNE  CFILEX      ERROR OUT
+       DEC  R0
+       JNE  GP2704
+       MOVB *R5+,R4      NOW TEST FOR A NUMBER 1-3
+       SRL  R4,8
+       AI   R4,->30
+       JEQ  CFILEX
+       CI   R4,3
+       JH   CFILEX
+*      INC  @OPTLN-1         ADD ONE TO PATHNAME FOR "."
+       MOV  R4,@VOLUME        PUT IN VOLUME
+* NOW SET UP REGISTERS FOR PATHNAME SEARCH
+       BLWP @GETBUF
+       MOV  R0,R0
+       JNE  CFILEX            ERROR RETURN
+*      CLR  @FNDDIR           MAKE SURE THIS IS THE BASE DIR
+*      MOV  @OPTLN-1,R4
+       SZCB R4,R4
+       AI   R4,-5
+*      LI   R5,PTNAME+5  POINT TO CHAR PAST DPT
+*      LI   R6,DIROP*256
+       B    @GP2707
+       PAGE
+*-------------------------------------------------------------------------------
+*
+*  DON'T NEED CALL ILR, CALL LLR, CALL LR
+*
+*-------------------------------------------------------------------------------
+*
+*   CALL MDM  IS NEXT
+*
+DM     A    @H0004,@CHRPTR
+*      BL   @MOVASM           LOAD THE ASM LIBRARY ROUTINES LIKE CALL ILR
+       LI   R4,NAMMDM
+       LI   R1,PAB
+       LI   R0,>1000
+       LI   R2,9
+       BLWP @VMBW
+* NOW PATHNAME LENGTH POINTER TO >8356
+       AI   R0,9
+       MOV  R0,@>8356
+* NOW LOAD PAHTNAME LENGTH AND PAHTNAME
+       MOV  R4,R1
+       MOVB *R1,R2
+       SRL  R2,8
+       INC  R2           CONPENSATE FOR LENGTH
+       BLWP @VMBW
+* NOW GO TO LOADER
+       MOV  @TGOBLD,R9
+LLR3   MOV  @OSRTN,R11   GET RETURN TO OS  LIKE CALL LLR("DSKX.PROGRAM")
+       INCT R11
+       CLR  R0           0 FOR 0 OF CRU BITS
+       DECT R9
+       B    *R9
+*
+PAB    DATA >0004,>1100,>0000,>0000
+       BYTE >60
+HC7    BYTE >C7
+       PAGE
+********************************************************************************
+*
+*   DATE AND TIME ROUTINE
+*
+********************************************************************************
+DT     A    @H0003,@CHRPTR
+       BLWP @DTSUB
+       B    @RTNORS
+       PAGE
+********************************************************************************
+*      CONVERT HEX TO ASCII
+*      DOES THE # OF DIGITS GIVEN BY CALLERS R11
+*      NUMBER IN CALLERS R0 AND R1
+********************************************************************************
+HEXASC DATA WRKREG,HEXA00
+*
+HEXA00 CLR  R10          FLAG FOR LEADING 0 SUPPRESSION
+       MOV  *R13,R6      MSW
+       MOV  @2(R13),R7   LSW
+       MOV  @14(R13),R4  # OF DIGITS *2
+       CI   R4,12        6 DIGITS?
+       JL   HLOOP
+       DIV  @C10E4,R6
+       JNO  HEXA01       NO OVERFLOW
+HEXA02 LI   R5,>8A00     OVERFLOW, SO FILL WITH '*'
+HEXA08 MOVB R5,@VWD
+       DECT R4
+       JNE  HEXA08
+       RTWP
+*
+HEXA01 CI   R6,100
+       JHE  HEXA02
+       CLR  R5
+       DIV  @CW10,R5    GET 100'S AND 10'S
+       MOV  R5,R5
+       JEQ  HEXA06
+       AI   R5,>10
+       INC  R10          NO ZERO SUPPRESSION
+       SWPB R5
+HEXA06 AI   R5,>8000
+       MOVB R5,@VWD
+       DECT R4
+       JMP  HEXA03
+*
+HLOOP  CLR  R6           FOR DIV/MUL
+       DIV  @DIVTBL-2(R4),R6
+HEXA03 MOV  R6,R6        ZERO?
+       JNE  NZERO        BRANCH IF YES
+       MOV  R10,R10      ARE THERE ANY PREVIOUS DIGITS
+       JNE  NZERO        BRANCH IF YES
+       LI   R6,>8000     IS THIS THE LAST DIGIT
+       CI   R4,2
+       JNE  SUPPR        BRANCH IF NOT
+NZERO  AI   R6,>90       TO ASCII
+       INC  R10          NO MORE LEADING ZERO SUPPRESS
+       SWPB R6
+SUPPR  MOVB R6,@VWD      TO VDP RAM
+       DECT R4
+       JNE  HLOOP        BRANCH IF NOT YET DONE
+       RTWP              READY FOR NEXT TIME

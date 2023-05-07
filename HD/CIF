@@ -1,0 +1,121 @@
+********************************************************************************
+*
+*      CONVERT SIGNED AND UNSIGNED INTEGER TO FLOATING POINT
+*           INPUT IN CALLERS R0, OUTPUT IN FAC-FAC+7
+*           RESULT TO FAC
+********************************************************************************
+CIF    DATA WRKREG,CIFNOR     15 BIT PLUS SIGN  INPUT IN CALLERS R0
+*
+CIFPOS DATA WRKREG,CIFPS      16 BIT, NO SIGN   INPUT IN CALLERS R0
+*
+CIFAU  DATA WRKREG,CIFAUU     16 BIT INPUT, CONVERT TO 20 BIT VIA SECTORS
+*
+CIFLNG DATA WRKREG,CIFLON     20 BIT INPUT, FAC MSW, CALLERS R0 LSW
+*
+CIFLEN DATA WRKREG,CIFLN0     yalfu
+*
+STTOBF DATA WRKREG,STTO00
+*
+CIFLN0 MOV  *R13,R6           middle and low bytes
+       MOV  @CIFLN9,R10       high bytes
+       JMP  CIFL01
+*
+CIFAUU MOV  @VOLUME,R4
+       SLA  R4,3
+       MOV  @CYLPLT-8+6(R4),R4
+       SRL  R4,12
+       INC  R4
+       MOV  *R13,R0
+       MPY  R4,R0
+       MOV  R0,R10
+       MOV  R1,R6
+CIFL01 CLR  R3
+       JMP  CIFN02
+*
+CIFLON MOV  @COMBUF+4,R10
+       MOV  @COMBUF+6,R6
+       JMP  CIFL01
+*
+CIFN00 ABS  *R13
+       JMP  CIFN01
+*
+CIFNOR MOV  *R13,R3           TEST IF NEGATIVE
+       JLT  CIFN00
+*
+CIFPS  CLR  R3
+CIFN01 CLR  R10
+       MOV  *R13,R6
+CIFN02 LI   R4,FAC
+       MOV  R4,R5
+       CLR  *R5+
+       CLR  *R5+
+       CLR  *R5+
+       CLR  *R5
+       LI   R2,>40
+       LI   R5,100
+       MOV  R10,R10
+       JEQ  CIFN03
+       CI   R10,>000F
+CBH0F  EQU  $-1
+       JL   CIFN04
+       CI   R6,>4240
+       JL   CIFN04
+       INC  R2
+       MOV  R6,R7
+       MOV  R10,R6
+       DIV  R5,R6
+       SWPB R7
+       MOVB R7,@4(R4)
+       JMP  CIFN04
+*
+CIFN03 MOV  R6,R6
+       JEQ  CIFRT
+       C    R6,R5
+       JL   CIF02
+       CI   R6,10000
+       JL   CIF01
+CIFN04 INC  R2
+       MOV  R6,R7
+       MOV  R10,R6
+       DIV  R5,R6
+       SWPB R7
+       MOVB R7,@3(R4)
+CIF01  INC  R2
+       MOV  R6,R7
+       CLR  R6
+       DIV  R5,R6
+       SWPB R7
+       MOVB R7,@2(R4)
+CIF02  SWPB R2
+       MOVB R2,R6
+       MOV  R3,R3
+       JEQ  CIF03
+       NEG  R6
+       NEG  *R13
+CIF03  MOV  R6,*R4
+CIFRT  LI   R6,8              LENGTH OF FLOATING PONT NUMBER
+STTO3  LI   R2,FAC-1
+       MOV  R6,@-1(R2)        MOV LENGTH OF STRING IN THERE
+       INC  R6                TOTAL STRING LENGTH
+       CLR  @PASRW            DSR TO USER
+       MOVB @CPUFLG,@PASVDP   SET VDP FLAG
+       MOV  @MYUADL,@PASADL   SET USER ADDRESS
+       MOV  @MYUADH+1,@PASADH   SET USER ADDRESS
+       MOV  R2,@PASDSR        DSR ADDRESS
+       MOV  R6,@PASCNT
+       BLWP @PASDAT
+* NOW ADD R6 TO LENGTH OF THE USER ADDRESS
+       MOV  R6,R0
+       BLWP @ADDADR           ADD IT
+       RTWP
+*
+STTO00 MOV  *R13,R0           ADDRESS OF NAME
+       LI   R2,FAC
+       CLR  R6
+STTO2  MOVB *R0+,*R2
+       CB   *R2+,@BLANK       GET LENGTH
+       JEQ  STTO3
+       INC  R6
+       CI   R6,10
+       JNE  STTO2
+       JMP  STTO3

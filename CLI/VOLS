@@ -1,0 +1,82 @@
+       REF  EMIT1
+       REF  UWIDTH            user window width
+       REF  ULINES            user screen line count
+       REF  GETCAT,VOLON
+       REF  SETCAT,RELCAT
+*
+       DEF  VOLCOD
+*
+VOLCOD MOV  R11,@DIRRET
+       MOV  R0,R12            save string pointer
+       BL   @SETCAT
+       JNE  MEMERR
+*
+       MOV  R12,R1            get pointer to option buffer
+       LI   R2,DIRLEN
+       MOVB @MAXLEN,*R2
+       CLR  R3
+       LI   R0,8              parse opcode
+       XOP  @NINE,0
+       JEQ  GETVOL
+       JMP  BADDIR
+*
+ERRM1  TEXT 'Insufficient memory'
+       BYTE >0D,>0A,0
+ERRM2  TEXT 'Device error'
+       BYTE >0D,>0A,0
+ERRM3  TEXT 'Bad device name'
+       BYTE >0D,>0A,0
+*
+MEMERR LI   R1,ERRM1          not enough memory
+       JMP  ERR1Z
+*
+DEVERR LI   R1,ERRM2          device error
+       JMP  ERR1Z
+*
+BADDIR LI   R1,ERRM3          not a diskette device
+*
+ERR1Z  BL   @MESG
+       B    @ERRORX
+*
+GETVOL LI   R0,PAB
+       SETO @VOLON
+       BL   @GETCAT
+       JEQ  GOTVOL
+       JMP  ERRORX
+*
+GOTVOL LI   R1,US1
+       BL   @MESG
+*
+       LI   R1,VOLNAM
+       LI   R2,10
+GVOL00 MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  GVOL00
+*
+       LI   R1,US2
+       BL   @MESG
+*
+ERRORX MOV  @DIRRET,R11
+       B    @RELCAT
+*
+MESG   MOVB *R1+,R0
+       JEQ  MESGR
+       BLWP @EMIT1
+       JMP  MESG
+*
+MESGR  RT
+*
+US1    TEXT 'Volume is: '
+       BYTE 0
+US2    BYTE >0D,>0A,0
+MAXLEN BYTE 40
+*
+DIRRET DATA 0
+SEVEN  DATA 7
+NINE   DATA 9
+*
+       COPY "\MDOS\CLI\CATMAPS"
+*
+       END
+*

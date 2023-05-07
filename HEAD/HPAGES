@@ -1,0 +1,23 @@
+; File: HEAD\HPAGES
+;
+; List of pages the OS reserves for itself at powerup
+;
+;1.18.2021  Added TIPI page
+*
+* page usage as follows:
+*
+FIRSTP BYTE P_HEAD
+       BYTE P_VID1,P_VID2,P_VID3
+       BYTE P_MEM
+       BYTE P_DSR1,P_DSR2,P_DSR3
+       BYTE P_MATH
+       BYTE P_DSR4,P_DSR5,P_DSR6,P_DSR7
+       BYTE P_SCSI            MJM  10/17/94  For SCSI hard disk support
+       BYTE P_SCAC            MJM  for disk buffers and high speed cache
+       BYTE P_TIPI
+
+       BYTE P_HFC1,P_HFC2
+       BYTE P_RESV            BWM  8.24.92   FOR TIMODE PERM FIX
+*
+LASTP  BYTE >13               this is here for debugging only!
+*

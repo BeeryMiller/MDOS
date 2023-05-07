@@ -1,0 +1,388 @@
+* File : OSHEAD2S
+*
+* Important Routines in this file:
+* - XOP Table for powerups, entry, and interrupt
+* - Interrupt handler for the system
+* - OS OP#0 to kill calling task
+* - Context switch/break test/
+* - NULTSK to spin, wait for ints and handle them
+*
+*
+* 02.06.2021 Added TIPI XOP library
+* 02.08.2021 Duplicated P_TIPI for powerup; labeled TPXTAB for OSHEAD1S
+*           ?What are debugger and video high level entries?
+*           ?Is TIPXOP used any more?
+*           DISABLED for now until review w/Beery. See also OSHEAD1S
+; 5.10.2022 Reactivated TPXTAB entry with tipi page in >2000,>6000 banks
+;           See TIPI\HEADER for execution @>2000
+; 7.23.2022 Added some code to MID interrupt for test purposes. Deactivated.
+;           Noted ANSI and Windows XOP usage.
+;           WARNING: Mouse driver scans table for open entry. Consider
+;                    updating XOPUSE,XOPCNT pointers. See OSHEAD1 >0024
+;
+       REF TIPXOP
+       DEF MICE               * THIS REF MUST BE <18FC
+;                             * Hooks into
+;
+;
+
+*
+* static table for OS library index.
+*
+       AORG >0400             some software uses this table...
+*
+* table is: MAPPER, MAPPER+2, ENTRY FOR BRANCH, ENTRY FOR INTERRUPT
+*
+XOPTAB DATA 0,0,OSOP0,0                0    reset
+       DATA 0,0,OSOP1,0                1    int1
+       DATA 0,0,OSOP2,0                2    int2
+       DATA 0,0,OSOP3,0                3    int3
+       DATA 0,0,OSOP4,0                4    int4
+*
+KEYTAB BYTE P_HEAD,P_VID1,P_VID2,P_VID3
+       DATA >200A,>2002                5    keyboard
+VIDTAB BYTE P_HEAD,P_VID1,P_VID2,P_VID3
+       DATA >200E,>2006                6    low-level video
+MEMTAB BYTE P_HEAD,P_MEM,P_NULL,P_NULL
+       DATA >2002,OSRET                7    memory management
+TAB#IO BYTE P_HEAD,P_DSR1,P_DSR2,P_DSR3
+       DATA >2002,>2006                8    i/o
+
+       BYTE P_HEAD,P_MEM,P_NULL,P_NULL
+       DATA >2006,OSRET                9    os general
+
+       BYTE P_HEAD,P_MATH,P_NULL,P_NULL
+       DATA >2002,OSRET                A    floating point library
+
+       DATA 0,0,OSRET,0                B    DEBUGGER entry
+
+TPXTAB BYTE P_HEAD,P_TIPI,>BA,P_TIPI   C    TIPI library 2.8,>2000 for pwrup
+       DATA >6018,OSRET                       See TIPI\XOPS
+;
+; See OSHEAD1S for the pointers @>0022,>0024. Mouse driver uses them to
+; autodetect. May need to adust the XOPUSE pointer.
+;
+
+XOPUSE EQU  $-XOPTAB/8
+       DATA 0,0,OSRET,0                D  ANSI Driver hook, hard-coded
+       DATA 0,0,OSRET,0                E  WINDOWS Driver, hard-coded
+       DATA 0,0,OSRET,0                F  Open as of 23July2022
+XOPCNT EQU  $-XOPTAB/8
+*
+*
+********************************************************************************
+*
+* os op #0, kill the calling task! (CLI will never kill itself)
+*
+OSOP0  MOV  @HEAD#T,R1
+       MOV  @TAIL#T,R4
+       AI   R4,-4             point at last task entry
+       MOV  @TASK#C,R3
+OSOP01 C    *R1,R4            find the task which points to the last task...
+       JEQ  OSOP02
+       AI   R1,4
+       C    R1,R4
+       JL   OSOP01            should *always* take this jump
+       BLWP @0                restart system (OS is confused!)
+*
+OSOP02 MOV  *R4,*R1           relink to remove outdated pointer
+       MOV  @2(R4),@2(R3)     save pertinent data in space where dead task was
+*
+       C    R3,R4             is task we're killing last?
+       JNE  OSOP04            nope
+       MOV  R1,R3             yes, fix task#c stuff
+*
+*      note: this works even when task to kill is the last task in table
+*      though it does re-order the task execution sequence (is this a problem?)
+*
+*
+* release all pages belonging to this task
+* (release all file buffers, etc...DSR needs a new call! )
+*
+*OSOP04 LI   R0,2
+*      LI   R1,255
+*      LI   R2,1
+*      XOP  @SEVEN,0          release pages 1-255
+*
+OSOP04 LI   R0,9              release all pages, even shared
+       XOP  @SEVEN,0
+*
+       LI   R0,11
+       MOVB @MAPPER+4,R1
+       SRL  R1,8
+       XOP  @SEVEN,0          release header page
+*
+       CLR  R1                flag to say we're KILLING a task
+       MOV  R3,@TASK#C
+       MOV  R3,R10
+       MOV  R4,@TAIL#T
+       CI   R4,TASK#0+4       if there are still tasks left
+       JNE  OSOP03            execute the first one
+*
+       LI   R10,TASK#0        otherwise, return execution to the CLI
+OSOP03 B    @NEWCON
+*
+********************************************************************************
+*
+* 9901 interrupt
+*
+OSINT1 LIMI 0
+       JMP  OSOP1
+*
+* MID TRAP, DIVIDE OVERFLOW
+*
+OSINT2 LIMI 0
+       B    @OSOP2
+*
+* internal timer
+*
+OSINT3 LIMI 0
+       B    @OSOP3
+*
+OSINT4 LIMI 0
+       JMP  BUSINT
+*
+* USER
+* level one interrupt ... 9901 = vid, 9901 timer, external bus, kboard
+*
+OSOP1  CLR  R12
+       LDCR @H0106,0
+       TB   1
+       JNE  BUSINT
+       TB   2
+       JNE  VIDINT
+       TB   8
+       JNE  KEYINT
+*      LDCR @H0106,0
+       RTWP
+*
+BUSINT MOV  @TAB#IO,@MAPPER
+       MOV  @TAB#IO+2,@MAPPER+2
+       MOV  @TAB#IO+6,R0
+       BL   *R0
+OS1RT  RTWP
+*
+KEYINT MOV  @KEYTAB,@MAPPER
+       MOV  @KEYTAB+2,@MAPPER+2
+       MOV  @KEYTAB+6,R0
+       BL   *R0
+       B    @CONTIN
+*
+VIDINT MOV  @VIDTAB,@MAPPER
+       MOV  @VIDTAB+2,@MAPPER+2
+       MOV  @VIDTAB+6,R0
+       BL   *R0
+       CI   R14,OSOUT
+       JNE  CONT              no task swap if we're in the OS
+*
+* now to do tasking context check and switch ...
+*
+       AB   @HFF,@SLICE+>8000  ;-1 tick
+       JNE  CONT              this task still has more time to run
+*
+* swap to next task in the queue
+*      (can also get here from OSHEAD1S via OSOUT)
+*
+CONTEX SETO R1                flag which says we're SWAPPING tasks
+CONTE1 MOV  @TASK#C,R11       get pointer to current task
+       C    *R11,R11
+       JNE  CONT01
+*
+CONT00 MOVB @2(R11),@SLICE+>8000             only one task is running now!
+CONT   JMP  CONTIN                           no context swapping here!
+*
+CONT01 CB   @STATE+>8000,@HFE
+       JEQ  CONTIN
+       MOV  *R11,R10
+*
+* count number of tasks in states not in (HFD,HFE,HFF)
+*
+       CLR  R2                none yet
+*
+* search for next task in queue
+*
+SAVC00 MOVB @3(R10),@MAPPER+5 test the state of the next task
+       MOVB @STATE+>A000,R0   is it in run state?
+       JEQ  SAVCON            yes, so save this guy and put new one in
+*
+       CB   R0,@HFD
+       JHE  SAVC01
+*
+       INC  R2
+*
+SAVC01 MOV  *R10,R10          get pointer to next one
+       C    R10,R11           are we back where we started?
+       JNE  SAVC00            no, keep looking for a task in run mode
+*
+       MOVB @STATE+>8000,R0   no others in run mode...is this one?
+       JEQ  CONT00            yes, continue execution of this task
+*
+       MOV  R2,R2             any normal tasks in the queue?
+       JEQ  SAVC02            nope
+*
+       B    @NULTSK           no tasks running...execute null process
+*
+SAVC02 C    @TASK#C,@HEAD#T   are we already in the CLI?
+       JEQ  CONT00            yes...continue with a new slice count
+       LI   R10,TASK#0        no, start up the CLI
+       SETO R1                save this guy's context, and invoke CLI
+*
+* save this guy's context
+*
+SAVCON MOV  R1,R1             test to see if it's a swap, or a kill...
+       JEQ  NEWCON            it's a kill, don't save context info!
+*
+       MOV  R13,@UWP+>8000
+       MOV  @SYSREG+2,@UPC+>8000
+       SOC  @SYSREG+4,R15
+       MOV  R15,@UST+>8000
+       MOV  R10,R15
+       MOV  R10,@TASK#C
+*
+       MOV  @OPCOD1,R0
+       MOV  R0,R1
+       MOV  R1,R2
+       MOV  R2,R3
+       MOV  R3,R4
+       MOV  R4,R5
+       MOV  R5,R6
+       MOV  R6,R7
+       MOV  @OPCOD2,R8
+       MOV  @OPCOD3,R9
+       MOV  @OPCOD4,R10
+       LI   R12,>F000
+       LI   R13,SAVPAD+>8000
+       LI   R14,8
+       BL   R0
+       JMP  NEWTSK
+*
+* new context
+*
+NEWCON MOV  R10,R15
+       MOV  R10,@TASK#C
+*
+       MOV  @OPCOD1,R0        load registers with swap routine
+       MOV  R0,R1             redundacy with this code (for speed!)
+       MOV  R1,R2
+       MOV  R2,R3
+       MOV  R3,R4
+       MOV  R4,R5
+       MOV  R5,R6
+       MOV  R6,R7
+       MOV  @OPCOD2,R8
+       MOV  @OPCOD3,R9
+       MOV  @OPCOD4,R10
+*
+NEWTSK MOVB @3(R15),@MAPPER+4
+       MOVB @2(R15),@SLICE+>8000
+       LI   R12,SAVPAD+>8000
+       LI   R13,>F000
+       LI   R14,8
+       BL   R0
+*
+       MOV  @UWP+>8000,@XOPREG+26
+       MOV  @UPC+>8000,@SYSREG+2
+       MOV  @UST+>8000,R15
+       MOV  R15,R1
+       ANDI R15,>FFF0
+       MOV  R15,@XOPREG+30
+       ANDI R1,>000F
+       MOV  R1,@SYSREG+4
+       MOV  @TSKMAP+>8000,@SYSREG
+*
+* test for break key
+*
+CONTIN MOV  @BREAK,R1
+       JEQ  NBRK00
+*
+       MOV  @>8000+HANDL0,R1  check handle #0
+       JNE  NBRK00            this one doesn't own keyboard
+*
+       CLR  @BREAK
+       MOV  @BREAK+>8000,R1
+       JEQ  NBRK00
+*
+       MOV  @XOPREG+26,@UWP+>8000
+       MOV  @SYSREG+2,@UPC+>8000
+       MOV  @XOPREG+30,@UST+>8000
+       SOC  @SYSREG+4,@UST+>8000
+*
+       MOV  R1,@SYSREG+2
+*
+NBRK00 MOV  @CTLP,@CTLP+>8000
+       MOV  @CTLS,@CTLS+>8000
+       B    @OSOUT
+*
+OPCOD1 MOV  *R12+,*R13+
+OPCOD2 DEC  R14
+OPCOD3 JNE  $-18
+OPCOD4 RT
+*
+H0106  DATA >0106
+DSLICE BYTE >06          DEFAULT NUMBER OF SLICES GIVEN TO A TASK
+HFF    BYTE >FF
+*
+* NULL process...wait for interrupts, process them, then try a context
+* swap
+*
+NULR1  B    @OSOP1
+NULTSK MOV  R1,@NULSAV        save info as to kill/swap task
+       LWPI INTREG
+       LI   R12,>1EE0
+       STWP R13
+       LI   R14,NULOUT
+       STST R15
+NULL#T TB   2                 level 1
+       JEQ  NULR1
+       TB   3                 level 3
+       JEQ  OSOP3
+       TB   4                 level 4
+       JEQ  OSOP4
+       JMP  NULL#T
+*
+NULOUT LWPI INTREG
+       MOV  @NULSAV,R1
+       B    @CONTE1
+NULSAV DATA 0
+*
+* level two interrupt ... MID and overflow
+*
+OSOP2  LI   R12,>1FDA
+       SBZ  0
+
+;      INC  @MIDCT       7.23, ;MID count for debugging potential ints
+;      BL   @XMNUM
+;      DATA >F110,8      ;MAPPER
+;      BLWP @XMNUM
+;      DATA INTREG+26,3  ;R13,R14,R15
+
+       RTWP
+*
+* level 3 interrupt ... 9995 internal timer
+*
+OSOP3  LI   R12,>1EE0
+       SBO  0            make it an event counter
+       SBZ  1            disable interrupts from the timer
+       RTWP
+*
+* level 4 interrupt ... external bus
+*
+MICE
+OSOP4  B    @BUSINT
+*
+;;MIDCT  DATA 0            ;mid count
+;
+; Moved to OSHEAD3S for now.
+;
+; This code CANNOT exceed >0700. there are about 10 bytes free. See LOWMAP
+;      for the buffers and WS that consume from >0700-1CFF
+;
+;7.23.22 for mid testing
+;;     AORG >1D00             3/24/90 (to fix chardef pattern table overrun)
+;*
+;TASK#0 DATA TASK#0       NEXT TASK
+;      BYTE 6,0          NUMBER OF SLICES : PAGE ZERO FOR TASK
+;TASK#N EQU  $
+;      AORG >1F00
+;      BSS  256          RESERVED FOR CURRENT TASK'S MAP FOR DSR ROUTINE
+*

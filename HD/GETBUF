@@ -1,0 +1,229 @@
+*********
+*  Buffer file I/O allocation.  This is where logical sectors are stored
+*  and associated with file I/O operations.  For HFDC, the buffer address
+*  is used for DMA transfers with the 9234 chip, once the sector I/O routines
+*  are called.  Each Buffer contains enough memory to hold file information
+*  for a single file for each DSR call.  The DSR calls this routine with a
+*  filename, and expects this routine to return a pointer to the file buffer
+*   associated with that filename.  If it is on the HFDC, a second routine
+*  is called, MAPR5, which selects the proper bank on the HFDC card itself using
+*  CRU operations.
+*  For SCSI, the buffer is in a RAM page, which gets mapped in at address
+*  >A000->BFFF.  This address must be reset after a DSR call to the standard
+*  address at that location.
+* Parameters:
+*   R3--> pointer to pathname. (callers R3, also in some system vars.)
+*
+* returned:
+*   r0--> Error code.  0 if no error, error code otherwise. (callers R0)
+*   r2--> pointer to start of data buffer.
+*   r3--> pointer to offset of data buffer.
+*   r8--> pointer to first 260 byte buffer.
+*   r9--> pointer to second 260 byte buffer.
+***********
+
+
+
+GETBUF DATA WRKREG,GETBF1
+*
+* Now do pathname verification and checking and data buffer allocation.
+*      start by determining which peripheral bus we are using...
+*
+GETBF1 MOV  @SCSIAC,@SCSIAC   Should we use buffer on SCSI card or HFDC?
+       JEQ  GETBF2            use hfdc,
+       B    @GETBUF3          else, branch down to SCSI buffer alloc code.
+GETBF2 LI   R0,>4000          BAD PATHNAME LENGTH
+       CLR  R3                NO AVAILABLE BUFFER AS YET
+       LI   R4,FSTBUF         START AT THE BEGINNING
+       CB   @OPTLN,@CBH28     TEST IF > 40 CHARS
+       JH   GBERR
+NXTBU3 LI   R1,OPTLN
+       BL   @SETR52
+       MOV  *R2,R6            IS THE BUFFER USED?
+       JEQ  NXTBU1            NO, NOT YET
+*
+* Buffer is used, so lets compare the pathnames and see if this one matches.
+*
+       MOV  R2,R10
+       AI   R10,PATNAM        IT IS USED SO DOES PATHNAME COMPARE?
+       MOVB *R1+,R11
+       CB   *R10+,R11
+       JNE  NXTBUF            NO, IT IS THE WRONG LENGTH
+       SRL  R11,8
+NXTBU2 CB   *R10+,*R1+        LENGTH IS THE SAME, SO IS THE PATHNAME THE SAME?
+       JNE  NXTBUF            PATHNAME NOT THE SAME
+       DEC  R11
+       JNE  NXTBU2
+*
+*We've matched this pathname to one in the buffer.  Address is R2.
+*
+       MOV  R2,R3             SAVE WHERE BUFFER FOUND
+       MOV  *R3,R8            SET DRIVE NUMBER
+       SZCB R8,R8
+       MOV  R8,@VOLUME
+       MOV  R3,@6(R13)        SET CALLERS R3
+       MOV  @PARPTR(R3),@16(R13)   SET PARENT AND CHILD POINTERS
+       MOV  @SIBPTR(R3),@18(R13)
+       MOV  @IOOFST(R3),@IOOSET SET OFFSET FOR I/O ROUTINE
+       JMP  NXTBU4              DONE WITH COMPARE
+*
+*We are here if buffer we found didn't match the pathname from the host.
+*
+
+NXTBU1 MOV  R4,R3             AN AVAILABLE BUFFER
+NXTBUF AI   R4,WBUFLN         TRY TO MATCH TO THE NEXT
+       CI   R4,WBUFEN         ARE WE AT THE END?
+       JNE  NXTBU3            NOT YET
+*
+* TO BE HERE, NO MATCH, SO IF NO BUFFER,BOMB
+*
+       SLA  R0,1              WATCH THIS, THE ABOVE MUST BE A >2000
+       MOV  R3,R3
+       JEQ  GBERR
+*
+* NO MATCH FOUND BUT THERE IS A BUFFER AVAILABLE, SO USE IT
+*  FIRST REMAP BACK TO THAT AVAILABLE BUFFER
+*
+       MOV  R3,R5             SAVE MEMORY OFFSET
+       BL   @MAPR5            SET 9400 AND 9800
+       MOV  R3,R11
+       ANDI R11,>7C00
+       ANDI R3,>03FF
+       AI   R3,>0800+CRDRAM   R3 NOW POINTS TO 9400 BUFFER
+       MOV  R11,@IOOFST(R3)   STORE I/O OFFSET IN BUFFER
+       MOV  R11,@IOOSET       STORE FOR THIS FILE I/O
+       MOV  R3,@6(R13)        RETURN IN CALLERS R3
+       AI   R3,FIRBUF         GET POINTER TO 260 BYTE BUFFER
+       MOV  R3,@16(R13)       SAVE IN CALLERS R8
+       AI   R3,260
+       MOV  R3,@18(R13)       GET NEXT 260 BYTE BUFFER IN CALLERS R9
+
+
+NXTBU4 MOV  R4,@4(R13)        SET UP CALLERS R2
+       CLR  R0                WE EITHER FOUND IT OR A BUFFER
+GBERR  MOV  R0,*R13           RETURN ERROR
+       RTWP
+*
+SETR52 MOV  R4,R5
+       MOV  R4,R2             NOW DERIVE POINTER IN RAM TO BUFFER
+       ANDI R2,>03FF
+       AI   R2,>0800+CRDRAM
+       B    @MAPR5
+*
+* Now for SCSI buffer allocation (almost identical to above routine)
+*
+*  Changes:  offsets are actual addresses in bank >8000 to >8FFF.
+*            and the area at >9400 to >9DFF.
+*            There is no banking here, just straight ram buffer.
+*   each buffer is in a fixed region.
+*
+*  THIS INDEX IS USED TO DETERMINE WHERE THE BUFFER START AND END
+*  ADDRESSES ARE.  THERE IS ROOM FOR 9 OPEN FILES ON THE SCSI DRIVES.
+
+BUFFERINDEX
+       DATA >8000
+       DATA >8252
+       DATA >84A4
+       DATA >86F6
+       DATA >8948
+       DATA >8B9A
+       DATA >94EC
+       DATA >973E
+       DATA >9990
+BUFFIN DATA 0
+BUFSTT DATA 0
+BUFEND DATA 0
+
+GETBUF3
+       LI   R0,>4000          BAD PATHNAME LENGTH
+       CLR  R3                NO AVAILABLE BUFFER AS YET
+       LI   R4,BUFFERINDEX    START AT THE BEGINNING
+       CB   @OPTLN,@CBH28     TEST IF > 40 CHARS
+       JH   GBERR
+SXTBU3 LI   R1,OPTLN
+       MOV  *R4,@BUFSTT
+       MOV  @BUFSTT,R5        GET ADDRESS OF CURRENT BUFFER.
+       MOV  @BUFSTT,R2
+       MOV  *R2,R6            IS THE BUFFER USED?
+       JEQ  SXTBU1            NO, NOT YET
+       MOV  R2,R10
+       AI   R10,PATNAM        IT IS USED SO DOES PATHNAME COMPARE?
+       MOVB *R1+,R11
+       CB   *R10+,R11
+       JNE  SXTBUF            NO, IT IS THE WRONG LENGTH
+       SRL  R11,8
+SXTBU2 CB   *R10+,*R1+        LENGTH IS THE SAME, SO IS THE PATHNAME THE SAME?
+       JNE  SXTBUF            PATHANME NOT THE SAME
+       DEC  R11
+       JNE  SXTBU2
+*
+* We Matched the pathname in length and all bytes.
+*
+       MOV  R2,R3             SAVE WHERE BUFFER FOUND
+       MOV  *R3,R8            SET DRIVE NUMBER
+       ANDI R8,>00FF          CLEAR HIGH ORDER BITS.
+       MOV  R8,@VOLUME        set volume number.
+       MOV  R3,@6(R13)        SET CALLERS R3
+       MOV  @PARPTR(R3),@16(R13)   SET PARENT AND CHILD POINTERS
+       MOV  @SIBPTR(R3),@18(R13)
+       JMP  SXTBU4              DONE WITH COMPARE
+*
+*EMPTY BUFFER...LETS ALLOCATE IT FOR THE FILE I/O
+*            BY SETTING R3 TO THE ALLOCATED BUFFER.  BUT WE MUST CHECK NOW
+*  TO SEE IF THE FILE IS OPEN BY ANOTHER TASK IN THE SYSTEM.
+*
+SXTBU1 MOV  @BUFSTT,R3        AN AVAILABLE BUFFER
+SXTBUF INCT R4                TRY TO MATCH TO THE NEXT
+       MOV  *R4,*R4
+       JNE  SXTBU3            NOT YET
+*
+* we have reached the end of the buffers.  If a buffer was found and no
+*      filenames have been matched, continue, else, we have no space available.
+*
+       SLA  R0,1              WATCH THIS, THE ABOVE MUST BE A >2000
+       MOV  R3,R3
+       JEQ  GBERR
+*
+* We haven't matched a filename, but there is still space available.
+*  For HFDC buffers, R11 contains the 5-bit page number.  The remaining
+*  10 bits are the same, just adjusted when the CPU is using the ram
+*  and IOOSET is used when the 9234 talks to the RAM
+*
+*  For SCSI ram transfers, all addresses are absolute.  No offsets are
+*  necessary.
+*
+
+       MOV  R3,R5             SAVE MEMORY OFFSET
+       MOV  R3,R11            NO OFFSET FOR THIS I/O
+       MOV  R11,@IOOSET
+       MOV  R11,@IOOFST(R3)   STORE I/O OFFSET IN BUFFER
+       MOV  R3,@6(R13)        RETURN IN CALLERS R3
+*
+*return pointers in r8, r9 of callers ws.
+* we must add offset 74 (pathname space (32) + 42 )
+*
+       AI   R3,FIRBUF         GET POINTER TO 260 BYTE BUFFER
+       MOV  R3,@16(R13)       SAVE IN CALLERS R8
+       AI   R3,260            LENGTH OF THE MAIN BUFFER.
+*
+*  next buffer (260 bytes) stored in callers r9.
+*
+       MOV  R3,@18(R13)       GET NEXT 260 BYTE BUFFER IN CALLERS R9
+*
+*  finally, return to host address of CURRENT buffer, in register 2.
+*   Host sees this, and if equal to WBUFEN, host assumes that the entire
+*   buffer span was searched.  r3, if not zero, then contains a valid address.
+*   if file is already open, and a buffer exists with that filename, then
+*   R2 must contain address of next buffer after match.
+*
+SXTBU4 MOV  *R4,*R4           DID WE HAPPEN TO SCAN TO THE END?
+       JNE  SXTBU4A
+       LI   R4,WBUFEN         THE "FAKE" END OF BUFFER FOR WINDS3-S
+       MOV  R4,@4(R13)         CHEAT THE SYSTEM INTO THINKING WE HAVE A
+       JMP  SXTBU4B            BRAND NEW FILE, READY TO BE OPENED.
+SXTBU4A
+       MOV  @BUFSTT,@4(R13)   SET CALLER'S R2 WITH THE START OF BUFFER.
+SXTBU4B
+       CLR  R0                WE EITHER FOUND IT OR A BUFFER
+       B    @GBERR            return to host, with or without error condition.
+

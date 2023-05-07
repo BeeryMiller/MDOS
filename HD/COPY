@@ -1,0 +1,55 @@
+; HD\COPY
+;
+;
+; 5.07.2022 Removed MONS and updated !MAKEFILE; unused
+;           (similar to rs232debug, might be something to salvage)
+;           Scroll/gplsubs/time all have unused code
+;
+       UNL
+       XREF WINGPL
+
+WINGPL EQU  0
+INTWS  EQU  0
+INT1   EQU  0
+OSRTN  EQU  0
+RET994 EQU  0
+FNDDIR EQU  0
+*
+       IDT  'WINDSR'
+       AORG >6000
+       COPY "\MDOS\HEAD\PAGENUMS"
+       COPY "\MDOS\HD\EQUATES"
+*      LIST
+       COPY "\MDOS\HD\WINDS1-S" DONE
+*      UNL
+       COPY "\MDOS\HD\WINDS3-S" DONE
+       COPY "\MDOS\HD\WINDS6-S" A LITTLE FIXES TO GO
+       COPY "\MDOS\HD\WINDS7-S" DONE
+       COPY "\MDOS\HD\FLPPRM"   DONE
+;;     COPY "\MDOS\HD\MONS"    shit debugging ;5.7.2022, not used
+
+       DATA 0                 because CIF uses the word before FAC...
+FAC    BSS  32
+*
+       AORG >2000
+       COPY "\MDOS\HD\CIF"      DONE
+       COPY "\MDOS\HD\SETAXB"   DONE
+       COPY "\MDOS\HD\FINDFL"   DONE
+       COPY "\MDOS\HD\FRBITM"   DONE
+       COPY "\MDOS\HD\GETSEC"   DONE
+       COPY "\MDOS\HD\SCROLL"   DONE         ;for gplsubs/time
+       COPY "\MDOS\HD\TIME"     DONE         ;for gplsubs/scroll
+
+       COPY "\MDOS\HD\SECTORIOW" DONE
+       COPY "\MDOS\HD\SECTORIO8" DONE
+       COPY "\MDOS\HD\GETAU"    DONE
+       COPY "\MDOS\HD\GPLSUBS"            ;5.7.22, unused call dir
+       COPY "\MDOS\HD\GETBUF"   DONE
+       COPY "\MDOS\HD\ADDADR"   DONE
+       COPY "\MDOS\HD\MAPR5"    DONE
+       COPY "\MDOS\HD\VDPFCB"   DONE
+       COPY "\MDOS\HD\DATA"     DONE
+       EVEN
+GPLWS  BSS  32
+       LIST
+       END

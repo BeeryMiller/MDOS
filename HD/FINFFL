@@ -1,0 +1,87 @@
+* ROUTINE TO FIND IF FILE/DIR EXISTS
+*   PTR TO PTRS IN R8, NUMBER IN R9
+*      USES R2,R7-R10
+*    INPUT:R11, NUMBER OF ITEMS TO SEARCH THROUGH
+*          R10, FIRST ITEM TO BE SEARCHED
+*      **NOTE** RAMBUF must be set before entering this routine
+*
+*    OUTPUT:R2, POINTS TO 1)IF FOUND LOCATION ON DISK
+*                         2)IF NOT FND, WHERE ON STACK TO PUT POINTER
+*          :EQU BIT SET IF FND, NOT SET OTHERWISE
+*
+*    PUTS DATA READ IN DATA BUFFER AT SIBLIN
+*      POINTERS IN PARENT
+*
+*
+FINDFL DATA WRKREG,FINDF1
+*
+FINDF1 CLR  R0
+       MOV  @20(R13),R2       get start pointer
+       MOV  R2,R8
+       MOV  @22(R13),R9       get # of elements on stack
+       JEQ  BINSR5            none to search through
+       CLR  @SCINAU           always read first sector in chain
+       SLA  R9,1
+       DECT R9                ADJUST
+* NOW GET UPPER POINTER IN R9
+       A    R8,R9
+* BUFFER IN R1 NOW BEGIN SEARCH:GET RE
+       MOV  R9,R10            SAVE HIGH PTR
+BINSR  MOV  R8,R2             PUT RE IN R2
+       A    R9,R2
+       SRL  R2,2
+       SLA  R2,1
+       AI   R2,>8000
+* NOW GET SECTOR WITH EITHER FILE OR DIR
+BINSR3 MOV  *R2,@AUNUM
+       JEQ  CLT               FOR FLOPPY IF POINTER IS TO SECTOR 0
+       BLWP @RSECTR           READ SECTOR
+       JEQ  BINERR            BRANCH IF READ ERROR
+* WE DON'T HAVE TO RETURN ABOVE BECAUSE NOTHING RESERVED
+* ABOVE IS JUMP IF ERROR IN READING SECTOR
+* NOW TEST IF NAME COMPARES, USES R1 PTR TO BUFFER,R5,R7
+* ROUTINE TO TEST IF NAME IN COMBUF=NAME IN FDR/DDR
+* POINTED TO BY R1 USES R5,R7. ON RETURN,=BIT SHOWS STATUS
+*
+CNAMES MOV  @RAMBUF,R5   USE R5 TO POINT
+       LI   R7,COMBUF
+CNAM1  CB   *R7+,*R5+    COMPARE
+       JH   CGRT         JUMP GREATER THAN
+       JL   CLT          JUMP LESS THAN
+       CI   R7,COMBUF+10
+       JNE  CNAM1
+       SOCB @CBH20,R15        set = bit
+       RTWP                   RETURN IF EQUAL
+*
+CLT    JGT  CGRT
+       C    R2,R8             LESS THAN SO TEST FOR COMPLETION
+       JEQ  BINSR5
+       C    R2,R9
+       JEQ  BINSR5
+       MOV  R2,R9             SET UP NEXT CONDITIONS
+       JMP  BINSR             CONTINUE
+*
+CGRT   C    R2,R9             COMBUF IS GREATER
+       JEQ  BINSR4            TEST FOR COMPLETION
+       MOV  R2,R8             SET UP AND TEST FOR END CONDITION
+       MOV  R8,R7
+       A    R9,R7
+       SRL  R7,2
+       SLA  R7,1
+       AI   R7,>8000          ADJUST
+       C    R2,R7
+       JEQ  BINSR2
+       MOV  R7,R2
+       JMP  BINSR3
+*
+BINSR2 C    R9,R10            TEST IF END TESTED
+       JNE  BINSR4
+       MOV  R10,R2
+       JMP  BINSR3
+*
+BINSR4 INCT R2                BUMP PTR
+BINERR
+BINSR5 SZCB @CBH20,R15        RESET EQUAL BIT
+       MOV  R2,@4(R13)        where it is
+       MOV  R0,*R13           error if any
+       RTWP

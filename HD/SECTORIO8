@@ -1,0 +1,587 @@
+
+********************************************************************************
+*                                                                              *
+*    FORMAT ROUTINE                                                            *
+*         FORMAT OF CALL IN PAB IS:                                            *
+*      BYTE                                                                    *
+*      3    TRACKS PER SIDE                                                    *
+*      4    SKEW BETWEEN ADJACENT TRACKS (NOT IMPLEMENTED)                     *
+*      5    INTERLACE OF TRACK                                                 *
+*      6    DENSITY 2=DOUBLE, 3=HD, OTHERWISE=SINGLE                           *
+*      7    NUMBER OF SIDES 2=DOUBLE, OTHERWISE=SINGLE                         *
+*                                                                              *
+*                                                                              *
+********************************************************************************
+
+*  CREATE SOME EQUATES FOR THE ARTIFICAL PAB FOR FORMAT
+FPAB   EQU  0
+FPABER EQU  FPAB+2
+FBUFAH EQU  FPAB+3
+FBUFAR EQU  FPAB+4
+FRECNM EQU  FPAB+6
+FLRCLN EQU  FPAB+8
+FCHCNH EQU  FPAB+11
+*
+* caller r0 == drive #, pab is in normal 9640 DSR internal PAB (REF'd)
+*
+FLPF   MOVB @CBHBA,@MAP968    MAP IN THE PERIPHERAL PAGE
+       SBO  0                 TURN IT ON
+       LI   R0,OPCODE         POINTER TO PAB
+       MOV  R0,R1             IS IT DSK0 (IE FORMAT EM FILE ON WINCHESTER?)
+       MOV  *R13,R2           get drive #
+       JEQ  FRMHDF            IT IS DRIVE 0
+       MOV  R2,@VOLUME
+       BL   @SETAXB           SET BUFFER TO USE
+       MOV  @H0800,@IOOSET
+       BLWP @FRMFLP
+       JEQ  FRM000            ERROR
+       CLR  *R13
+       SBZ  0                 yalfu
+       RTWP
+
+FRM000 MOVB @CBHC0,@FPABER(R1) SET ERROR CODE IN PAB
+       MOV  R0,*R13           GET >8350 ERROR CODE BACK TO CALLER
+       SBZ  0                 yalfu
+       RTWP
+
+FRMHDF MOV  @EMDKSZ,@FLRCLN(R1)  RETURN # OF SECTORS
+       CLR  *R13              NO ERROR
+       SBZ  0                 yalfu
+       RTWP                   ALL DONE
+
+FRMFLP DATA FAC,FLPF00
+
+FLPF00 MOV  *R13,R7           GET POINTER TO PAB
+       BL   @INITSI           SET UP PARMS, ETC.
+       CLR  @FAKIO0           RESET FLAG TO GET PROPER BUFFER
+       CLR  @FLAGRF           j.s. fix 12.4.93
+* NOW SAVE DENSITY IN PARMS LIST
+       MOVB @FRECNM(R7),R11       SET DENSITY IN REGISTERS AND DRIVE
+       LI   R6,18*256         ASSUME 18 SECTORS PER TRK (17 BASE 0)
+       ANDI R11,>FF00         DOUBLE
+       CI   R11,>0200
+       JEQ  FORM01            DOUBLE DENSITY
+       SLA  R6,1
+       CI   R11,>0300         IS IT HD?
+       JEQ  FORM01            YES
+       SRL  R6,2              IT IS SINGLE DENSITY
+       LI   R11,>0100
+FORM01 AI   R11,->0100        MAKE BASE 0
+       MOVB R11,@DENSIT(R2)        DENSITY
+       MOVB R6,@SCPT(R2)         SECTORS PER TRACK
+       MOVB R6,@FCHCNH(R7)    RETURN SECTORS PER TRACK
+* NOW SET UP INTERLEAVE TABLE IN RAM
+       MOV  @FBUFAR(R7),R5        INTERLEAVE IN R5 LSB
+       SLA  R5,8              IS IT 0?
+       JEQ  FORM02            YES, USE DEFAULT
+       CB   R5,R6             IS IT TOO BIG?
+       JL   FORM03            NO, ITS OKAY
+FORM02 LI   R5,>0400
+FORM03 LI   R8,GTSBUF+220     FIRST CLEAR OUT AREA
+       MOV  R8,R9
+FORM14 CLR  *R8+
+       CI   R8,GTSBUF+256
+       JNE  FORM14            NOT DONE YET
+       MOV  R6,R8
+       SRL  R8,8
+       MOV  R8,R0
+       AI   R8,GTSBUF+220     NOW R8 POINTS TO END OF TABLE
+       LI   R10,>0100         LOAD FIRST SECTOR (BASE 1)
+       MOV  R5,R11            GET INTERLEAVE IN WORD FORMAT
+       SRL  R11,8
+FORM16 MOVB R10,*R9           PUT IN TABLE
+       AI   R10,>0100         NEXT SECTOR TO INSTALL
+       CB   R10,R6            ARE WE DONE?
+       JH   FORM15            ALL DONE WITH SETTING UP TABLE
+       A    R11,R9            NEXT POINTER
+       C    R9,R8             ARE WE STILL IN THE TABLE?
+       JL   FORM16
+       S    R0,R9             OTHERWISE START AT BEGINNING AGAIN
+FORM17 MOVB *R9,*R9           HAVE WE USED THIS POSITION ON TRACK BEFORE?
+       JEQ  FORM16            NO, SO START HERE
+       INC  R9                YES, SO TRY NEXT LOCATION ON TRACK
+       JMP  FORM17
+*
+* CONTINUE LOADING TABLE WITH PARMS
+FORM15 MOVB @FBUFAH(R7),R4        TEST THE CORRECT # OF TRACKS
+       CLR  @FLRCLN(R7)       NO SECTORS FORMATTED YET
+       SRL  R4,8
+       CI   R4,40
+       JEQ  FORM00
+       LI   R0,>E000          BAD PARMS
+       CI   R4,80
+       JNE  FORM13            BAD NUMBER OF TRACKS
+       C    R4,@NTRKIO        IS IT MORE THAN IT WILL HOLD?
+       JH   FORM13            YES, ERROR
+FORM00 MOV  R4,@TRKTF(R2)     NUMBER OF TRACKS THIS FLOPPY
+* WE ARE GUARENTEED THAT THE FORMAT TO DSK1 ON HD IS ALREADY TAKEN CARE OF
+       BL   @FTR789           SET REGISTERS 7,8,9  DOES A SET DRIVE ALSO
+       BL   @RSTORE           SET HEAD AT BEGINNING (WRITE PROTECT TESTED IN RE)
+       JNC  FOR13A            BAD RESTOR
+       CLR  R8                CYLINDER #
+FORM71 CLR  *R2               NO AU'S YET
+FORM10 CLR  R9                HEAD #
+FORM09 LI   R10,GTSBUF+220    SECTOR # TABLE
+       LI   R3,GTSBUF
+       BL   @SETBUF           SET BUFFER ADDRESS USES R0
+       BL   @FTR789           SELECT DRIVE       USES R0
+       MOVB R6,R11            # OF SECTORS PER TRK
+       SRL  R11,8
+       A    R11,*R2           R11 MORE SECTORS
+* NOW FILL THE TABLE
+FORM06 MOVB @DENSIT(R2),@DENSIT(R2)  SINGLE DENSITY?
+       JEQ  FORM04            YES
+       MOVB @CBHFE,*R3+       IDENT BYTE
+FORM04 MOVB R8,*R3+           CYLINDER BYTE
+       MOVB R9,*R3+           HEAD BYTE
+       MOVB *R10+,*R3         SECTOR #
+       AB   @CBHFF,*R3+       ADJUST FOR BASE 1 TO BASE 0
+       MOVB @CBH01,*R3+       SECTOR SIZE BYTE (256 BYTES)
+* ARE WE DONE WITH ALL THE SECTORS?
+       DEC  R11
+       JNE  FORM06            ALL SECTORS IN BUFFER
+*
+* NOW LOAD THE REGISTERS OF THE 9234 CHIP WITH FORMAT DATA
+*
+FORM05 LI   R11,SDENPM        ASSUME SINGLE DENSITY PARMS
+       CB   @DENSIT(R2),@CBH01     WHAT DENSITY IS IT?
+       JL   FORM07
+       JEQ  FORM08
+       AI   R11,6
+FORM08 AI   R11,6             NEXT TABLE
+FORM07 MOVB @CBH40,@CMDREG
+       MOVB *R11+,*R1         R0 GAP 0
+       MOVB *R11+,*R1         R1 GAP 1
+       MOVB *R11+,*R1         R2 GAP 2
+       MOVB *R11+,*R1         R3 GAP 3
+       MOVB R9,*R1            R4  HEAD TO FORMAT
+       MOVB *R11+,*R1         R5 SYNC SIZE
+       MOVB *R11+,*R1         R6 NUMBER OF SECTORS TO FORMAT
+       MOVB @CBHFD,*R1        R7 SECTOR SIZE MULTIPLIER
+       MOVB @CBH70,@CMDREG    FORMAT COMMAND
+       BL   @WAT000
+       JNE  FOR13A            BAD FORMAT RETURN ERROR >06
+* NOW REFORMAT TRACK 0 BECAUSE OF HARDWARE ERROR ON CHIP
+       MOV  @FLAGRF,R0        TEST IF THIS IS TRACK 0 SIDE 1
+       JNE  FORM70
+       SETO @FLAGRF           USE THIS FLAG
+       JMP  FORM71            IT IS SO REDO IT
+*
+* NOW TEST IF NEXT SIDE IS TO BE DONE
+*
+FORM70 MOVB R9,R9             HAVE WE DONE SIDE 2 ALREADY?
+       JNE  FORM11            YES SO STEP TO NEXT CYLINDER
+       MOV  @FRECNM(R7),R11
+       SLA  R11,8
+       CI   R11,>0200         IS THERE A SIDE 2?
+       JNE  FORM11            NO
+       AI   R9,>0100
+       JMP  FORM09
+*
+FORM11 AI   R8,>0100
+       CB   R8,@TRKTF+1(R2)   DONE?
+       JHE  FORM12
+       BL   @SEKTRK           GO TO THE NEXT TRACK
+       JMP  FORM10
+*
+FORM12 MOV  *R2,@FLRCLN(R7)
+       B    @SIO440           BRANCH TO GOOD RETURN
+*
+FOR13A LI   R0,>C000          RESTORE ERROR
+FORM13 B    @FADS01           ERROR CODE IN R0 ALREADY
+*
+CBHFD  EQU  $
+
+SDENPM BYTE >FD,>E6,>F5,>E5,>F9,>F6
+DDENPM BYTE >B0,>CE,>EA,>F4,>F3,>ED
+HDENPM BYTE >B0,>CE,>EA,>F4,>F3,>DB
+
+*SDENPM BYTE >FD,>E6,>F5,>E5,>F9,>F6
+*DDENPM BYTE >FE,>E2,>EA,>EC,>F3,>ED
+*HDENPM BYTE >FE,>E2,>EA,>EC,>F3,>DB
+
+
+
+
+*
+********************************************************************************
+*
+* SECTOR I/O ROUTINE
+*      FOR EACH HARD DRIVE THE PARAMETERS SAVED ARE:
+*           1) # OF AU'S           BASE 1
+*           2) STEP SPEED | # OF HEAD'S         BASE 1
+*           3) # OF SECTORS/TRACK  BASE 1
+*           4) WINTYP XXXX             # OF SECTORS/AU (BASE 0)
+*                         XXXX         # OF HEADS      (BASE 0)
+*                             X        BUFFERED=1
+*                              XXXXXXX WRITE PRECOMP
+*
+*      FOR EACH FLOPPY DRIVE THE PARAMETERS SAVED ARE:
+*           1) # OF AU'S               BASE 1
+*           2) # OF TRACKS THIS FLOPPY BASE 1
+*           3) # OF SECTORS/TRACK  |   BASE 1
+*           3A)DENSITY 0=FM, 1=MFM, 2=HD-MFM
+*           4) CURRENT PHYSICAL TRACK THIS FLOPPY
+*
+********************************************************************************
+* EMULATE LOGIC
+*      IS IT A WRITE?
+*           NO - IS IT EMULATE?  YES, GO TO EMFIO
+*           YES - SKIP, THEN CHECK. IS IT EMULATE WRITE? SKIP TOEMFIO AGAIN
+*
+FLPIO  MOVB @CBHBA,@MAP968    MAP IN THE CRU PAGE, ETC
+       SBO  0
+       MOV  *R13,R6           0 IS WRITE, <>0 IS READ
+       MOV  @6(R13),@AUNUM
+       MOV  @H0800,@IOOSET
+       BL   @SETAXB           USE GTS BUFFER
+       MOV  R6,R6             TEST IF READ OR WRITE
+       JEQ  FLPIOW            IS WRITE
+       MOV  @4(R13),@VOLUME   IS IT DSK1 ON HD FILE?
+       JEQ  EMFIO             YES
+       BLWP @RSECTF
+       JEQ  RFERR             READ ERROR
+EMFIO2 LI   R3,256
+       MOV  @2(R13),R2
+FLPI00 MOVB *R1+,*R2+
+       DEC  R3
+       JNE  FLPI00
+FLPI02 CLR  *R13              RETURN ERROR CODE
+       SBZ  0                 yalfu
+       RTWP
+
+RFERR  MOVB @CBHC0,@PABERR
+EMFIOE MOV  R0,*R13
+       SBZ  0                 yalfu
+       RTWP
+
+FLPIOW MOV  @2(R13),R2
+       LI   R3,256
+FLPI01 MOVB *R2+,*R1+         MOVE THE SECTOR INTO THE BUFFER
+       DEC  R3
+       JNE  FLPI01
+       MOV  @4(R13),@VOLUME   IS IT TO WINCHESTER?
+       JEQ  EMFIO             BRANCH IF SECTOR I/O TO DSK ON HD
+       BLWP @WSECTF      floppy io
+       JEQ  RFERR
+       JMP  FLPI02
+*
+* time to do the emulation!!!!
+*
+* SECTORIOW holds the WSECTR/WSECTW routines
+*
+EMFIO  LI   R0,>C000          ERROR CODE IF NO EMULATE FILE
+       ABS  @DSONWD           IS THERE AN EMULATE FILE?
+       JEQ  EMFIOE            NO, SO JUST BOMB OUT
+       LI   R0,>E000          TOO LARGE A SECTOR
+       C    @AUNUM,@EMDKSZ    DOES THE SECTOR EXIST?
+       JH   EMFIOE            NO, TOO BIG
+       LI   R3,EMDKCB         EMDK FILE COMTROL BLOCK
+       LI   R8,GTSBUF         PERFORM I/O TO GTSBUF
+       LI   R9,DK1FCB
+       MOV  @AUNUM,R5
+       CLR  R4
+       MOV  @H0001,@VOLUME
+       BLWP @GETAUS
+       MOV  R0,R0             SHOULD NOT ERROR OUT
+       JNE  RFERR
+       LI   R1,GTSBUF
+       MOV  R1,@RAMBUF
+       MOV  *R13,R0           READ OR WRITE
+       JEQ  EMFIO1            WRITE
+       BLWP @RSECTR           READ IT AND TRANSFER IT
+       JEQ  RFERR
+       JMP  EMFIO2
+
+EMFIO1 BLWP @WSECTR           WRITE IT
+       JEQ  RFERR
+       JMP  FLPI02
+
+RSECTF DATA FAC,RSF
+WSECTF DATA FAC,WSF
+*****************  THE FOLLOWING ROUTINE SETS UP THE FOLLOWING FLAGS  **********
+*    FPSELC  MTOSTS  IT TURNS THE MOTOR ON                                     *
+*              IT SETS THE R2 POINTER                                          *
+********************************************************************************
+WSF    SETO R6                WRITE SECTOR
+       JMP  RWSF
+
+RSF    CLR  R6                READ SECTOR
+RWSF   BL   @INITSI           INIT FLAGS AND R1
+FIO410 CLR  @FAKIO0
+       CLR  R8
+       CLR  R9
+       MOV  @AUNUM,R10        IS IT SECTOR 0 I/O?
+       JNE  FIO003            NO
+       JMP  FIO025
+
+************ MAY WANT TO DO A DUMMY READ OF SECTOR 0 HERE LATER ****************
+FAD01Z LI   R0,>E000          NOT SECTOR 0 I/O AND NOT ACCESSED BEFORE
+       B    @FAD01A
+*
+FIO300 SETO @FAKIO0           SET FLAG FOR READING OF SECTOR 0
+FIO025 BL   @FTR789           SET R7,R8,R9
+       BL   @RSTORE           RESTORE THE HEAD OF THE DRIVE
+       JOC  FIO350
+*
+       B    @FOR13A           RESTORE ERROR
+*
+FIO350 BL   @SETBUF           SET BUFFER ACCORDING TO RAMBUF OR SCOBUF ACCORDINY
+       CLR  *R1               SECTOR
+       CLR  *R1               CYL/HEAD
+       CLR  *R1               CYL
+       BL   @FOSELD           DO THE READ/WRITE
+       JNE  FIO503            BAD READ
+*  GOOD READ SO SET I/O PARMS FOR THIS DRIVE
+       LI   R7,SC0BUF         ASSUME SECTOR 0 BUF CONTAINS SECTOR
+       ABS  @FAKIO0           IS THAT CORRECT
+       JNE  FIO432            YES
+       MOV  @RAMBUF,R7
+
+FIO432 MOV  @TOTAU(R7),*R2    SAVE AU'S
+       MOVB @SECPTR(R7),@SCPT(R2)   SECTORS PER TRACK
+*      MOVB R0,@SCPT(R2)      SAVE SEC/TRK
+       LI   R0,40             JUST IN CASE A 0 # OF TRACKS
+       MOVB @NTRKF(R7),R0     GET # OF TRACKS THIS FLOPPY
+       JEQ  FIO434            IS 0 SO ASSUME 40
+       SRL  R0,8
+FIO434 MOV  R0,@TRKTF(R2)     SAVE IT
+       ABS  @FAKIO0           WAS IT THE REAL THING?
+       JEQ  FIO440            YES, SO JUST FINISH UP AND ALL IS WELL
+       MOV  @AUNUM,R11        WAS I/O TO SECTOR 0 REQUESTED?
+       JNE  FIO410            NO
+       MOV  R6,R6             YES, WAS IT READ
+       JNE  FIO410            NO, SO GO TO WRITE IT
+       MOV  @RAMBUF,R0        IT WAS READ SO JUST MOVE THE SCOBUF TO RAMBUF
+       LI   R7,SC0BUF
+       LI   R11,256
+FIOMS0 MOV  *R7+,*R0+
+       DECT R11
+       JNE  FIOMS0
+
+FIO440 CLR  R0                ALL DONE, NO ERROR
+FADS02 MOVB R0,*R13           ERROR CODE RETURN
+       MOVB @CBH01,@CMDREG    DESELECT ALL DRIVES          on floppies?
+       BL   @WAT000           WAIT IT OUT
+       SBZ  MOTON             turn off floppy drive motor
+       RTWP                   ALL DONE
+*
+FIO503 DEC  R3                ONE LESS RETRY
+       JEQ  FAD01C            NO MORE TO TRY
+       LI   R0,>0100          ASSUME MFM DENSITY
+       CB   @DENSIT(R2),R0    IS IT THAT ALREADY?
+       JNE  FIO301            NO, SO TRY IT
+       CLR  R0                ASSUME SINGLE
+       MOVB @STRATE+1,R7      IS IT HD?
+       JEQ  FIO301            NO, SO IT IS SINGLE
+       LI   R0,>0200
+FIO301 MOVB R0,@DENSIT(R2)    THIS IS THE NEW DENSITY TO TRY
+FIO505 SBO  MOTON             GET THAT MOTOR ON AGAIN
+       JMP  FIO300
+*
+FIO003 MOV  *R2,R7            HAVE WE READ THIS DRIVE BEFORE?
+************ MAY WANT TO DO A DUMMY READ OF SECTOR 0 HERE LATER ****************
+       JEQ  FAD01Z
+       C    R10,R7            IS THE AU NUMBER TOO HIGH?
+       JHE  FAD01Z            BAD PARMS
+       MOVB @SCPT(R2),R7
+       SRL  R7,8              SECTOR PER TRACK
+       DIV  R7,R9             NOW SECTOR IN R10 AND TRACK IN R9
+       MOV  R9,R8
+       CLR  R9
+       MOV  @TRKTF(R2),R4
+       C    R8,R4             SIDE 1 OR 2?
+       JL   SELSHT            SIDE 1
+       SLA  R4,1
+       DEC  R4
+       S    R8,R4             IS IT ON THIS FLOPPY?
+       JNC  FAD01Z            NO, BAD NEWS
+       LI   R9,>0100          SIDE 2
+       MOV  R4,R8
+SELSHT SWPB R8
+       BL   @FTR789           SET STEP AND THE REST
+       BL   @SEKTRK
+       SWPB R10
+* NOW PERFORM SECTOR I/O
+       BL   @SETBUF           BUFFER ADDRES R0-R2 SET IN 9234
+       MOVB R10,*R1           R3  SECTOR
+       MOVB R9,*R1            R4  MSB CYL/HEAD
+       MOVB R8,*R1            R5  LSB CYL
+       MOVB @CBH01,*R1        R6  SECTOR COUNT
+       BL   @FTR789
+       BL   @FOSELL
+       JEQ  FIO440            GOOD READ
+       DEC  R3                ONE LESS RETRY TO PERFORM
+       JNE  FIO505            TRY IT AGAIN
+*
+*   WE HAVE ERRORED OUT, SO READ THE ERROR TYPE
+*      CONSIDER COMPARE ERROR, SYNC ERROR TO BE A 1, CRC ERROR A 2
+*
+FAD01C MOVB @CBH48,@CMDREG
+       MOVB @REDREG,R3
+       LI   R0,>2200
+       ANDI R3,>2000
+       JNE  FAD01B            IT IS A CRC ERROR
+       LI   R0,>2100
+FAD01B MOV  R6,R6             READ/WRITE?
+       JEQ  FAD01A            READ
+       AI   R0,>1000          WRITE
+FAD01A ABS  @DSECIO           IS IT DIRECT SECTOR I/O (THEN GIVE RAW ERROR)
+       JNE  FADS01
+       LI   R0,>C000          IT IS 60 UNLESS WRITE PROTECT ERROR
+FADS01 SOCB @CBH20,R15        ERROR
+       JMP  FADS02
+*
+*      SET R7,R8,AND R9 OF THE 9234
+*
+FTR789 MOVB @CBH47,@CMDREG
+       MOVB @FPSELC,R0
+       ORI  R0,>9000          ASSUME 6 RETRIES
+       ABS  @FAKIO0           TEST FOR FAKE READ OF SECTOR 0
+       JNE  FTR8R1
+       MOV  R6,R6             TEST FOR READ OR WRITE
+       JEQ  FTR8R1            IT IS READ
+       ORI  R0,>F000          WRITE, SO 0 RETRIES
+FTR8R1 MOVB R0,*R1
+       MOVB @STRATE,R0        ASSUME FLOPPY DISK I/O
+       MOVB @DENSIT(R2),@DENSIT(R2)  IS IT MFM OR FM?
+       JNE  FOFDS4            IT IS MFM
+       AI   R0,>0F00          IT IS FM SO SET FM BIT AND SET SPEED FASTER
+FOFDS4 MOVB R0,*R1
+       MOVB @CBHA5,*R1
+*      MOVB @CBH02,*R1        SET THE HEAD LOAD DELAY FOR 2 INCREMENTS
+*
+*  SELECT DRIVE
+*
+* IT IS THE FLOPPY, SO CHECK IF 5.25" OR 8" FLOPPY
+FETDRV LI   R0,>2C00
+       CB   @DENSIT(R2),@CBH02   IS IT 8" ?
+       JNE  SETDR2
+       LI   R0,>2800
+SETDR2 EQU  $                 NOW TEST IT HEAD LOAD REQUIRED
+*  IS IT FAKE READ OF SECTOR 0?
+*      ABS  @FAKIO0
+*      JNE  STDR1             IT IS SO NO DELAY
+*      MOV  R6,R6             IS IT READ OR WRITE
+*      JEQ  STDR1             IT IS READ
+*  IS IT A CHANGE IN THE DRIVE SELECT?
+*      CB   @LSTDRV,@VOLUME+1
+*      JNE  SETDR3            IT IS SO SET DELAY
+*      ABS  @MTOSTS           IS IT CHANGE OF DRIVE, TRACK OR MOTOR ON?
+*      JEQ  STDR1             NO
+SETDR3 EQU  $
+*      ORI  R0,>1000
+*
+STDR1  MOVB R0,@CMDREG
+       B    @WAT000
+*
+FPSLTB BYTE 1,2,4,8
+*
+INITSI SZCB @CBH20,R15        RESET EQ BIT
+       LI   R3,RETRY          LOAD RETRY COUNT
+       CLR  @FPSELC           CLEAR OUT THE FLOPPY SELECTS
+*      CLR  @FAKIO0           ZERO OUT FAKE READ OF SECTOR 0 FLAG
+       LI   R1,DATREG                  HARD DISK FILE
+       MOV  @VOLUME,R2
+       DEC  R2                MAKE BASE 0
+*      CLR  @MTOSTS           ASSUME MOTOR IS ON
+*      TB   MTO               IT IS A LOGIC 0 IF ON
+*      JNE  INITS3            IT ISSSSS ON
+*      SETO @MTOSTS           IT IS NOT ON
+INITS3 SBO  MOTON             TURN THE MOTOR ON
+       ANDI R2,>0003          MAKE SURE DRIVE 0-3 ONLY
+       MOVB @FPSLTB(R2),@FPSELC  GET THE FLOPPY PARMS
+       SLA  R2,2
+       MOV  @FLPPRM(R2),@NTRKIO  GET NUMBER OF TRACKS THIS DRIVE
+       MOV  @FLPPRM+2(R2),@STRATE  GET STEP RATE AND IF AN HD DRIVE
+       MOV  @VOLUME,R2
+       SLA  R2,3              R2 POINTS TO FLOPPY PARMS
+       AI   R2,FLPPLT-8
+       RT                     ALL DONE
+*
+FRTPER LI   R0,>3420          GPL ERROR CODE AND DSR ERROR CODE
+       ABS  @DSECIO
+       JNE  FADS01
+       SWPB R0
+       JMP  FADS01
+*
+* NOW FIX THE BUG IN THE 9234 FOR RESTORE
+FRVRD3 BL   @FEADR9            TEST FOR TRK000 ACTIVE AND WRITE PROTECT
+       MOV  R6,R6             READ OR WRITE?
+       JEQ  FRVRD2
+       SLA  R0,2              IS IT WRITE PROTECTED?
+       JOC  FRTPER            YES, SO ERROR
+FRVRD2 MOV  @RESRTN,R11       NO ERROR IF NON ZERO
+       MOV  @SAVSR8,R8        RESTORE
+*
+FEADR9 MOVB @CBH49,@CMDREG
+       MOVB @REDREG,R0
+       SLA  R0,4              GET READY WITH TRACK 000 TEST
+       RT
+*
+SEKTRK MOV  R8,@SAVSR8          SAVE R8, IN CASE OF 40 IN 80
+       MOV  R11,@RESRTN         SAVE R11 FOR RETURN
+       C    @TRKTF(R2),@NTRKIO  ARE THE # OF TRACKS THE SAME?
+       JEQ  SEKT00              YEP
+       SLA  R8,1                MUST BE A 40 IN AN 80
+SEKT00 CB   @CURTRK+1(R2),R8    ARE WE THERE?
+       JEQ  FRVRD3              WHEN DONE GO TO FRVRD3
+       JH   SEKT01
+* CURTRK IS TOO SMALL SO STEP IN
+       INC  @CURTRK(R2)
+       MOVB @CBH04,@CMDREG
+       JMP  SEKT02
+*
+SEKT01 DEC  @CURTRK(R2)
+       MOVB @CBH06,@CMDREG
+SEKT02 EQU  $
+*      SETO @MTOSTS           CHANGE IN HEAD POSITION
+       BL   @WAT000
+*      JMP  SEKT00
+*
+*   NOW FOR A NEW ROUTINE TO RESTORE TO TRACK 0 FOR FLOPPIES
+*
+SEKT03 BL   @FEADR9           TEST TRACK 000
+       JNC  SEKT00
+       CLR  @CURTRK(R2)
+       JMP  FRVRD3            WHEN DONE GO TO FRVRD3
+*
+RSTORE MOV  R11,@RESRTN       SAVE RETURN TO CALLER
+       MOV  R8,@SAVSR8        SAVE AND LATER RESTORE R8
+       MOV  @NTRKIO,R8        STEP OUT NUMBER OF TRACKS + 1
+       INC  R8
+       MOV  R8,@CURTRK(R2)
+       CLR  R8                GO TO TRACK 0
+       JMP  SEKT03
+*
+FOSELD MOVB @CBH01,*R1
+FOSELL LI   R0,>5FB0          ASSUME READ WITH NO AUTO SEEK
+       ABS  @FAKIO0           REAL THING?
+       JNE  FIO431            FAKE READ OF 0
+       MOV  R6,R6             READ OR WRITE?
+       JEQ  FIO431            READ IT IS
+       SWPB R0                WRITE COMMAND
+*
+* SET DENSITY, WE KNOW THAT CD0 (MOTOR ON) IS A 1 AND CD1 (ROM PAGE) IS A 1
+*    MOTOR IS ALREADY ON   START CONDITION IS               1    0
+*                                                        MOTON   3
+*                                                          CD0  CD1
+*                               FM   SINGLE DENSITY         0    1   SINGLE
+*                               MFM                         1    0   DOUBLE
+*                               HD                          0    0   HD
+FIO431 CB   @DENSIT(R2),@CBH01
+       JEQ  FIO600            IS DOUBLE DENSITY
+       SBZ  MOTON             IS EITHER SINGLE OR HD
+       JH   FIO600            IS H D
+       SBO  3                 IS SINGLE
+FIO600 MOVB R0,@CMDREG        LOAD THE COMMAND
+*
+WAT000 MOVB @CBH00,@MAP968
+       TB   0                 IF "1" OR EQ BIT SET, THEN COMPLETE
+       JNE  WAT000
+       MOVB @CBHBA,@MAP968
+       MOVB @STSREG,R0
+       ANDI R0,>1800
+       SBZ  3                 CORRECT PAGE OF ROM
+       SBO  MOTON             MAKE SURE MOTOR GOES ON AGAIN
+       RT

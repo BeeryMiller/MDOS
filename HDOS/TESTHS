@@ -1,0 +1,9 @@
+*
+* loader for system/sys images
+*
+LCODE  EQU  'HD'
+*
+       COPY 'TEST1S'
+*
+       END
+*

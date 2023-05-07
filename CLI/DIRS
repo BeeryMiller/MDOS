@@ -1,0 +1,851 @@
+* File: DIRS
+* Last modified 5.1.98; directory displays Year as Y2K compliant
+*
+;12.27.2020 - Added TIPEXC and warning regarding >127 files
+;03.27.2022 - Added flag when TIPI Directory exceeds 114 directories
+
+       REF  TIPFLG,TIPEXC     ;12.19.2020, 12.27.2020
+       REF  SUBFLG            ;03.27.2022, flag for exceeding TIPI directories
+
+       REF  EMIT1
+       REF  UWIDTH            user window width
+       REF  ULINES            user screen line count
+       REF  GETCAT,VOLON
+       REF  SETCAT,RELCAT
+       REF  CISNIL,CISSPC
+       REF  BIGNIL
+*
+       DEF  DIR
+       DEF  DIRDMP            <used by TREE>
+       DEF  DIRCNT,FILCNT     <used by TREE>
+       DEF  SECUSE,SECUS2     <used by TREE>
+       DEF  WIDEOP,PAUZOP     <used by TREE>
+*
+DIR    MOV  R11,@DIRRET
+       CLR  @TREDIR
+       MOV  R0,R12            save string pointer
+       BL   @SETCAT
+       JNE  MEMERR
+*
+       MOV  R12,R1            get pointer to option buffer
+       LI   R2,DIRLEN
+       MOVB @MAXLEN,*R2       to point to string rather than length byte @@
+       LI   R0,8              parse opcode
+       XOP  @NINE,0
+       JNE  BADDIR            invalid directory name
+       MOV  R0,@OPTION        save pointer to option strings
+       JMP  GETOP
+*
+*
+MEMERR LI   R1,ERRM1
+       JMP  BADSTF
+*
+DEVERR LI   R1,ERRM2
+       JMP  BADSTF
+*
+BADDIR LI   R1,ERRM3
+BADSTF BL   @MESG2
+       B    @ERRORX
+*
+ERRM1  TEXT 'Insufficient memory'
+       BYTE >0D,>0A,0
+ERRM2  TEXT 'Device error'
+       BYTE >0D,>0A,0
+ERRM3  TEXT 'Bad directory name'
+       BYTE >0D,>0A,0
+
+*
+* parse option strings...  /w  /p
+*
+GETOP  CLR  @WIDEOP
+       CLR  @PAUZOP
+       MOV  @OPTION,R4
+       CLR  R3
+PCL1   MOVB *R4+,R3
+       JEQ  OPDONE
+       CI   R3,'/'*256
+       JNE  PCL1
+       MOVB *R4+,R3
+       JEQ  OPDONE
+       ANDI R3,>DF00
+       CI   R3,'W'*256
+       JNE  PCJ1
+       SETO @WIDEOP
+       JMP  PCL1
+*
+PCJ1   CI   R3,'P'*256
+       JNE  PCL1
+       SETO @PAUZOP
+       JMP  PCL1
+*
+OPDONE LI   R0,PAB
+       CLR  @VOLON
+       BL   @GETCAT
+       JEQ  GOTCAT
+*
+* check error code here...not found, hardware error
+*
+       JMP  DEVERR
+*
+DIRDMP MOV  R11,@DIRRET
+       SETO @TREDIR
+       CLR  @HDRFLG
+       JMP  DIRDM2
+*
+DIR000A
+       BL   @MESG           12.21.2020 Added as TIPI has no Volume name
+       DATA US4
+       CLR  @HDRFLG
+       BL   @MESG
+       DATA US3
+       JMP  VOLTIPI
+
+GOTCAT
+
+*      LI   R2,TIPFLG        12.21.2020 Only needed when TIPI catalog is mixed
+*      MOV  *R2,R2           12.21.2020 Not needed after TIPI update to DIRS =
+*      JNE  DIR000A          12.21.2020 FIRST setting in PI.CONFIG
+
+
+       BL   @MESG
+       DATA US1
+       CLR  @HDRFLG           header has not been seen yet
+*
+
+
+       LI   R1,PAB+15
+       MOVB *R1+,R2
+       SRL  R2,8
+       JEQ  NAMX1             zero length pathname (error, really)
+NAMX0  MOVB *R1+,R0
+       CB   R0,@PERIOD
+       JEQ  NAMX1             last char in name has been sent
+       BLWP @EMIT1
+       DEC  R2
+       JNE  NAMX0             more in name
+*
+
+NAMX1  BL   @MESG
+       DATA US2
+*
+       LI   R2,VOLNAM
+VOL1   MOVB *R2+,R0           send the volume name to the user
+       BLWP @EMIT1
+       CI   R2,VOLNAM+10
+       JLT  VOL1
+*
+DIRDM2 BL   @MESG
+       DATA US3
+*
+
+VOLTIPI
+       LI   R1,PAB+15
+       MOVB *R1+,R2
+       JEQ  NAMX3
+       SRL  R2,8
+       A    R1,R2
+       DEC  R2
+       CB   *R2,@PERIOD
+       JEQ  NAMX20
+       MOVB *R2,R0
+       JLT  NAMX20
+       JMP  NAMX2
+*
+NAMX20 DEC  R2
+NAMX2  C    R1,R2
+       JH   NAMX3
+       MOVB *R1+,R0
+       BLWP @EMIT1
+       JMP  NAMX2
+*
+NAMX3  BL   @MESG
+       DATA CRLF
+       BL   @MESG             blank line...
+       DATA CRLF
+*
+       LI   R1,5
+       MOV  R1,@LINCNT        user has seen some lines
+*
+       CLR  @DIRCNT
+       CLR  @FILCNT
+       CLR  @SECUSE
+       CLR  @SECUS2
+       LI   R4,11
+
+* TIPI does not distinguish between files and directory when cataloging
+
+*      LI   R2,TIPFLG        12.21.2020  Removed after PI.CONFIG option to add
+*      MOV  *R2,R2           12.21.2020  DIRS=First
+*      JNE  DIR000           12.21.2020
+
+NPX001
+       CB   @DIRS,@H20
+       JEQ  DIR000            no directories
+*
+       SETO @DIRFLG
+       LI   R2,DIRS
+       JMP  LOOP1
+*
+DIR000 CLR  @DIRFLG
+       LI   R2,NAMES
+       JMP  LOOP1
+*
+WIDCNT LI   R4,11
+LOOP1  C    @LINCNT,@ULINES
+       JL   NOPAUZ
+       MOV  @PAUZOP,R3
+       JEQ  NOPAUZ            no pause option set...
+       BL   @MESG
+       DATA PMESG1
+       MOV  R2,R5
+*
+SPINK  LI   R0,4
+       XOP  @FIVE,0
+       JNE  SPINK             @@ actually, sleep until keypress...
+*
+       MOV  R5,R2
+       CLR  @LINCNT
+       INC  @LINCNT
+       BL   @MESG
+       DATA PMESG2
+*
+NOPAUZ LI   R3,10
+       CB   *R2,@H20
+       JNE  NPX1
+NXP00  MOV  @DIRFLG,R1        listing dirs right now?
+       JNE  DIR000            yes, go back to list files...
+       B    @WEND1            otherwise we're done
+*
+NPX1   CB   *R2,@H00          nilled for incorrect match?
+       JNE  NPX101
+*
+       AI   R2,16
+       MOV  @DIRFLG,R0
+       JNE  LOOP1
+       AI   R2,16
+       JMP  LOOP1
+*
+NPX101 MOV  @DIRFLG,R0
+       JEQ  NPX100            we're doing files
+       INC  @DIRCNT
+       A    @14(R2),@SECUSE   2 sectors/dir entry
+       JNC  LOOP2
+       INC  @SECUS2
+       JMP  LOOP2
+*
+NPX100 INC  @FILCNT
+       A    @14(R2),@SECUSE
+       JNC  NPX102
+       INC  @SECUS2
+NPX102 AB   @28(R2),@SECUS2+1
+       JNC  LOOP2
+       AB   @H01,@SECUS2
+*
+LOOP2  MOV  @HDRFLG,R0
+       JNE  LOOP21            header has been seen
+       ABS  @WIDEOP
+       JNE  LOOP21            don't show it in wide mode
+       BL   @SHOHDR           not been seen, show it.
+*
+LOOP21 MOVB *R2+,R0
+       BLWP @EMIT1
+       DEC  R3
+       JNE  LOOP21
+*
+       MOV  R2,R3             save in case we're in wide mode
+*
+       LI   R0,'  '
+       BLWP @EMIT1
+*
+       ABS  @WIDEOP
+       JEQ  NOTWID
+       MOV  R3,R2             wide, display them side by side
+       AI   R2,22
+       MOV  @DIRFLG,R1
+       JEQ  PCD000
+*
+       MOV  R3,R2
+       AI   R2,6              number of excess bytes for a dir
+PCD000 AI   R4,11
+       C    R4,@UWIDTH        window width...
+       JL   LOOP1
+       BL   @MESG
+       DATA CRLF
+       INC  @LINCNT
+       JMP  WIDCNT
+*
+NOTWID INC  @LINCNT
+       MOV  @DIRFLG,R3
+       JEQ  NW0000
+*
+       CLR  R0
+       MOV  @4(R2),R1
+       BLWP @BIG6
+*
+       BL   @MESG
+       DATA DIRDES
+*
+       MOV  @4(R2),R0
+       SRL  R0,8
+       MOV  @4(R2),R1
+       SLA  R1,8
+       BLWP @BIG9
+*
+       LI   R0,'  '
+       BLWP @EMIT1
+       BLWP @EMIT1
+*
+       C    @UWIDTH,@D74
+       JL   DIREX0
+*
+       MOV  R2,R0
+       BLWP @DODATE
+*
+DIREX0 BL   @MESG
+       DATA CRLF
+       AI   R2,6
+       B    @LOOP1
+*
+SECTORS DATA 0           TIPI FILE SECTOR COUNT 12.21.2020
+
+NW0000 MOV  @4(R2),R1         # sectors
+       MOVB @18(R2),R0        high nibble for sector count
+       SRL  R0,8              we now have a 32 bit number in r0,r1
+
+
+       BLWP @BIG6             show six digits
+*
+       MOVB @2(R2),R3         file flags...
+       SRL  R3,8
+*
+       MOV  R3,R7             12.21.2020 fake FCB for TIPI check for DIR
+       CI   R7,>0040          12.21.2020 derived from CLI\GETCATS with label
+       JEQ  DCTFIL            12.21.2020 name TYPES
+
+       MOV  R3,R7
+       SRL  R7,6
+       JOC  EMUFIL
+*
+       MOV  R3,R7
+       SRL  R7,1
+       JOC  PGMFIL
+*
+       LI   R1,INTDES
+       SRL  R7,1
+       JOC  INTERN
+       LI   R1,DISDES
+INTERN BL   @MESG2
+       LI   R1,VARDES
+       SRL  R7,6
+       JOC  VARI
+       LI   R1,FIXDES
+VARI   BL   @MESG2
+*
+       MOV  *R2,R1            show the record length
+       CLR  R0
+       BLWP @BIG9
+       JMP  PROTC
+DCTFIL
+       BL   @MESG             12.21.2020  TIPI directory identification
+       DATA DIRDES            12.21.2020
+       INC  @DIRCNT           12.21.2020  Count +1 for directory and -1 filecout
+       DEC  @FILCNT           12.21.2020
+       LI   R1,2                     Fake number of sectors for <DIR> on TIPI
+       MOVB @6(R2),R0
+
+       JMP  PGM000
+
+*
+EMUFIL BL   @MESG
+       DATA EMUDES
+       JMP  EMUFI2
+*
+
+PGMFIL BL   @MESG
+       DATA PGMDES
+
+       LI   R1,TIPFLG         12.21.2020
+       MOV  *R1,R1            12.21.2020
+       JEQ  EMUFI2            12.21.2020 NOT TIPI
+
+       MOV  @4(R2),R1         12.21.2020
+       DEC  R1                12.21.2020
+       JMP  PGM000            12.21.2020
+
+EMUFI2 MOV  @8(R2),R1         # of image sectors
+       MOVB @6(R2),R0         EOF offset
+       JEQ  PGM000
+       DEC  R1
+PGM000 SRL  R0,8
+       MOVB R1,R0
+       SWPB R0
+       MOVB R0,R1
+       MOVB @H00,R0
+       SWPB R1
+       BLWP @BIG9
+*
+PROTC  LI   R0,'P '
+       SRL  R3,4
+       JOC  PROTFI
+       LI   R0,'  '
+PROTFI BLWP @EMIT1
+       SWPB R0
+       BLWP @EMIT1
+DATE1
+       C    @UWIDTH,@D74
+       JL   NODATE
+*
+       MOV  R2,R0
+       AI   R0,10
+       BLWP @DODATE
+       AI   R0,4
+       BLWP @DODATE
+*
+NODATE BL   @MESG
+       DATA CRLF
+       AI   R2,22
+       B    @LOOP1
+*
+* shit exit code
+*
+WEND1  ABS  @WIDEOP
+       JEQ  WEND2
+       BL   @MESG
+       DATA CRLF
+       INC  @LINCNT
+*
+WEND2  INCT @LINCNT
+       MOV  @DIRCNT,R3
+       JEQ  WEND20
+       INC  @LINCNT
+WEND20 C    @LINCNT,@ULINES
+       JL   NPC1
+       MOV  @PAUZOP,R3
+       JEQ  NPC1              no pause option set...
+       BL   @MESG
+       DATA PMESG1
+*
+SPINK2 LI   R0,4
+       XOP  @FIVE,0
+       JNE  SPINK2            @@ actually, sleep until keypress...
+*
+       CLR  @LINCNT
+       INC  @LINCNT
+       BL   @MESG
+       DATA PMESG2
+*
+NPC1   BL   @MESG
+       DATA CRLF
+       MOV  @SECUSE,R8
+       BL   @CISNIL
+*
+       C    @SECUSE,@ONE
+       JEQ  DOONES
+*
+       BL   @MESG
+       DATA MORSEC
+       JMP  DOON00
+*
+DOONES BL   @MESG
+       DATA ONESEC
+*
+DOON00 MOV  @FILCNT,R8
+       BL   @CISNIL
+*
+       C    @FILCNT,@ONE
+       JEQ  ONEFIL
+       BL   @MESG
+       DATA FCNTS
+
+       ABS  @TIPEXC      12.27, exceeded 127 files during dir catalog?
+       JEQ  ONEF00            no
+       BL   @MESG             yes, warn user
+       DATA FCNTIP
+       JMP  ONEF00
+*
+ONEFIL BL   @MESG
+       DATA FCNT
+*
+ONEF00 LI   R1,DIRC00
+       MOV  @DIRCNT,R8
+       JEQ  DD00
+*
+       BL   @MESG
+       DATA DIRC0X
+*
+       BL   @CISNIL           number of dirs since it's not zero
+*
+       MOV  @DIRCNT,R0
+       LI   R1,DIRC01
+       DEC  R0
+       JEQ  DD00
+       LI   R1,DIRC0Y
+*
+DD00   BL   @MESG2
+*
+       ABS  @SUBFLG           3.27.2022  Test for exceeding 114 TIPI dirs
+       JEQ  DD0001            3.27.2022
+       LI   R1,FCNTIP2        3.27.2022
+       BL   @MESG2            3.27.2022
+
+DD0001
+       MOV  @TREDIR,R8
+       JNE  ERRORX            all done for tree
+*
+       MOV  @SECFR2,R14
+       MOV  @SECFRE,R15
+       CI   R15,1
+       JNE  MORFRE
+       MOV  R14,R14
+       JNE  MORFRE
+*
+       BL   @BIGNIL           "sector free"
+       DATA FSEC
+       JMP  ONEFRE
+*
+MORFRE BL   @BIGNIL           "sectors free"
+       DATA FSECS
+ONEFRE
+*
+ERRORX MOV  @DIRRET,R11
+       MOV  @TREDIR,R0
+       JEQ  ERRORY
+       RT                     TREE: don't release catalog
+*
+ERRORY B    @RELCAT           release memory from cat
+*
+MESG   MOV  *R11+,R1
+MESG2  MOVB *R1+,R0
+       JEQ  MESGE
+       BLWP @EMIT1
+       JMP  MESG2
+MESGE  RT
+*
+* show the user a nice header
+*
+D74    DATA 74
+HDRFLG DATA 0                 tells whether header has been seen
+*
+SHOHDR MOV  R11,R12
+       BL   @MESG
+       DATA DIRHD1
+       C    @UWIDTH,@D74
+       JL   SHOH10
+       BL   @MESG
+       DATA DIRHD3
+SHOH10 BL   @MESG
+       DATA CRLF
+*
+       BL   @MESG
+       DATA DIRHD2
+       C    @UWIDTH,@D74
+       JL   SHOH20
+       BL   @MESG
+       DATA DIRHD4
+SHOH20 BL   @MESG
+       DATA CRLF
+       INCT @LINCNT
+       SETO @HDRFLG
+       B    *R12
+*
+BIGWS  BSS  32
+BIG6   DATA BIGWS,BIG600
+BIG9   DATA BIGWS,BIG900
+*
+D10000 DATA 10000
+D10    DATA 10
+*
+BIG600 LI   R2,14+BIGWS
+       JMP  BIG901
+BIG900 LI   R2,8+BIGWS
+BIG901 CLR  R3                no forced zeroes yet
+*
+       MOV  *R13,R11
+       MOV  @2(R13),R12
+       DIV  @D10000,R11
+       MOV  R11,R8
+*
+       CLR  R11
+       CLR  R10
+       CLR  R9
+*
+       CLR  R7
+       CLR  R6
+       CLR  R5
+       CLR  R4
+*
+       DIV  @D10,R11
+       DIV  @D10,R10
+       DIV  @D10,R9           low 4 digits set
+*
+       DIV  @D10,R7
+       DIV  @D10,R6
+       DIV  @D10,R5
+       DIV  @D10,R4           high 5 digits set
+*
+BIG910 MOV  *R2+,R0
+       JNE  BIG920
+*
+       LI   R0,' '-'0'
+       MOV  R3,R3
+       JEQ  BIG921
+       CLR  R0
+*
+BIG920 SETO R3
+BIG921 AI   R0,'0'
+       SLA  R0,8
+       BLWP @EMIT1
+       CI   R2,BIGWS+24
+       JL   BIG910
+       JH   BIG990
+       SETO R3
+       JMP  BIG910
+*
+BIG990 LI   R0,'  '
+       BLWP @EMIT1
+       RTWP
+*
+DATE97 B    @DATE99
+DODATE DATA BIGWS,$+2
+       MOV  *R13,R1
+       MOV  *R1+,R12          get time
+       JEQ  DATE97            not valid--- TI file?
+       MOV  *R1,R11           get date
+       JEQ  DATE97            not valid--- TI file?
+*
+       MOV  R11,R9
+       MOV  R11,R10
+*
+* calc month
+*
+       SRL  R9,5
+       ANDI R9,>000F
+       CLR  R8
+       DIV  @D10,R8
+       MOV  R8,R0
+       JNE  DATE10
+       LI   R0,' '-'0'
+DATE10 AI   R0,'0'
+       SWPB R0
+       BLWP @EMIT1
+*
+       MOV  R9,R0
+       AI   R0,'/0'
+       SWPB R0
+       BLWP @EMIT1
+       SWPB R0
+       BLWP @EMIT1
+*
+* calc day
+*
+       CLR  R9
+       ANDI R10,>001F
+       DIV  @D10,R9
+       MOV  R9,R0
+       AI   R0,'0'
+       SWPB R0
+       BLWP @EMIT1
+       MOV  R10,R0
+       AI   R0,'/0'
+       SWPB R0
+       BLWP @EMIT1
+       SWPB R0
+       BLWP @EMIT1
+*
+* calc year
+*
+       CLR  R10
+       SRL  R11,9
+       ANDI R11,>007F
+       DIV  @D10,R10
+       MOV  R10,R0
+
+*------ start of Y2K mods
+       MOV  R0,R9        save our value; perform Y2K mods
+       LI   R0,'20'
+       CI   R9,6         6th decade or less?
+       JLE  DIR200       yes, must be 21st century
+       LI   R0,'19'      no, 20th century
+DIR200 BLWP @EMIT1       display it
+       SWPB R0
+       BLWP @EMIT1
+       MOV  R9,R0        restore value, display decade
+*------ end of Y2K mods
+
+       AI   R0,'0'
+       SWPB R0
+       BLWP @EMIT1
+       MOV  R11,R0
+       AI   R0,' 0'
+       SWPB R0
+       BLWP @EMIT1
+       SWPB R0
+       BLWP @EMIT1
+*
+* now for time
+*
+       MOV  R12,R10
+       MOV  R12,R11
+*
+* hour
+*
+       SRL  R10,11
+       CLR  R9
+       DIV  @D10,R9
+       MOV  R9,R0
+       JNE  TIME10
+       LI   R0,' '-'0'
+TIME10 AI   R0,'0'
+       SWPB R0
+       BLWP @EMIT1
+       MOV  R10,R0
+       AI   R0,':0'
+       SWPB R0
+       BLWP @EMIT1
+       SWPB R0
+       BLWP @EMIT1
+*
+* now for minute
+*
+       CLR  R10
+       SRL  R11,5
+       ANDI R11,>003F
+       DIV  @D10,R10
+       MOV  R10,R0
+       AI   R0,'0'
+       SWPB R0
+       BLWP @EMIT1
+       MOV  R11,R0
+       AI   R0,':0'
+       SWPB R0
+       BLWP @EMIT1
+       SWPB R0
+       BLWP @EMIT1
+*
+* now for seconds
+*
+       CLR  R11
+       SLA  R12,1
+       ANDI R12,>003F
+       DIV  @D10,R11
+       MOV  R11,R0
+       AI   R0,'0'
+       SWPB R0
+       BLWP @EMIT1
+       MOV  R12,R0
+       AI   R0,' 0'
+       SWPB R0
+       BLWP @EMIT1
+       SWPB R0
+       BLWP @EMIT1
+       JMP  TIME99
+*
+DATE99 LI   R0,'  '
+*      LI   R1,18
+       LI   R1,20        INCREASE BY TWO - adjust for full year "xxxx" field
+DATE98 BLWP @EMIT1
+       DEC  R1
+       JNE  DATE98
+TIME99 RTWP
+*
+H20    BYTE ' '
+EMUDES TEXT 'Emulate '
+       BYTE 0
+PGMDES TEXT 'Program '
+       BYTE 0
+DISDES TEXT 'Dis/'
+       BYTE 0
+INTDES TEXT 'Int/'
+       BYTE 0
+VARDES TEXT 'Var '
+       BYTE 0
+FIXDES TEXT 'Fix '
+       BYTE 0
+DIRDES TEXT '<Dir>   '
+       BYTE 0
+DIRHD1 TEXT 'Filename   Size   Type    Length    P'
+       BYTE 0
+DIRHD2 TEXT '---------- ------ ------- --------- -'
+       BYTE 0
+DIRHD3 TEXT ' Created             Updated'
+       BYTE 0
+DIRHD4 TEXT ' ---------- -------- ---------- --------'
+       BYTE 0
+*
+ONESEC TEXT 'sector in '
+       BYTE 0
+MORSEC TEXT 'sectors in '
+       BYTE 0
+FCNT   TEXT 'file'
+       BYTE 0
+FCNTS  TEXT 'files'
+       BYTE 0
+FCNTIP TEXT '  (Warning: TI file limit exceeded!)'  ;12.27
+       BYTE 0
+FCNTIP2
+       TEXT '  -Warning: TI Directory limit exceeded!'     3.27.2022
+       BYTE >0D,>0A,0                                      3.27.2022
+
+DIRC00 BYTE ',',>0D,>0A,0
+DIRC0X BYTE >0D,>0A
+       TEXT 'and '
+       BYTE 0
+DIRC01 TEXT 'directory,'
+       BYTE >0D,>0A,0
+DIRC0Y TEXT 'directories,'
+       BYTE >0D,>0A,0
+FSEC   TEXT ' sector free'
+       BYTE >0D,>0A,0
+FSECS  TEXT ' sectors free'
+       BYTE >0D,>0A,0
+*
+US1    BYTE >0D,>0A
+       TEXT 'Volume in '
+       BYTE 0
+US2    TEXT ' is '
+       BYTE 0
+US3    BYTE >0D,>0A
+       TEXT 'Directory of '
+       BYTE 0
+US4    BYTE >0D,>0A
+       TEXT 'Volume in TIP1 is TIPI'
+       BYTE 0
+
+PMESG1 TEXT 'Press any key to continue...'
+       BYTE 0
+PMESG2 BYTE >0D
+       TEXT '                             '
+       BYTE >0D,0
+*
+CRLF   BYTE >0D,>0A,0
+*
+H00    BYTE >00
+H01    BYTE >01
+PERIOD TEXT '.'
+QUEST  TEXT '?'
+ASTER  TEXT '*'
+MAXLEN BYTE 40
+SAVLEN BYTE 0
+*
+DIRFLG DATA 0
+DIRRET DATA 0
+TREDIR DATA 0
+OPTION DATA 0
+LINCNT DATA 0
+DIRCNT DATA 0
+FILCNT DATA 0
+*
+SECUSE DATA 0                 keep +16 bits for used sectors
+SECUS2 DATA 0
+*
+ONE    DATA 1
+FIVE   DATA 5
+NINE   DATA 9
+*
+WIDEOP DATA 0
+PAUZOP DATA 0
+*
+       COPY "\MDOS\CLI\CATMAPS"
+*
+       END
+*

@@ -1,0 +1,195 @@
+; File: WINDS1-S
+;
+; 1.30.94   >601e,>6020 added for DSK1 emulation flag TT
+;
+; 3.19.2021 Modified SCSCHK; allow 6 devices for SCSx.
+;           This means FLPPRM will be overwritten in the SCSI EQU bufferpage
+;           See SCSI\SECTOR_S and SCSI\BUFEQU
+;          $Consider cleaning this whole table up later
+;
+; 6.27.2021 Moved REF/DEF from hd.equates into this file, so that we can
+;           eliminate scsi2\bufequ2_s. This will ensure that we are using the
+;           same structure for hfdc/scsi/hrd/ide going forward
+;
+;
+       DEF  FDSSEC,FDSFMT     ;start of added ref/defs 6.27.2021
+       DEF  CYLPLT            ;6.27, can't place in EQUATES (dupe def)
+
+       REF  PASDAT,PASRW,PASVDP,PASADH,PASADL,PASCNT,PASDSR
+       REF  SYSRT1,FLPRT1     ;caution: possible dup local labels in .l8
+
+       REF  OPCODE,FLGSTS,PABERR,BUFADH,BUFADR,RECNUM
+       REF  LRECLN,CPUFLG,CHRCNH,CHRCNT,SCNOFF,OPTLN,PATHNM
+;-end of added ref/def
+
+*
+;
+; 6.19.2022, really should fix a lot of the hard-coding here.
+;
+       TEXT 'HD'             >6000 flag to say hard drive support is installed
+PWRENT DATA PWRUPP           >6002 PWR UP VECTOR
+WDSENT DATA DSRENT           >6004 DSR ENTRY
+GP     DATA WINGPL           >6006 GPL ENTRY  (12.31.97 - entry is 0)
+FDSSEC DATA GPLWS,FLPIO      >6008 FLOPPY SECTOR I/O
+*       FORMAT IS DRIVE NUMBER IN CALLERS R0(BASE 1), R1=0 IF READ, <>0 IF WRT
+FDSFMT DATA GPLWS,FLPF    >600C FLOPPY FORMAT  DRIVE NUMBER IN CALLERS R0(BASE 1
+INTENT DATA INTWS,INT1    >6010 INT ENTRY    (12.31.97 - both entries =0)
+       DATA 0             >6014 TEMP. RESERVERD, NOT USED, BUT DON'T MOVE
+
+HFDCRU DATA 0             >6016 CRU LOCATION OF THE HFDC CARD(must stay at this
+*                             offset for GPL "autotracking" [set in FLPPRM]
+
+;;SECCRU DATA >1200         >6018 CRU LOCATION FOR SCSI [set in SCSI2\POWERS]
+SCSICRU  DATA >0000       >6018, set in SCSI2\POWERS; if 0, no present
+FLAGSCSI DATA >FF00       >601A FLAG FOR USE 1200 DSR IN GPL MODE
+*                               1= NO USE WDS  0 = USE WDS
+
+;this flag is probably dead
+GPLFLG DATA 1             >601C FLAG FOR WDS POWERUP 1=NO POWERUP EXECUTED
+*                               HAVING BEEN EXECUTED 0= POWERUP EXECUTED
+SCSIAC DATA 0             >601E Flag for SCSI operation (not best way)
+       DATA 0             >6020 1= NO DSK1 SD EMULATION, 0=DSK1 EMULATION
+
+       DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0    RESERVED -crc?
+*
+
+COMDEV LI   R2,TEXDSK         NOW TRY DSK
+       DEC  R3
+       LI   R6,1              MUST BE DRIVE 1
+       LI   R7,1              HIGHEST DSK1 DRIVE
+       SETO @DSKDIR           IS DSK DIR ACCESS
+       CB   *R2+,*R3+         IS IT DSK?
+       JNE  FLPP99            NOT D
+       CB   *R2+,*R3+         S
+       JNE  FLPP99
+       CB   *R2+,*R3+         K
+       JNE  FLPP99
+       CLR  @SCSIAC
+*
+       LI   R1,OPTLN
+       MOVB *R1+,R1
+       SRL  R1,8
+       AI   R1,OPTLN
+       CB   *R1,@DPT
+       JNE  SETDR             disallow dir file access to special DSK,DSK1
+       B    @FLPRT1
+*
+FLPP99 B    @ERR000
+
+SCPGG  DATA 0                 * A HOLDING PLACE TO SAVE MAPPED PAGES.
+       DEF  SCSIAC
+
+;; DSRENT LI   R12,>1200
+
+DSRENT MOV  @SCSICRU,R12      ;6.19.2022, use cru set by powerup
+       MOV  @SCSIAC,@SCSIAC   ;is it a SCSI request?
+       JNE  DSRENK            ;yes.
+
+DSREEC MOV  @HFDCRU,R12       ;no, use HFDC cru
+       SBO  0
+       MOVB @CBHBA,@MAP968    MAP IN THE PERIPHERAL PAGE
+
+DSRENK MOVB @CBH00,@PABERR    ZERO OUT ERROR FLAGS
+       LI   R0,>6000          BADOP OPCODE
+       CLR  @DSKDIR           ASSUME WINCHESTER I/O
+       LI   R3,OPTLN
+       MOVB *R3+,R1           GET THE LENGTH OF THE PATHNAME
+       JNE  DSRNNN            CAN NOT BE LENGTH OF 0
+       B    @ERR000
+DSRNNN SRL  R1,8
+       MOV  R1,R5             SO R5 IS THE PATHNAME LENGTH
+       CI   R1,5              PATHNAME MUST BE AT LEAST 5 CHARS
+       JL   ERR000
+       CI   R1,40             BUT NO MORE THAN 40
+       JH   ERR000
+       SETO R6                ASSUME VOLUME SEARCH
+       LI   R7,3              HIGHEST DRIVE NUMBER
+       LI   R2,TEXWDS
+       CB   *R2+,*R3           H
+       JNE  SCCHK             NOT "HDS, SO SEE IF SCSI INSTEAD.
+       INC  R3
+       CB   *R2+,*R3+         D
+       JNE  ERR000
+       CB   *R2+,*R3+         S
+       JNE  ERR000
+       JMP  SETDR
+SCCHK  LI   R2,TEXSCS         *SCSI DEVICE PATH?
+       CB   *R2+,*R3+         S
+       JNE  COMDEV            *NO, IT MUST BE A DSK
+       CB   *R2+,*R3+         C
+       JNE  ERR000
+       CB   *R2+,*R3+         S
+       JNE  ERR000
+
+       LI   R7,6         ;allow SCS1-SCS6
+;                        ;AND allow scsi dsr to overwrite "flpprm" in equate
+;
+SETDR  MOV  @BUFADR,@MYUADL   SET THE BUFFER ADDRESS
+       MOV  @PABERR,@MYUADH   ACTUALLY PABERR/BUFADH
+       MOVB @CPUFLG,@PASVDP   SET IF CPU OR VDP RAM I/O
+       LI   R8,3
+       CB   *R3,@DPT          A DECIMAL POINT?
+       JEQ  SETDR1            YES, DO A VOLUME SEARCH OF ALL DRIVES.
+       INC  R8                NO, GET THE DRIVE NUMBER.
+       MOVB *R3+,R6           TRY A DRIVE
+       SRL  R6,8
+       AI   R6,->0030
+       JEQ  ERR000
+       C    R6,R7             R7==3 DRIVES MAXIMUM HFDC
+       JH   ERR000            R7==6 Drives for SCSx device
+
+SETDR1 MOV  R6,@VOLUME        SET THE DRIVE NUMBER
+       MOV  R7,@MAXDRV        HIGHEST DRIVE FOR NAME SEARCH
+       MOV  R8,@VSERCH        SAVE DEVICE NAME LENGTH
+       CB   *R3+,@DPT         MUST BE A DECIMAL, IN BOTH CASES NOW..
+       JNE  ERR000
+       MOV  R3,@STSRCH        HERE IS WHERE TO START THE PATHNAME SEARCH
+       CLR  @GPLIO            IT IS DSR LINK I/O
+       CLR  @SCINAU
+       CLR  @DIRIO
+       CB   @OPTLN(R5),@DPT   is the last character a "." (if so then
+       JNE  PBVC3             NO, standard dsr           direct access)
+       SETO @DIRIO            it is some type of special access
+PBVC3  BLWP @RDCMTM           READ COMPRESSED TIME
+*
+* Next we find the pathname in the buffer.  If there is room, or if the
+* buffer already exists, then return zero in R0.  If there is no room in
+* the buffer area, then return nonzero in R0.
+*
+* r3 points to start of buffer.   r8/9 point to parent/child directory buffers
+*   r2 contains the address of the current buffer, or end of buffer.
+*   end of buffer indicates filename is not presently in the buffer yet,
+*   or there was no more room.
+*
+       BLWP @GETBUF
+       MOV  R0,R0           temporary
+       JNE  ERR000          temporary
+       MOV  @OPCODE,R6        GET OPCODE AND FLAGS
+       ANDI R6,>3FFF          MASK OFF ANY STRAY BITS
+       MOV  R6,R11
+       LI   R0,>6000          ILLEGAL OPCODE
+       SRL  R11,8
+       CI   R11,>000D         ERROR OUT ON FORMAT
+       JH   ERR000
+       SLA  R11,1
+       MOV  @OPTBL(R11),R11
+       B    *R11
+*
+OPTBL  DATA OPEN,CLOSE,READ,WRITE,RESTOR
+       DATA LOAD,SAVE,DELETE,BADOP,STATUS
+       DATA BREAD,BWRITE,PROTCT,RENAME
+*
+ERR000 B    @BADOP
+*
+PUTDSL MOV  @AUNUM,@FNLOCD(R3)
+       SZCB @CBH0F,@FNSEC0(R3)
+       SOCB @SCINAU+1,@FNSEC0(R3)
+       RT
+*
+DSRPG1 BYTE DPAG6      THE PAGE AT >6000
+DSRPG2 BYTE DPAG5      THE PAGE AT >2000
+
+PAGE4  BYTE 0
+PAGEBA BYTE >BA
+       EVEN
+

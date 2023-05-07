@@ -1,0 +1,349 @@
+; OSHEAD1S
+;
+; This file contains the various vectors (reset,xop), context switch code,
+;      and OS startup routine (OSINT0)
+;
+; Operating System Startup at a high level:
+;           Vector OSINT0
+;           Enables vid wait states
+;           One-time unpack/copy of pages from system/sys pages to destination
+;           Init the task table
+;           Execute the XOP powerup routines
+;           Claim all OS pages
+;           Set up the CLI, link page nodes
+;           Update TSKMAP, copy code to PAD, set mapper for CLI/Debug
+;           Execute CLI @>0400 (HCLIS:START)
+;
+; Warm Restart via "&" or CTRL-ALT-DEL
+;           Vector OSINT0, modified
+;           Entry occurs via reset vector, however, the first time through
+;           the vector is updated to point to PWRADR. The pages @MOVTAB are
+;           not recopied! See HMOVTABS
+;
+; OSOUT/OSIN: Workhorse for context switching for Interrupt and XOP.
+;              The NOP on this file and TASKHEADS allows the OS to flip between
+;              OS and User task.
+;-------------------------------------------------------------------------
+; 2.08.2021 Added TPXTAB to PWRTAB, to enable TIPI powerup (not quite ready)
+; 5.10.2022 Re-activated TPXTAB for powerup; tested.
+; 5.11.2022 Noted structural offset dependencies on OSTASK and TASKHEADS
+;          %%Review potential bug with HANDL0 and L6.KEY1S reference offset.
+; 5.13.2022 Documented reset process, cleaned up/added comments
+;
+
+       DEF  HEAD#T,TAIL#T,TASK#C
+       DEF  CONTEX
+*
+INTREG EQU  >F080        OS Interrupts (and NLUTSK for context/task)
+;                             floating point (FAC)
+;                             and for Reset vectors level 0-4
+;                             and L6.VX-INTS interrupt handler sound/mouse
+XOPREG EQU  >F0A0        XOP register
+SYS1   EQU  >F0A0        System (L10.MATHS, ==WSG in FLOATS)
+SYS2   EQU  >F0C0        System (L10.MATHS)
+SYSREG EQU  >F0E0        System, mapper storage
+SCRATC EQU  >F0E0        Scratch/debug? (label not referenced)
+
+MAPPER EQU  >F110        9995 memory mapper
+*
+       AORG 0
+*
+RSETVC DATA >F000,OSINT0      ;vector is modified by OSINT0
+       DATA INTREG,OSINT1     9901 interrupt
+       DATA INTREG,OSINT2     MID trap
+       DATA INTREG,OSINT3     internal timer interrupt
+       DATA INTREG,OSINT4     external bus interrupt
+*
+       AORG >20
+LIBTAB DATA XOPTAB,PWRTAB                    LIBRARY USAGE
+MAXXOP DATA XOPCNT,XOPUSE
+
+HEAD#T DATA TASK#0
+TAIL#T DATA TASK#N
+TASK#C DATA TASK#0
+*
+MOVLOC DATA MOVTAB
+MOVLST DATA MOVEND
+*
+       AORG >40               XOP table
+SYSXOP DATA SYS2,XOPCAL
+       DATA >FFD8,>FFF8       USER #1        RSBUG
+       DATA 0,0               USER #2
+       DATA 0,0               USER #3
+       DATA 0,0               USER #4
+       DATA 0,0               USER #5
+       DATA 0,0               USER #6
+       DATA 0,0               USER #7
+       DATA 0,0               USER #8
+       DATA 0,0               USER #9
+       DATA 0,0               USER #10
+       DATA 0,0               USER #11
+       DATA 0
+*
+* either return to current task or switch tasks
+*
+OSOUT  LWPI XOPREG
+       MOVB @STATE+>8000,R1   was task pre-empted ?
+       JEQ  OSOUT2            no, continue execution
+       CB   @STATE+>8000,@HFE is it the CLI?
+       JHE  OSOUT2            yes, continue
+       B    @CONTEX           swap contexts OSHEAD2S
+*
+*OSOUT2 B    @NEWISR           Not compatible with current mouse driveer loader
+*OSOUT3 SOC  @SYSREG+4,R15
+
+
+OSOUT2 MOV  @SYSREG+2,R14     ;THIS CODE IS "MODIFIED" BY MOUSE DRIVER
+*
+       SOC  @SYSREG+4,R15                    restore interrupt mask
+*
+OSOUT22
+       MOV  @>8002+TSKMAP,@MAPPER+2
+       MOV  @>8006+TSKMAP,@MAPPER+6
+       MOV  @>8004+TSKMAP,@MAPPER+4
+       MOV  @SYSREG,@MAPPER
+
+OSIN   NOP                    ;  this is where we get paged in, return to user
+                              ; #see TASKHEADS xopcal/intcal NOP
+
+;we enter here from the TASK (mapper >f110 is cleared; this code is aligned)
+       MOV  R14,@SYSREG+2
+       MOV  R15,R1
+       ANDI R1,>000F
+       MOV  R1,@SYSREG+4
+       ANDI R15,>FFF0                        nuke interrupt mask
+       MOVB @SYSREG,@MAPPER+4
+       C    R11,@MAXXOP
+       JH   OSOUT
+       SLA  R11,3
+       MOV  @XOPTAB(R11),@MAPPER
+       MOV  @XOPTAB+2(R11),@MAPPER+2
+       MOV  @XOPTAB+4(R11),R10
+       JEQ  OSOUT
+       MOV  R13,@XOPREG+26                    /used for interrupt return
+       MOV  R15,@XOPREG+30                   /
+       LI   R14,OSOUT         So we return to OSOUT and context back
+       B    *R10              through the same nop
+
+*
+       DATA 0,0,0        ;possibly free
+       DATA 0,0,0,0,0    ;"   "      "
+
+                         ;See OSTASK, TASKHEADS - these are hardcoded
+CTLP   DATA 0            ;>FA ;more hard-coded values
+CTLS   DATA 0            ;>FC ;found in programs
+BREAK  DATA 0            ;>FE ;and OS
+*
+       AORG >0100
+TSKTBL BYTE 00           TASK ID #
+MAXDRV BYTE 'J'          MAXIMUM ALIAS LETTER USER CAN SPECIFY [up to 'P']
+STATE  BYTE 0            PROCESS STATE
+SLICE  BYTE 0            NUMBER OF SLICES LEFT UNTIL SWAPPED OUT
+PNAME  TEXT '        '   NAME OF THIS TASK
+UWP    DATA 0            USER WORKSPACE POINTER
+UPC    DATA 0            USER PROGRAM COUNTER
+UST    DATA 0            USER STATUS REGISTER
+MEMLST DATA 0            POINTER TO MEMORY LIST
+TSKMAP DATA 0,0,0,0      SAVED MEMORY MAP USED DURING XOPS AND INTERRUPTS
+CURDRV DATA 0            POINTER TO CURRENT DRIVE ENTRY
+PATH#P DATA 0            POINTER TO TEXT FOR PATH COMMAND
+BLKDEV DATA 0            POINTER TO NAMES OF BLOCK DEVICES ;5.11.22,not used?
+FREPTR DATA 0            POINTER TO FREE NODES
+PMTSTR DATA 0            POINTER TO PROMPT STRING'S NODES
+GPLPAR DATA 0   ;>0126-TIMODE  STRING TO CONTROL SPEED OF GPL INTERPRETER
+CMDSTR DATA 0            STRING CONTAINING COMMAND LINE OPTIONS
+;
+; In TASKHEADS, >012A->0169 is used for the 16 ALIAS pointers.
+*
+*
+* for all handles, 0 input is keyboard, 0 output is screen
+*
+; This address is hard-coded to match OSTASK, TASKHEADS, LS\KEY1S
+;
+HANDL0 EQU  >016A        ; 11 handles * 2 = >16 bytes
+*                        ; References with +>8000 offset in one place,
+*                        ; but in L6.KEY1S, no offset for handle test. Bug?
+*
+       AORG >0180        ;referenced with +>8000 offset
+SAVPAD EQU  $            ;otherwise, would overwrite XOPCAL and beyond
+*
+* take care of system to system XOPs
+*
+XOPCAL MOV  R14,@XOPSA1
+       MOV  @MAPPER,@XOPSA2
+       MOV  @MAPPER+2,@XOPSA3
+*
+       MOV  *R11,R11
+       SLA  R11,3
+       MOV  @XOPTAB(R11),@MAPPER
+       MOV  @XOPTAB+2(R11),@MAPPER+2
+       MOV  @XOPTAB+4(R11),R10
+       LI   R14,XOPRET        ;return via RTWP to the below code
+       B    *R10
+*
+XOPRET LWPI SYS2
+       MOV  @XOPSA1,R14
+       MOV  @XOPSA2,@MAPPER
+       MOV  @XOPSA3,@MAPPER+2
+       RTWP
+*
+XOPSA1 DATA 0
+XOPSA2 DATA 0
+XOPSA3 DATA 0
+
+*****************************
+* GENEVE OS POWER UP RESET
+*****************************
+
+OSINT0 CLR  R12               ONE TIME entry after system-sys load
+       SBO  25                video wait states
+
+*
+* Unpack the following 8k pages per MOVTAB in HEAD\HMOVTABS
+*      HFC2,HFC1,TIPI,SCSI,CLI_4 are copied to their destinations.
+*      DSR buffers and spooler reside in 'vacated' pages
+
+       MOV  @MOVLOC,R0
+*
+PWRL1A MOV  *R0+,R1           source offset
+       MOV  *R0+,@MAPPER+2    source page and dest page
+       MOV  *R0+,R2           dest offset
+       MOV  *R0+,R3           transfer count
+*
+       AI   R1,>4000
+       AI   R2,>6000
+*
+PWRL1B MOV  *R1+,*R2+
+       DECT R3
+       JNE  PWRL1B
+*
+       C    R0,@MOVLST
+       JLE  PWRL1A
+*--end of the copy page routine
+*--end one-time code
+
+;-->>> RSETVC (BLWP @>0000) vector enters here for all subsequent warm resets
+*
+PWRIN  MOV  @HEAD#T,@TASK#C   fix 12/22/1987 for re-power during application
+*
+* PaulC: updated 3/24/90 to initial based off of task#0 and head#t
+*        instead of hard-coded constants
+*
+       MOV  @HEAD#T,@TASK#0    init the task table
+       MOV  @T0INFO,@TASK#0+2
+       MOV  @PWRADR,@>0002    fix the reset vector to not move CLI
+*
+;
+; XOP powerups - Entry point @>2000 thus XOP table must account for this
+;
+       LI   R13,PWRTAB        ;xop powerups
+OSIN0A MOV  *R13+,R11
+       JEQ  OSIN0B
+       MOV  *R11,@MAPPER
+       MOV  @2(R11),@MAPPER+2
+       BL   @>2000            ;call XOP powerups based on table
+       JMP  OSIN0A
+*
+T0INFO DATA >0600+P_CLI1      <JIFFYS><CLI HDR PAGE>
+PWRADR DATA PWRIN
+
+*
+* Next, claim ALL pages belonging to OS
+*
+OSIN0B LI   R13,FIRSTP
+OSIN0C MOVB *R13+,R1
+       SRL  R1,8
+
+       LI   R0,>000A
+       XOP  @SEVEN,0     get the pointer to the node
+       LI   R0,>000C
+       XOP  @SEVEN,0     return node to free nodes, page is never de-allocated
+*
+       CI   R13,LASTP
+       JLE  OSIN0C
+*                             allocate pages to task 0 context
+       LI   R0,>000A
+       LI   R1,P_CLI1*>0100   cli page 0
+       MOVB R1,@MAPPER+4      set task 0 context into >8000 page
+       SRL  R1,8
+       XOP  @SEVEN,0
+       MOV  R1,@MEMLST+>8000
+       LI   R0,>000A
+       LI   R1,P_CLI2         cli page 1
+       XOP  @SEVEN,0
+       MOV  R1,R3             r1 has pointer to page ">02"
+       MOV  @MEMLST+>8000,R2
+       LI   R0,>000D
+       XOP  @SEVEN,0          LINK p_cli2 to p_cli1
+*
+       LI   R0,>000A
+       LI   R1,P_CLI3
+       XOP  @SEVEN,0          get pointer to p_cli3
+       LI   R0,>000D
+       MOV  R3,R2             link page p_cli3 page p_cli2
+       MOV  R1,R3             save pointer to page p_cli3
+       XOP  @SEVEN,0
+*
+       LI   R0,>000A
+       LI   R1,P_CLI4
+       XOP  @SEVEN,0
+       LI   R0,>000D
+       MOV  R3,R2
+       MOV  R1,R3
+       XOP  @SEVEN,0
+*
+       LI   R0,>000A
+       LI   R1,P_CLI5
+       XOP  @SEVEN,0
+       LI   R0,>000D
+       MOV  R3,R2
+       XOP  @SEVEN,0
+
+       MOV  @SETMAP,@TSKMAP+>8000     copy pagemap to the >8000 shadow
+       MOV  @SETMAP+2,@TSKMAP+>8002
+       MOV  @SETMAP+4,@TSKMAP+>8004
+       MOV  @SETMAP+6,@TSKMAP+>8006
+
+       LI   R0,CODE1          ;push code to 9995
+       LI   R1,>F020
+PWRL2  MOV  *R0+,*R1+
+       CI   R0,CODE2
+       JLE  PWRL2
+*
+       B    @>F020       ;execute code: copy mapper, start the CLI @>0400
+*
+SEVEN  DATA 7
+*
+* take care of xop libraries with no power-up routine
+*
+OSRET  RT
+
+*
+* TABLE FOR POWER-UP ROUTINES
+*
+;;PWRTAB DATA KEYTAB,MEMTAB,TAB#IO
+;;     DATA TPXTAB,0,0,0,0      2.8.2021tt ; reactivated 5.10.22
+
+PWRTAB DATA KEYTAB,MEMTAB,TPXTAB
+       DATA TAB#IO,0,0,0,0      2.8.2021tt ; reactivated 5.10.22
+       DATA 0,0,0,0,0,0,0,0
+       DATA 0
+*                                 / FOR RSBUG
+CODE1  LI   R1,MAPPER         executed from 9995 ram
+       MOV  @CLIM,*R1+        set mapper to SETMAP list
+       MOV  @CLIM+2,*R1+
+       MOV  @CLIM+4,*R1+
+       MOV  @CLIM+6,*R1+
+       LIMI 2                 allow interrupts
+       LWPI >F000             and fire up the CLI via
+       B    @>0400            and go to HCLIS:START
+*
+CLIM   EQU  $-CODE1+>F020   ;prep CODE1 copy address for SETMAP bytes
+SETMAP BYTE P_CLI1,P_CLI2,P_CLI3,P_CLI4,P_CLI5,P_NULL,P_NULL,P_DBUG
+CODE2  DATA 0  ;end copied code         \ PAGE FOR SCREEN BUFFERING
+
+HFE    BYTE >FE          ;CLI task
+HFD    BYTE >FD          ;maximum task # (tested in context switch)
+SCFLG  DATA 0            ;not referenced, might be hardcoded address
+
+* eof

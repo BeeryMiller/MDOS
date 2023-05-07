@@ -1,0 +1,377 @@
+********************************************************************************
+*
+*      TIME ROUTINE WHICH PERFORMS THE READING AND WRITING OF TIME
+*           FROM THE MM58274
+********************************************************************************
+;
+; 5.07.2022 Analyzed code
+;           RDCMTM/REDCOM - used to read and compress for DSR (time only?)
+;           TIMDSR - not used, does hfdc use "time" w/open opcode to read?
+;                    commented code for future
+;           DTSUB - mdm5 code? performs scroll/keyboard ops!
+;                   also uses HD\SCROLL and called from HD\GPLSUBS:DT, but
+;                        never used. Potential for future, or remove.
+;
+
+*
+* STANDARD TIME DSR HERE
+*
+RDCMTM DATA WRKREG,REDCOM     ;Called ONCE; WIND1-S, start of dsr operation
+*                             ; at :PBVC3
+
+TIMDSR DATA WRKREG,TIMDSS     ;NOT USED
+*
+TIMDSS MOV  @OPCODE,R6        4    THE OPEN PART
+       MOVB R6,R6             2    open?
+       JNE  TIMDRR            2    no
+       LI   R0,>2000               yes, test parms
+       CI   R6,>0008          4
+       JEQ  TIM001            2
+       CI   R6,>0018          4
+       JNE  BADT00            2
+TIM001 MOV  @LRECLN,R10       4     0?
+       JNE  TIM000            2     no, use what was provided
+       MOV  @H0012,@LRECLN    6     set 18 and recheck
+       JMP  TIM001            2     (could just fall through)
+*
+TIM000 CI   R10,>0012         4  TEST CORRECT RECORD LENGTH
+H0012  EQU  $-2
+       JNE  BADT00            2
+TIMFIN CLR  R0                2  NO ERROR, SO GOOD RETURN
+BADT00 MOV  R0,*R13           2
+       RTWP                   2
+*
+TIMDRR MOV  @H0012,@PASCNT    IT IS WRITE, SO ASK PASDAT FOR THE
+       MOVB @CPUFLG,@PASVDP
+       MOV  @BUFADR,@PASADL
+       MOVB @BUFADH,@PASADH
+       LI   R2,COMBUF
+       MOV  R2,@PASDSR
+       CB   R6,@CBH03         opcode: IS IT WRITE?
+       JNE  NOTWTM            NO
+       SETO @PASRW              SIX STRINGS AVAILABLE
+       BLWP @PASDAT
+       MOV  R2,R8             NOW SET THE BUFFER CORRECTLY
+       LI   R10,6
+LOOPVD CB   *R2+,@CBH02
+       JNE  BADT00
+       MOVB *R2+,*R8+
+       MOVB *R2+,*R8+
+       DEC  R10
+       JNE  LOOPVD
+       BL   @SETIT
+       JMP  TIMFIN
+*
+NOTRTM LI   R0,>3000          BAD OPERATION
+       CB   R6,@CBH01         CLOSE?
+       JNE  BADT00            NO, SO CAN NOT HANDLE THIS
+       JMP  TIMFIN            YES, SO FINISH UP
+*
+NOTWTM CB   R6,@CBH02         opcode: READ?
+       JNE  NOTRTM            NO
+
+       BL   @TMTOCM           get time string
+       LI   R0,>6000          ;error code
+       MOV  R2,R2             GOOD READ?
+       JEQ  BADT00            BAD
+       LI   R8,>0012          RECORD LENGTH
+       MOV  R8,@CHRCNT        SET CHARACTER COUNT IN PAB
+       MOVB @CBH00,@CHRCNH
+       CLR  @PASRW            WRITE TO PAB BUFFER
+*  NOW SET THIS UP FOR LENGTH FOLLOWED BY STRING
+       LI   R1,COMBUF+>0011
+       LI   R2,COMBUF+11
+NOTWT1 MOVB *R2,R3
+       ANDI R3,>0F00
+       ORI  R3,>3000
+       MOVB R3,*R1
+       DEC  R1
+       DEC  R2
+       MOVB *R2,R3
+       ANDI R3,>0F00
+       ORI  R3,>3000
+       MOVB R3,*R1
+       DEC  R1
+       DEC  R2
+       MOVB @CBH02,*R1
+       DEC  R1
+       CI   R1,COMBUF-1
+       JNE  NOTWT1
+       BLWP @PASDAT
+       JMP  TIMFIN
+;------end of blwp @timdsr
+
+
+*
+* read the data to combuf and timcm1 and timcm2
+REDCOM CLR  @TIMCM1
+       CLR  @TIMCM2
+       BL   @TMTOCM           MOVE THE TIME TO THE COMBUF
+       MOV  R2,R2             GOOD READ?
+       JEQ  RETSUZ            BAD READ
+       LI   R1,COMBUF         compress the read time for dsr
+*  timcm1   yyyy/yyy m/mmm d/dddd
+*  timcm2   hhhh/h mmm/mmm s/ssss
+*      BL   @PRODUT           seconds/2
+*      SRL  R3,1
+*      MOV  R3,@TIMCM2
+*      BL   @PRODUT           minutes
+*      SLA  R3,5
+*      A    R3,@TIMCM2
+*      BL   @PRODUT           hours (0-23)
+*      SLA  R3,11
+*      A    R3,@TIMCM2
+*      BL   @PRODUT           days
+*      MOV  R3,@TIMCM1
+*      BL   @PRODUT           months
+*      SLA  R3,5
+*      A    R3,@TIMCM1
+*      BL   @PRODUT           years
+*      SLA  R3,9
+*      A    R3,@TIMCM1
+* A NEW ROUTINE FOR THIS TO SAVE A FEW WORDS OF RAM
+       LI   R4,SHIFTB
+       LI   R6,TIMCM2
+       BL   @PRODUT
+       SRL  R3,1
+       JMP  SHIF00
+*
+SHIF01 BL   @PRODUT
+       MOVB *R4+,R0
+       JNE  SHIF02
+       DECT R6
+       JMP  SHIF00
+*
+SHIF02 SRL  R0,8
+       SLA  R3,0
+SHIF00 A    R3,*R6
+       CI   R1,COMBUF+12
+       JNE  SHIF01
+RETSUZ RTWP                   continue dsr TO MASS STORAGE
+*
+SHIFTB BYTE 5,11,0,5,9
+DPT    TEXT '.'
+PRODUT MOVB *R1+,R2
+       SRL  R2,8
+       ANDI R2,>000F
+FUN9   EQU  $-1
+       MPY  @H000A,R2
+       MOVB *R1+,R2
+       SRL  R2,8
+       ANDI R2,>000F
+       A    R2,R3
+       RT
+*
+;TMTOCM: Read from clock chip
+;
+TMTOCM LI   R2,>FFFD          flag for which time read
+TIM008 INC  R2
+       JEQ  TIM010
+       LI   R1,COMBUF
+       MOV  R1,R8
+       LI   R4,6
+       MOVB @CNTREG,R3        reset data change flip flop
+       LI   R3,UNSEC+1
+TIM007 MOVB *R3,*R1+             tens,units,tens,units, etc.
+       DEC  R3
+       MOVB *R3,*R1+
+       AI   R3,3
+       DEC  R4
+       JNE  TIM007
+       MOVB @CNTREG,R3
+       SLA  R3,5
+       JOC  TIM008            TIME HAS CHANGED
+* IT WAS READ, BUT IS IT POSSIBLE?
+DT0003 MOVB *R8+,R7           CHECK FOR CHARS LESS THAN OR = TO 9
+       ANDI R7,>0F00
+       CI   R7,>0900
+       JH   DT0002
+       CI   R8,COMBUF+12
+       JNE  DT0003
+TIM010 RT                     R2 IS NOT 0
+*
+DT0002 CLR  R2
+       RT
+;----end of tmtocm
+
+;
+;It seems this is from MDM5 or similar as it is allowing date/time
+;      entry on screen.  Is this an EPROM function from the hfdc?
+*
+DTSUB  BL   @TMTOCM           TRY TO READ THE TIME  USES WRKREG
+       ABS  R2                WAS IT READ CORRECTLY?
+       JNE  DT0000            YES,SO DISPLAY THE TIME AS READ
+*
+* NOW INIT THE BUFFER, BECAUSE IT WAS A BAD READ
+       LI   R1,COMBUF
+       LI   R2,COMINT
+DT0020 MOV  *R2+,*R1+
+       CI   R1,COMBUF+12
+       JNE  DT0020
+*
+*   NOW DISPLAY THE BUFFER TO THE SCREEN AS IT GOES UP
+*    THE DATA IS AS FOLLOWS, SEC,MIN,HR,DAY OF MONTH,MONTH,YR
+*
+DT0000 LI   R0,DTBL00
+DT000A BLWP @SCROLL
+       LI   R1,23*32+12+>4000
+       BL   @VDPRAD
+       BLWP @BTA
+       MOV  *R0,R1           DONE?
+       JNE  DT000A
+DT0001 CLR  R8                DATA CHANGE FLAG
+       LI   R4,ENTTBL
+DT0014 MOV  *R4,R1
+       BL   @VDPRAD
+       MOVB @VRD,R5           SAVE THE DATA ON THE SCREEN
+       CLR  R7                FLAG FOR DISPLAY TYPE (START WITH CURSOR)
+       LI   R6,>037F          USE THIS AS THE CURSOR DISPLAY COUNTER
+DT0015 LWPI GPLWS
+       BL   @KSCANG
+       LWPI WRKREG
+       MOV  R12,@GPLWS+24      RESTORE R12
+       MOV  *R4,R1
+       BL   @VDPWAD
+       DATA >4000
+       MOVB @>837C,R3         KEY PRESSED?
+       JNE  DT0010            YES
+       INC  R6
+       CI   R6,>0380          TIME TO TOGGLE?
+       JL   DT0015
+       MOV  R5,R11            for display
+       INV  R7                TOGGLE MODE
+       JEQ  DT0017
+       LI   R11,>7E00
+DT0017 MOVB R11,@VWD
+       CLR  R6
+       JMP  DT0015
+*
+POSCL  CI   R4,ENTTBL
+       JLE  DT0014
+       AI   R4,-4
+       JMP  DT0014
+*
+DT0010 MOVB R5,@VWD
+       MOVB @>8375,R3         NOW TEST THE TYPE OF KEY PUSHED
+       CB   R3,@LARROW        LEFT ARROW?
+       JEQ  POSCL
+       CB   R3,@RARROW        RIGHT ARROW
+       JEQ  POSCR
+       CB   R3,@FUN9          IS IT F9?
+       JEQ  DT0011
+       CB   R3,@ENTERK        IS IT ENTER?
+       JEQ  DT0012
+* NOW THE ONLY OTHER ENTRY CAN BE A DIGIT 0-9
+       SB   @CBH30,R3
+       CB   R3,@CBH09
+       JH   DT0014            FORGET THIS ENTRY
+* NOW store digit
+       MOV  R4,R1             THIS IS WHERE THE DIGIT IS TO GO
+       INCT R1                POINT TO WHERE TO GO IN COMBUF
+       MOV  *R1,R1            THIS IS WHERE IN COMBUF
+       MOVB R3,*R1            MOVE INTO COMBUF
+       MOV  *R4,R1
+       BL   @VDPWAD
+       DATA >4000
+       AI   R3,>9000
+       MOVB R3,@VWD           PUT THE ENTERED DIGIT ON THE SCREEN
+       SETO R8                CHANGE FLAG
+POSCR  CI   R4,ENTT10
+       JHE  DT0014
+       C    *R4+,*R4+         SAME AS AI   R4,4
+       JMP  DT0014
+*
+CBH48  EQU  $+1
+DT0012 ABS  R8         >0748  DID THE DATA CHANGE?
+       JEQ  DT0011
+       BL   @SETIT
+DT0011 B    @TIMFIN
+*
+* FORMAT OF TABLE IS:
+*           1)LOCATION ON SCREEN
+*           2)LEFT ARROW
+*           3)RIGHT ARROW
+*           4)RANGE
+*           5)COMBUF LOCATION
+ENTTBL DATA 22*32+12,COMBUF+8 ENTTBL,ENTT00,>0001,COMBUF+8   TENS OF MONTH
+ENTT00 DATA 22*32+13,COMBUF+9 ENTTBL,ENTT01,>0009,COMBUF+9   UNITS OF MONTH
+ENTT01 DATA 22*32+15,COMBUF+6 ENTT00,ENTT02,>0003,COMBUF+6   TENS OF DAY
+ENTT02 DATA 22*32+16,COMBUF+7 ENTT01,ENTT03,>0009,COMBUF+7   UNITS OF DAY
+ENTT03 DATA 22*32+18,COMBUF+>A ENTT02,ENTT04,>0009,COMBUF+>A   TENS OF YEAR
+ENTT04 DATA 22*32+19,COMBUF+>B ENTT03,ENTT05,>0009,COMBUF+>B   UNITS OF YEAR
+ENTT05 DATA 23*32+12,COMBUF+4 ENTT04,ENTT06,>0002,COMBUF+4   TENS OF HOUR
+ENTT06 DATA 23*32+13,COMBUF+5 ENTT05,ENTT07,>0009,COMBUF+5   UNITS OF HOUR
+ENTT07 DATA 23*32+15,COMBUF+2 ENTT06,ENTT08,>0005,COMBUF+2   TENS OF MINUTE
+ENTT08 DATA 23*32+16,COMBUF+3 ENTT07,ENTT09,>0009,COMBUF+3   UNITS OF MINUTE
+ENTT09 DATA 23*32+18,COMBUF   ENTT08,ENTT10,>0005,COMBUF     TENS OF SECONDS
+ENTT10 DATA 23*32+19,COMBUF+1 ENTT09,ENTT10,>0009,COMBUF+1   UNITS OF SECONDS
+*
+CBH70  EQU  $+1
+DTBL00 DATA >8F70,COMBUF+8,COMBUF+6,COMBUF+10,0
+ENTERK EQU  $+1
+DTBL01 DATA >9A0D,COMBUF+4,COMBUF+2,COMBUF
+*                      COMINT MUST FOLLOW DTBL01
+COMINT BYTE 0,0,0,0,0,0,0,9,0,8,8,8         FIRST 2 BYTES MUST BE ZERO
+*
+BTA    DATA WRKRG2,BTA003
+BTA003 MOV  *R13,R1       GET POINTER
+       MOV  *R1+,R4
+       MOV  *R1+,R2
+       JMP  BTA004
+*
+BTA002 MOV  *R1+,R2
+       JEQ  BTA000
+       MOVB R4,@VWD
+BTA004 BL   @BTA001
+       BL   @BTA001
+       JMP  BTA002
+*
+BTA000 MOV  R1,*R13
+       RTWP
+*
+BTA001 MOVB *R2+,R3
+       ANDI R3,>0F00
+       ORI  R3,>9000
+       MOVB R3,@VWD
+       RT
+*
+VDPWAD A    *R11+,R1
+VDPRAD SWPB R1
+       MOVB R1,@VWA
+       SWPB R1
+       MOVB R1,@VWA
+       RT
+*
+; used in TIMDSR routine for write operation
+; used in the above display, whatever it is for
+;
+SETIT  MOVB @CBHFF,@CNTREG    TEST, STOP CLK, INT SET, INT STOP
+       CLR  @CKSTRG           NO INTERRUPTS
+       MOVB @CBH05,@CNTREG    NORMAL, STOP CLK, CLK SET, INT STOP
+       MOVB @CBH01,@CKSTRG    24 hour mode, leap year
+       LI   R3,COMBUF
+       LI   R8,UNSEC+2
+       LI   R10,6
+LOOPDT MOVB *R3+,*R8          assume cpu ram
+       DECT R8
+       MOVB *R3+,*R8
+CBH28  EQU  $+1
+       AI   R8,6              >0228, >0006
+       DEC  R10
+       JNE  LOOPDT
+* now for leap yr calculation
+* if the lsb of the 10 digit is 0, then program the leap yr bits
+*      with the 2 lsb's of the  units digit
+* if the lsb of the 10 digit is 1, then program the leap yr bits
+*      with the [2 lsb's XOR bin (10)] of the units digit
+       MOVB @COMBUF+11,R5
+       MOVB @COMBUF+10,R4
+       SRL  R4,9              test tens digit
+       JNC  TIM0DT            use the 2 lsbs
+       XOR  @CBH02,R5         change it
+TIM0DT SLA  R5,2              now set leap year, start, etc
+       ANDI R5,>0C00
+       ORI  R5,>0100
+       MOVB R5,@CKSTRG        set leap yr
+       MOVB @CBH01,@CNTREG    start clock, no ints
+       RT

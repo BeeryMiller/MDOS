@@ -1,0 +1,1262 @@
+* File: CLI\NEWCMDS
+*
+*  01.30.94 TIM TESCH
+*           Code added for DISK1 <ON/OFF> to turn HDS1.DSK1. emulation on/off
+*           Changed VERIFY, TI to display status after entering command
+*
+*  03.21.98 Fixed SCSIREMAP Routine; changes/displays current ID settinds
+*           for SCS1, SCS2, and SCS3
+*
+*  05.01.01 Added DEF and command for "PDMA on/off" command
+*
+*03.18.18   Cleaned up command responses for consistency (and space savings)
+*          *Check HARDT/HARDS test; where is this happening?
+*           SCSMAP max id from 6 to 9. 8=ram1401;9=ram1601 (block id7 in scsi2)
+*
+*
+;01.23.2021 REMAP command updated, max from W to Z.
+;          $Why is remap 0 allowed? Review.
+;
+;2.6.2021   For some reason, REMAP and SCSMAP echo results with ECHO OFF
+;           unlike other commands. Does it have something to do with using
+;           the >4000->5FFF space during the call?
+;2.16.2021  Deleted messaging for SCSIMAP and REMPA unless command issued with
+;           no parameters
+;2.20.2021  Added TELNET command
+;3.03.2021  Added label/return to default to IBMGRF ON when called from bootup
+;3.06.2021  Add memory command
+;3.19.2021  SCSMAP extended to allow SCS1-6
+;          $Future Set MSByte to >FF to force re-read of sector 0 parms
+;3.28.2021  Validated SCSMAP update: IDE1-8 now SCSMAP xy: y=ABCD EFGH
+;
+*
+*      DEF  TI
+       DEF  MEMORY           3.06.2021
+       DEF  TELNET           TIPI simple terminal
+*      DEF  IBMON1           default call for IBMGRF ON
+       REF  URL1             DEF in CMDSTKS
+
+       REF  ECHON
+       REF  ECHOFF
+       REF  VERWRT
+       DEF  VONOFF                 ROUTINE BY BARRY BOONE
+
+       REF  MESG,DRVMAP
+       REF  STPDRV
+       REF  TRKDRV
+
+       DEF  SCSMAP            3.21.98 New command DEF
+       REF  SCSTAB            3.21.98 scsi remap table in SCSI\SECTOR_S
+
+       DEF  SCSIPD            05.01.01 New SCSIPDMA command; HCLIS REF
+       REF  SCSCRD            05.01.01 Reference the flag 0=pdma; <>0=non-PDMA
+
+*      DEF  SCSSWT            3.22.98 SCSI on/off switch
+
+       DEF  IBMGRF
+
+       DEF  SETDSK
+       DEF  REMAP
+
+*      DEF  MIRROR       MIRROR BY BEERY MILLER
+       DEF  HARD         TURNS on/off HFDC access
+       DEF  CONOFF    case toggle, 24 feb 93, jj
+       REF  CSFLG     flag that holds the toggle (in L9\parsefs)
+       REF  BATFLG
+       DEF  DEONOF    dsk1 emulation on/off 01.30.94 tat
+       DEF  PSYSTM    Psystem on/off command 5/7/96 tat
+       DEF  VIDOFF       Put VIDEO on/off back in to MDOS.  Default=off!
+*      DEF  MAPMEM    2.8.2021 Show CLI memory map - USED FOR DEBUGGING ONLY
+
+       REF  TFREE,TFREE0,TOTAL,TPAGE,F8192,TEMP,TA,AA,IA,TF,STRING
+*           ABOVE REF'S FOR MEMORY CALL
+
+*
+       COPY "\MDOS\HEAD\PAGENUMS"
+
+SIX    DATA 6
+TIRWRT EQU  >001A        OFFSET FOR TIMODE WDS1 FLAG
+
+HARDS  DATA 0            IF WE have used it before, was it H version MDOS
+*                        If =FFFF, then H version
+HARDT  DATA 0            TEST if we have ever used this before
+*                        If =FFFF, we've tested before
+
+HFD1   TEXT 'HFDC '
+       BYTE 0
+HFD2   TEXT 'Off'
+       BYTE 13,10,0
+HFD3   TEXT 'On'
+       BYTE 13,10,0
+       EVEN
+       DATA 0
+HARDON1 TEXT 'HD'        flag
+HARD
+       MOV R11,R10
+       LI   R5,>A000
+       LI   R1,P_HFC2*256
+       MOVB @>F115,R3
+       MOVB R1,@>F115
+
+       MOV  *R0,R2
+       ANDI R2,>5F5F
+       C    R2,@ECHON    on
+       JEQ  HARDON
+       C    R2,@ECHOFF   off
+       JNE  HARDEXIT     neither, display status
+
+HARDOFF
+       SETO *R5               disable access
+       JMP  HARDEXIT
+HARDON
+       MOV  @HARDON1,*R5      enable access
+
+* DISPLAY STATUS
+HARDEXIT
+       LI   R1,HFD1
+       BL   @MESG
+       LI   R1,HFD3
+       C    *R5,@HARDON1      enabled?
+       JEQ  HFOK1
+       LI   R1,HFD2
+HFOK1  BL   @MESG
+       MOVB R3,@>F115         restore page
+       B    *R10              return
+
+*      clr  r0           off
+*      c    *r5,@HARDON1
+*      JEQ  hfok1
+*      SETO r0
+*hfok1  movb r3,@>f115
+*      LI   r5,hfd1
+*      b    @commonmesg
+
+* bl mesg [hclis] uses R0/R1
+*      R5-display message
+*      R2-0=off; 1=on
+COMMONMESG
+*      mov  r5,r1
+*      bl   @mesg
+*      li   r1,ON
+*      mov  r2,r2        flag
+*      jNE  commm1
+*      Li   r1,OFF
+*COMMM1 bl   @mesg
+*      b    *r10
+
+*******************
+* VIDEO FAST/SLOW
+********************
+* VIDEO uses CRU 25 to determine wait state on/off status.
+
+VIDFLG DATA 0            0=slow(default) 1=FAST
+VIDF12 DATA 0
+VIDA1  TEXT 'Video '
+       BYTE 0
+VIDA1S TEXT 'SLOW'
+CRLF   BYTE 10,13,0
+VIDA1F TEXT 'FAST'
+       BYTE 10,13,0
+
+VIDOFF MOV R11,R10
+       MOV  R12,@VIDF12
+       CLR  R12
+       MOV  *R0,R2       get argument
+       ANDI R2,>5F5F
+       C    R2,@VIDA1S   set to Slow?
+       JEQ  VIDSLW
+       C    R2,@VIDA1F   user wants FAST?
+       JNE  VIDEXT       no... display status
+
+VIDFST SETO @VIDFLG      FAST!
+       SBZ  25           disable wait states
+       JMP  VIDEXT
+VIDSLW CLR  @VIDFLG      SLOW!
+       SBO  25           enable wait states
+
+* DISPLAY STATUS
+VIDEXT LI   R1,VIDA1     'Video '
+       BL   @MESG
+
+*      LI   R1,VIDA1S         default slow?
+*      TB   25                test, screw the data..
+*      JNE  VIDSL1            !=, slow!
+       LI   R1,VIDA1S         default slow?
+       MOV  @VIDFLG,R0        0=slow
+       JEQ  VIDSL1            yup
+       LI   R1,VIDA1F         no, 1=Fast
+VIDSL1 BL   @MESG
+       MOV  @VIDF12,R12
+       B    *R10              return
+
+*********
+* IBMGRF on/off
+
+IBM01  TEXT 'IBM Graphics '
+       BYTE 0
+       EVEN
+       DATA 0
+
+IBMGRF MOV R11,R10
+       LI   R5,>A022          offset >0022 contains characters to copy
+       LI   R1,P_VID1*256
+       MOVB @>F115,R3         SAVE PAGE
+       MOVB R1,@>F115         get the video page
+
+       MOV  *R0,R2       get command from CLI (ON/OF)
+       ANDI R2,>5F5F
+       C    R2,@ECHON    on
+       JEQ  IBMON
+       C    R2,@ECHOFF   off
+       JNE  IBMEXIT      neither, display status
+
+IBMOFF LI   R1,127*8          use only lower ASCII
+       MOV  R1,*R5
+       JMP  IBMEXIT
+*IBMON1 MOV  R11,R10        3.3.2021  Used to default to IBMGRF ON during bootup
+*      LI   R5,>A022       3.3.2021  offset >0022 contains characters to copy
+*      LI   R1,P_VID1*256  3.3.2021
+*      MOVB @>F115,R3      3.3.2021  SAVE PAGE
+*      MOVB R1,@>F115      3.3.2021  get the video page
+
+IBMON  LI   R1,255*8          use all chars
+       MOV  R1,*R5
+
+       LI   R0,>28       reset the character tables
+       SETO R1
+       SETO R2
+       XOP  @SIX,0
+
+* DISPLAY STATUS
+IBMEXIT
+       LI   R1,IBM01
+       BL   @MESG
+
+       LI   R1,HFD3           'on'
+       MOV  *R5,R0
+       CI   R0,255*8          is it really enabled?
+       JEQ  IBMOK1            yes
+       LI   R1,HFD2           'off'.
+IBMOK1 BL   @MESG
+       MOVB R3,@>F115         restore page
+       B    *R10              return
+
+
+***********************************8
+* TI ON/OFF for WDSx mdos access
+*
+* TIDATFLG DATA 0
+* TIDAT  DATA >0000
+* TI     MOV  R11,R10
+*      LI   R5,>A01A     OFFSET RIGHTHERE
+*      MOV  R0,R1
+*      MOV  *R1,R2            get cmd line arg
+*      LI   R1,P_HFC2*256     set up R1
+*      ANDI R2,>5F5F
+*      C    R2,@ECHON
+*      JEQ  TION
+*      C    R2,@ECHOFF
+*      JEQ  TIOFF
+* no/invalid arg, so just show status
+*TI2
+*      MOVB @>F115,R2
+*      MOVB R1,@>F115
+*      MOVB *R5,R3
+*      MOVB R2,@>F115
+*TI192  LI   R1,TERIS     TAT 01.30.94
+*      BL   @MESG
+*      LI   R1,TON
+*      MOVB R3,R3
+*      JEQ  TDOIT
+*      LI   R1,TOFF
+*TDOIT  BL   @MESG
+*      B    *R10
+*
+* TIOFF  BL   @AUTCHK
+*      SETO R3
+*      JMP  TVCONT
+*
+*TION   BL   @AUTCHK
+*      MOV  @TIDATFLG,R3
+*      JEQ  TION1
+*      JMP  TI2
+* TION1  DEC  @TIDATFLG
+*      CLR  R3
+* TVCONT MOVB @>F115,R2
+*      MOVB R1,@>F115
+*      MOVB R3,*R5
+*      MOVB R2,@>F115
+*      JMP  TI192        TAT 01.30.94
+*
+* TERIS  TEXT 'TI WDS Emulation is O'
+*      BYTE 0
+* TON    TEXT 'N.'
+*      BYTE >D,>A,0
+* TOFF   TEXT 'FF.'
+*      BYTE >D,>A,0
+*      EVEN
+
+AUTCHK
+       MOV  @BATFLG,R12
+       INC  R12
+       JEQ  AUTC99
+       LI   R1,AUTONL
+       MOV  R10,R11
+       B    @MESG
+AUTC99 RT
+
+AUTONL TEXT 'Only in autoexec file!'
+       BYTE >0D,>0A,0
+       EVEN
+VODAT  DATA >0001
+VONOFF MOV  R11,R10
+       LI   R5,VERWRT
+       AI   R5,>8000
+       MOV  R0,R1
+       MOV  *R1,R2            get cmd line arg
+       LI   R1,P_DSR1*256     set up R1
+       ANDI R2,>5F5F
+       C    R2,@ECHON
+       JEQ  TVON
+       C    R2,@ECHOFF
+       JEQ  TVOFF
+* no/invalid arg, so just show status
+       MOVB @>F115,R2
+       MOVB R1,@>F115
+       MOVB *R5,R3
+       MOVB R2,@>F115
+UV192  LI   R1,VERIS     TAT 01.30.94
+       BL   @MESG
+       LI   R1,VON
+       MOVB R3,R3
+       JEQ  VDOIT
+       LI   R1,VOFF
+VDOIT  BL   @MESG
+       B    *R10
+
+TVOFF  LI   R3,>0100
+       JMP  UVCONT
+
+TVON   CLR  R3
+UVCONT MOVB @>F115,R2
+       MOVB R1,@>F115
+       MOVB R3,*R5
+       MOVB R2,@>F115
+       JMP  UV192        TAT 01.30.94
+*
+* DISK1 <ON/OFF>  Emulation of HDS1.DSK1. of physical drive #1
+*
+DEONOF MOV  R11,R10
+       MOV  R0,R1
+       MOV  *R1,R2
+       ANDI R2,>5F5F
+       C    R2,@ECHON
+       JEQ  DKON
+       C    R2,@ECHOFF
+       JEQ  DKOFF
+
+       MOVB @>F115,R2         SAVE PAGE
+       LI   R1,P_HFC2*256     DSR IS AT PAGE 15
+       MOVB R1,@>F115         GET HFDC DSR PAGE
+       MOV  @>A020,R3         GET OUR DATA
+       MOVB R2,@>F115         RESTORE PAGE
+DD192  LI   R1,DKEIS          STATUS MSG
+       BL   @MESG
+       LI   R1,VON            ASSUME ITS ON
+       ABS  R3                CHECK
+       JEQ  DDDOIT            IF ZERO, WE'RE OK
+       LI   R1,VOFF           <>0, EMULATION IS OFF
+DDDOIT
+       BL   @MESG
+       B    *R10
+
+DKOFF  SETO R3          EMULATION off
+       JMP  DKCONT
+DKON   CLR  R3
+DKCONT MOVB @>F115,R2   EMULATION on
+       LI   R1,P_HFC2*256
+       MOVB R1,@>F115
+       MOV  R3,@>A020    SET THE NEW STATE
+       MOVB R2,@>F115
+       JMP  DD192        SHOW STATUS AND RETURN
+
+VERIS  TEXT 'VERIFY is O'
+       BYTE 0
+VON    TEXT 'N.'
+       BYTE >D,>A,0
+VOFF   TEXT 'FF.'
+       BYTE >D,>A,0
+       EVEN
+
+DKEIS  TEXT 'HFDC DSK1 EMULATION is O'
+       BYTE 0
+
+PAGEDSR1 BYTE P_DSR1
+         BYTE 0
+PAGEDSR2 BYTE P_DSR2
+         BYTE 0
+PAGESCS  BYTE P_SCSI
+         BYTE 0
+REMAPRTN DATA 0
+
+; 1.23.2021, allow up to letter Z for tipi
+REMAP  MOV  R11,@REMAPRTN
+       MOVB @>F112,@PAGEDSR2+1
+       MOVB @PAGEDSR2,@>F112
+
+       LI   R1,DRVMAP
+
+       MOVB *R0+,R2
+       MOVB *R0+,R3
+       SRL  R2,8
+       SRL  R3,8
+       ANDI R3,>005F     UPPER CASE
+;1.23, why is drive 0 remap allowed?
+
+       CI   R2,'0'       DRIVE MAP 0 LOWER
+       JLT  REMAPEXIT
+       CI   R2,'9'       DRIVE MAP 9 UPPER
+       JGT  REMAPEXIT
+       CI   R3,'A'       INTERNAL DRIVE MAP LOWER
+       JLT  REMAPEXIT
+;      CI   R3,'W'       INTERNAL DRIVE MAP UPPER
+       CI   R3,'Z'       1.23.2021, TIPI upper limit remap 26
+       JGT  REMAPEXIT
+       S    @H48,R2
+       S    @H64,R3
+       SWPB R3
+       A    R2,R1
+       MOVB R3,*R1
+*      LI   R1,GOODREMAP
+*      BL   @MESG
+       JMP  REMAPEXIT2
+
+REMAPEXIT
+*      MOVB @PAGEDSR2+1,@>F112
+       LI   R1,BADREMAP
+       BL   @MESG
+
+       LI   R3,'1'*256        drive #
+       LI   R5,DRVMAP         drive maps
+       INC  R5
+RP1    MOVB R3,@REMPRINT      get the number to print
+       MOVB *R5,@REMPRINT+1  get the remap drive
+       MOVB *R5+,R4
+       SRL  R4,8              make a number
+       CI   R4,26             1.23.2021, from 23 to 26. Valid remap?
+       JH   RP2               NO
+       A    @H64,@REMPRINT    yes,make it a letter
+       LI   R1,REMPRINT       print it
+       BL   @MESG
+RP2    AI   R3,>0100          next drive
+       CI   R3,'9'*256        past 9 yet?
+       JLE  RP1               no, keep going
+
+REMAPEXIT2
+       MOVB @PAGEDSR2+1,@>F112
+MIRROREXIT
+       MOV  @REMAPRTN,R11
+       B    *R11
+
+**********************
+*
+*
+SCSMAP
+       MOV  R11,@REMAPRTN
+       MOVB @>F112,@PAGEDSR2+1
+       MOVB @PAGESCS,@>F112    get scsi page w/table
+
+*      LI   R1,SCSTAB        scsi page is AORG'd @>0400
+*      AI   R1,>4000
+
+       LI   R1,>440A
+       MOVB *R0+,R2      get arguments (format 1A,2B, etc)
+       MOVB *R0+,R3
+       SRL  R2,8         make a word
+       SRL  R3,8         make it a word
+*      ANDI R3,>005F     UPPER CASE
+       CI   R2,'1'       SCSx < 1 ?
+       JLT  SCSIMAPEXIT
+;      CI   R2,'3'       SCSx > 3 ?
+       CI   R2,'6'       3.19.2021, extend to SCS6
+       JGT  SCSIMAPEXIT
+
+; now, check the drive we want to remap
+       CI   R3,'0'       New ID <0 ?    (remember..added 1 above)
+       JLT  SCSIMAPEXIT
+       CI   R3,'9'       New ID >9 ?   3.18.2018;increase 8=ram1401;9=1601
+       JLE  SCMOK1
+                         ;3.27.2021, add more devices for IDE1-8
+       ANDI R3,>005F     mask to uppercase then test letters
+       CI   R3,'A'       dev17  ABCD EFGH 17|18|19|20 21|22|23|24
+       JL   SCSIMAPEXIT    IDEx=1234 5678
+       CI   R3,'H'       dev24
+       JH   SCSIMAPEXIT  ;we will subtract 48, so resulting A=65-48=17 to 24
+
+; 3.20.2021, Reduce risk of inappropriate access by forcing sector 0 re-read
+;            whenever a device is remapped.  Otherwise, the parms could be
+;            retained from prior drive.
+;      NOT YET IMPLEMENTED
+;
+;      ORI  R3,>FF00     Force sector 0 parameter read (see SCSI2\SECTOR_S)
+;
+SCMOK1
+       AI   R2,-49       ASCII-->base 0      (1,2,3 --> 0,1,2)
+       AI   R3,-48       ASCII-->base 0      (0,..,6 --> 0,..,6)
+
+       SLA  R2,1         MULTIPLY OFFSET BY 2
+       A    R2,R1        get offset into table
+       MOV  R3,*R1
+
+*      LI   R1,GOODSCSIMAP
+*      BL   @MESG
+
+;6-26-2021, test code to invalidate SCSx device parameters on remap
+;           Make this less vulnerable to DEF/REF changes once we prove it
+;
+       REF  CYLPLT       ;DEF in SCSI2\BUFEQU2  (for now)
+
+       LI   R1,>E800
+       MOVB R1,@>F112
+
+       SLA  R2,2         ;*4 [already *2 earlier]  0,8,16,...
+       LI   R3,CYLPLT    ;start of scsi device parameter table
+       A    R3,R2        ;point to start for this unit#
+       AI   R2,->4000    ;REF is in >8000-9FFF; page is in >4000 space
+       CLR  *R2          ;clear the parameter
+
+       JMP  SCSIMAPEXIT2
+
+SCSIMAPEXIT
+       LI   R1,BADSCSIMAP
+       BL   @MESG
+
+       LI   R3,'1'*256        drive #
+
+*      LI   R5,SCSTAB         drive maps
+*      AI   R5,>4001
+
+       LI   R5,>440B
+SRP1   MOVB R3,@SCSPRINT+2    get the number to print
+       MOVB *R5+,@SCSPRINT+9  get the remap drive
+       INC  R5           SCSI TABLE IS WORD-WIDE
+       AB   @H48+1,@SCSPRINT+9  yes,make it a letter
+       LI   R1,SCSPRINT       print it
+       BL   @MESG
+       AI   R3,>0100          next drive
+;      CI   R3,'3'*256        past 9 yet?
+       CI   R3,'6'*256        3.20.2021, extended
+       JLE  SRP1              no, keep going
+
+SCSIMAPEXIT2
+       B    @REMAPEXIT2
+
+***********************
+SEVEN  DATA 7
+EIGHT  DATA 8
+H48    DATA 48
+H64    DATA 64
+
+REMPRINT    TEXT '  '
+            BYTE 13,10,0
+            EVEN
+            DATA 0
+SCSPRINT    TEXT '          '
+            BYTE 13,10,0
+BADREMAP
+       TEXT 'REMAP (drive|device):'
+       BYTE >0D,>0A,0
+GOODREMAP
+       TEXT 'Drive remapped'
+       BYTE 13,10,0
+
+BADSCSIMAP
+       TEXT 'SCSMAP (drive|ID):'
+       BYTE 13,10,10
+       TEXT 'SCSx.   ID'
+       BYTE 13,10
+       TEXT '-----   --'
+       BYTE 13,10,0
+GOODSCSIMAP
+       TEXT 'ID Remapped'
+       BYTE 13,10,0
+       EVEN
+
+*----------------
+* PSYSTEM flag for TTYOUT control
+*      5/7/96 TAT
+*
+*   See corresponding changes in L6\WRITETTY and L6\XOPS-S
+*
+PSYS1  TEXT 'Psystem is O'
+       BYTE 0
+       EVEN
+
+PSYSTM MOV  R11,R10
+       MOV  R0,R1
+       MOV  *R1,R2       get command bytes
+       ANDI R2,>5F5F
+       C    R2,@ECHON    on?
+       JEQ  PSON
+       C    R2,@ECHOFF
+       JEQ  PSOFF
+
+       MOVB @>F115,R2         SAVE PAGE
+       LI   R1,P_VID1*256     DSR IS AT PAGE 15
+       MOVB R1,@>F115         GET HFDC DSR PAGE
+       MOV  @>A200,R3         GET OUR DATA
+       MOVB R2,@>F115         RESTORE PAGE
+PS192  LI   R1,PSYS1          STATUS MSG
+       BL   @MESG
+       LI   R1,VOFF           ASSUME ITS ON
+       ABS  R3                CHECK
+       JEQ  PSDOIT            IF ZERO, WE'RE OK
+       LI   R1,VON            <>0, EMULATION IS OFF
+PSDOIT
+       BL   @MESG
+       B    *R10
+
+PSOFF  CLR  R3          EMULATION off
+       JMP  PSCONT
+PSON   SETO R3
+PSCONT MOVB @>F115,R2   EMULATION on
+       LI   R1,P_VID1*256
+       MOVB R1,@>F115
+       MOV  R3,@>A200    SET THE NEW STATE
+       MOVB R2,@>F115
+       JMP  PS192        SHOW STATUS AND RETURN
+
+*----------------
+* SCSI PDMA On/Off command
+*      05/01/2001  TAT
+*
+PDMA1  TEXT 'SCSI PDMA O'
+       BYTE 0
+       EVEN
+
+SCSIPD MOV  R11,R10
+       MOV  R0,R1
+       MOV  *R1,R2       get command bytes
+       ANDI R2,>5F5F
+       C    R2,@ECHON    on?
+       JEQ  PDMAON
+       C    R2,@ECHOFF
+       JEQ  PDMAOFF
+
+       MOVB @>F115,R2         SAVE PAGE
+       MOVB @PAGESCS,@>F115   get SCSI dsr page
+       LI   R3,SCSCRD
+       AI   R3,>A000
+       MOV  *R3,@TMPPDM
+*      MOV  @SCSCRD,R3       get the PDMA flag data
+       MOVB R2,@>F115         RESTORE PAGE
+
+PDMA19 LI   R1,PDMA1          STATUS MSG
+       BL   @MESG
+       LI   R1,VON           assume 0 (PDMA on)
+       ABS  @TMPPDM           CHECK
+       JEQ  PDMAEXIT          IF ZERO, WE'RE OK
+       LI   R1,VOFF           <>0, EMULATION IS OFF
+PDMAEXIT
+       BL   @MESG
+       B    *R10
+
+PDMAOFF  SETO @TMPPDM     PDMA OFF
+         JMP  PDMACONT
+PDMAON   CLR  @TMPPDM    PDMA ON
+
+PDMACONT MOVB @>F115,R2       SAVE MAPPER
+         MOVB @PAGESCS,@>F115   GET SCSI DSR PAGE LOADED
+         LI   R3,SCSCRD
+         AI   R3,>A000
+         MOV  @TMPPDM,*R3+  autoinc for PDMA override
+*        MOV  R3,@SCSCRD+>C000  SET THE NEW STATE
+         SETO *R3
+         MOVB R2,@>F115       RESET THE MAPPER
+         JMP  PDMA19       SHOW STATUS AND RETURN
+TMPPDM   DATA 0
+
+*************************************************
+* mirror: removed 3.21.98 TAT --> will release stand-alone programs
+*
+* MIRROR
+*      MOV  R11,@REMAPRTN
+*      BL   @AUTCHK
+*      MOVB *R0+,R2
+*      SRL  R2,8
+*      CI   R2,'1'
+*      JLT  MIRROREXIT
+*      CI   R2,'2'
+*      JGT  MIRROREXIT
+*      SWPB R2
+*      MOVB R2,@DVNAME1
+*      MOVB R2,@DVNAME2
+*      MOVB R2,@DSKEXT1
+*
+*      LI   R0,1
+*      LI   R1,1
+*      LI   R2,8
+*      CLR  R3
+*      XOP  @SEVEN,0
+*
+*      MOV  R0,R0
+*      JNE  MIRROREXIT1
+*
+*      LI   R2,MIRPAB1
+*      BL   @MOVPAB
+*
+*
+*      LI   R0,>E000
+*      XOP  @EIGHT,0
+*      MOVB @>E002,R0
+*      JNE  MIRROREXIT2
+*
+*      LI   R2,MIRPAB2
+*      BL   @MOVPAB
+*
+*      LI   R0,>E000
+*      XOP  @EIGHT,0
+*      MOVB @>E002,R0
+*      JNE  MIRROREXIT2
+*
+*
+*      LI   R1,SCFEXT
+*      B    @MIRROREXIT3
+*
+* MIRROREXIT1
+*        LI   R1,MEMEXT
+* MIRROREXIT3
+*      BL   @MESG
+*      LI   R0,2
+*      LI   R1,1
+*      LI   R2,8
+*      XOP  @SEVEN,0
+*      MOV  @REMAPRTN,R11
+*      B    *R11
+* MIRROREXIT2
+*      LI   R1,DSKEXT
+*      JMP  MIRROREXIT3
+*
+*
+* DSKEXT TEXT 'Error reading/writing MIRROR image on HDS'
+* DSKEXT1 BYTE 0
+*      BYTE >0D,>0A,0
+*
+* SCFEXT TEXT 'MIRROR image saved!'
+*      BYTE >0D,>0A,0
+*
+* RSTEXT TEXT 'MIRROR image restored!'
+*      BYTE >0D,>0A,0
+*
+* MEMEXT TEXT 'Insufficient memory to make MIRROR image!'
+*      BYTE >0D,>0A,0
+*      EVEN
+*
+*              0 1   2 3   4 5   6 7   8 9  1011  1213
+* MIRPAB1 DATA >0A00,>0001,>0000,>0000,>0000,>0000,>0020
+*       BYTE 0
+*       BYTE >05
+*       TEXT 'HDS'
+* DVNAME1 BYTE '1'
+*       BYTE '.'
+*       EVEN
+*
+* MIRPAB2 DATA >0B00,>0001,>0000,>0020,>0000,>0000,>0020
+*       BYTE 0
+*       BYTE >05
+*       TEXT 'HDS'
+* DVNAME2 BYTE '1'
+*       BYTE '.'
+*       EVEN
+
+* MOVPAB
+*      LI   R1,>E000
+*      LI   R3,20
+* MOVPAB1
+*      MOV  *R2+,*R1+
+*      DEC  R3
+*      JNE  MOVPAB1
+*      RT
+
+************
+* SETDSK   *
+************
+SETDSK MOV  R11,@REMAPRTN
+
+       MOVB @>F113,@PAGEDSR1+1
+       MOVB @PAGEDSR1,@>F113
+       MOV  @>600A,R1
+       AI   R1,>4000
+
+       MOVB *R0+,R2      DRIVE NUMBER
+       MOVB *R0+,R3      STEP
+       MOVB *R0+,R4      4/8 TRACKS
+
+       SRL  R2,8
+       SRL  R3,8
+       SRL  R4,8
+       CI   R2,'1'       DRIVE MAP 0 LOWER
+       JLT  SETDSKEXIT
+       CI   R2,'4'       DRIVE MAP 4 UPPER
+       JGT  SETDSKEXIT
+       CI   R3,'0'       INTERNAL STEP LOWER
+       JLT  SETDSKEXIT
+       CI   R3,'3'       INTERNAL STEP UPPER
+       JGT  SETDSKEXIT
+       MOV  @H28,R5
+       CI   R4,'4'       FORTY TRACKS
+       JEQ  SETDSK2
+       MOV  @H50,R5
+       CI   R4,'8'
+       JEQ  SETDSK2
+       JMP  SETDSKEXIT
+SETDSK2
+       S    @H49,R2
+       S    @H48,R3
+
+       SWPB R3
+       A    R2,R1
+       MOVB R3,*R1
+       INCT R1
+       INCT R1
+       MOVB R5,*R1
+       JMP  SETDSKEXIT2
+SETDSKEXIT
+
+       MOV  R1,R5        SAVE start of setdsk info
+
+       LI   R0,>27
+       LI   R1,BADSETDSK
+       CLR  R2
+       XOP  @SIX,0
+
+       LI   R3,'1'*256        first drive
+SDXX1  MOVB R3,@GOODSETDSK
+       MOVB *R5,@GOODSETDSK+1
+       AB   @H48+1,@GOODSETDSK+1
+       AI   R5,4              move to tracks
+       LI   R4,'8'*256        80
+       CB   *R5,@H50         80 TRACK?
+       JEQ  SD801             yes
+       LI   R4,'4'*256        only 40...
+SD801  MOVB R4,@GOODSETDSK+2
+       AI   R5,-3             move back to next drive
+
+       LI   R0,>27
+       LI   R1,GOODSETDSK
+       CLR  R2
+       XOP  @SIX,0
+       AI   R3,>0100
+       CI   R3,'4'*256
+       JLE  SDXX1
+
+SETDSKEXIT2
+       MOVB @PAGEDSR1+1,@>F113
+       MOV  @REMAPRTN,R11
+       B    *R11
+
+
+H28    DATA >2828
+H49    DATA 49
+H50    DATA >5050
+
+GOODSETDSK
+       TEXT '   '        drive|rate|tracks
+       BYTE 13,10,0
+
+BADSETDSK
+       TEXT 'USAGE: SETDSK 108 (drive|step|tracks):'
+       BYTE >0D,>0A,0
+       EVEN
+CONOFF MOV  R11,R10        toggle case - CSFLG = low, caseblind
+       LI   R5,CSFLG       location of case flag
+       AI   R5,>8000       prepare to map it >8000 above where we're at
+       MOVB @>F115,R2      save page at >A000
+       LI   R1,P_MEM*256   >05 parse routine page
+       MOVB R1,@>F115      map in parse routine
+       MOV  *R0,R0         get command arg on or off
+       ANDI R0,>5F5F
+       C    R0,@ECHON      on?
+       JEQ  CSON
+       C    R0,@ECHOFF     off?
+       JEQ  CSOFF
+*
+* bad arg, let them know case status
+*
+       LI   R1,CSIS        'Case is o'
+       BL   @MESG
+       LI   R1,CSO         'n'    on is default
+       MOV  *R5,*R5               anything in CSFLG?
+       JNE  CSONM                 ye, go paint  "on"
+       LI   R1,CSF         'ff'   go paint "off"
+CSONM  BL   @MESG                 print message
+       JMP  CSONX
+CSOFF  CLR  *R5                   clear
+       JMP  CSONX                 then exit
+CSON   SETO *R5
+CSONX  MOVB R2,@>F115             restore >A000
+       B    *R10                  and return
+CSIS   TEXT 'Case is o'
+       BYTE 0
+CSO    BYTE 'n',13,10,0
+CSF    BYTE 'f','f',13,10,0
+       DATA 0
+
+
+TELNETRTN DATA 0
+TELNET
+       MOV  R11,@TELNETRTN
+
+TELNET1
+
+       LI   R2,URL1
+       LI   R3,>2020
+       LI   R4,40
+
+OPENNT1
+       MOV  R3,*R2+
+       DEC  R4
+       JNE  OPENNT1
+
+* Lets get connection URL
+       LI   R2,URL1
+       LI   R4,80
+OPENNT2
+       DEC  R4
+       JEQ  OPENNT3
+       MOVB *R0+,R3
+
+       CB   R3,@SPACE
+       JEQ  OPENNT2B
+       CB   R3,@CRLF+0
+       JEQ  OPENNT2
+       CB   R3,@CRLF+1
+       JEQ  OPENNT2B
+       CB   R3,@CRLF+2
+       JEQ  OPENNT2B
+       CB   R3,@NUL
+       JEQ  OPENNT2B
+
+       MOVB R3,*R2+
+       JMP  OPENNT2
+
+OPENNT2B
+       MOVB @SPACE,*R2                       terminate string with space
+
+OPENNT3
+
+       LI   R0,0                             Reset TIPI
+       XOP  @TIPI,0
+
+       LI   R1,OPENING
+       BL   @MESG
+
+       LI   R0,5                             CLOSE ANY OPEN CONNECTIONS
+       XOP  @TIPI,0
+
+       LI   R0,2                             Open URL
+       LI   R1,URL1
+       XOP  @TIPI,0
+
+       MOV  R1,R1
+       JEQ  ABORT2                           no connection made
+
+TESTKEY
+
+       CLR  R0
+       XOP  @KEY,0
+       JNE  CHECKVIDEO                       no keys selected, look for inbound
+
+       CB   R1,@F9KEY                        look for exit
+       JEQ  ABORT
+
+       CB   R1,@ESC                          look for exit
+       JEQ  ABORT
+
+       LI   R0,4                             Sending character
+       XOP  @TIPI,0
+
+CHECKVIDEO
+
+*      LI   R1,FLASHCURSOR                   commented out on 3.3.2021 as
+*      BL   @MESG                            it interferes with Heatwave BBS
+
+       LI   R0,3
+       CLR  R1
+       XOP  @TIPI,0                          check for character from socket
+
+       MOVB @TIPIRECEIVEMSG,@TTYSEND
+       MOV  R0,R0                            Testing if 0, if so, nothing recv
+       JEQ  TESTKEY
+
+*      CI   R1,>0D00                         3.3.2021 commented out for heatwave
+*      JEQ  REVERSE                          3.3.2021 cr/lf issues
+
+       CI   R1,>FF00                         special IAC negotiation
+       JEQ  IACGRAB                          used on some telnet connections
+
+       MOV  R1,@TTYSEND
+
+       LI   R1,TTYSEND
+       BL   @MESG
+
+       JMP  TESTKEY                          Repeat
+
+IACGRAB
+
+       LI   R0,3
+       XOP  @TIPI,0
+       MOV  R0,R0
+       JEQ  IACGRAB
+IACGRAB1
+       LI   R0,3
+       XOP  @TIPI,0
+       MOV  R0,R0
+       JEQ  IACGRAB1
+       MOVB R1,@IACGRABMSG+2
+
+       LI   R0,4
+       CLR  R1
+       LI   R2,IACGRABMSG
+       MOVB *R2+,R1
+       XOP  @TIPI,0
+       MOVB *R2+,R1
+       XOP  @TIPI,0
+       MOVB *R2+,R1
+       XOP  @TIPI,0
+       B    @CHECKVIDEO
+
+*R1HOLD DATA 0
+*REVERSE
+*      LI   R0,3
+*      XOP  @TIPI,0
+*      MOV  R0,R0
+*REVERSE1
+*      CI   R1,>0A00
+*      JEQ  REVERSE2
+*      MOV  R1,@R1HOLD
+
+*      LI   R1,LF
+*      BL   @MESG
+
+*      LI   R1,R1HOLD
+*      BL   @MESG
+*      JMP  REVERSE3
+*REVERSE2
+*      LI   R1,LFCR
+*      BL   @MESG
+
+*REVERSE3
+*      B    @CHECKVIDEO
+
+IACGRABMSG
+       DATA >FFFC,>0000
+
+TIPIRECEIVEMSG DATA 0
+
+*FLASHCURSOR
+*      BYTE '_',>08,' ',>08,0
+
+*LF     BYTE >0A,0
+*LFCR   BYTE >0A,>0D,0
+
+F9KEY  BYTE >8F
+ESC    BYTE >1B
+
+ABORT2
+       LI   R1,NOCONNECT
+       BL   @MESG
+       JMP  ABORT3
+ABORT
+       LI   R1,CRLF
+       BL   @MESG
+       LI   R0,5
+       XOP  @TIPI,0
+
+ABORT3 MOV  @TELNETRTN,R11
+       B    *R11
+
+TTYSEND DATA 0
+
+NUL
+KEY     DATA >0005        Keyboard scan library
+TIPI    DATA >000C        TIPI library
+SPACE   DATA >2020
+OPENING TEXT 'Connecting...<ESC> to abort'
+CRLF1   BYTE >0D,>0A,0
+NOCONNECT TEXT 'Not connected, exiting...'
+        BYTE >0D,>0A,0,0
+
+        EVEN
+
+
+***********************************************
+*            MEM - Version .9                 *
+*             John A Johnson                  *
+*              15 March 93                    *
+*                                             *
+*   Added to CLI in 3.6.2021 as a command     *
+*   reports memory information to the screen. *
+***********************************************
+*MEMORYRTN DATA 0
+MEMORY
+*      MOV  R11,@MEMORYRTN
+       MOV  R11,R10
+       CLR  R0           get available memory page count
+       XOP  @MEM,0
+*
+* save the numbers returned from the mem xop
+*
+       MOV  R1,@TFREE    save total free page count
+       MOV  R2,@TFREE0   save free fast page count
+       MOV  R3,@TOTAL    total installed pages
+*
+* make 8192 a floating point number for later multiplies
+*
+       LI   R0,15        integer to float
+       LI   R1,F8192     store floating point number here
+       LI   R2,>2000     put 8192 in r2
+       XOP  @MATH,0      convert 8192 to a floating point
+*
+* put stuff to the screen
+*
+       BL   @TTYOUT
+       DATA CRLF,0       put a cr,lf on the screen
+*
+* start with total memory
+*
+       BL   @INTSTR      total x 8192 and make a string
+       DATA TOTAL,TA,TSM total as integer, total as float, screen display
+*
+* now do available memory
+*
+       BL   @INTSTR
+       DATA TFREE,AA,TMA
+*
+* show how much of free ram is fast ram
+*
+       BL   @INTSTR
+       DATA TFREE0,TF,TMAF
+*
+* figure "in use" memory
+*
+       MOV  @TOTAL,@TPAGE  get total pages
+       S    @TFREE,@TPAGE  subtract free pages
+       BL   @INTSTR
+       DATA TPAGE,IA,TMU
+*
+       BL   @TTYOUT        and exit with a cr,lf
+       DATA CRLF,0
+
+*      MOV  @MEMORYRTN,R11
+*      B    *R11
+       B    *R10
+*
+**********************************
+*  BL   @INTSTR
+*  DATA integer_location, put_float_number_here, display_this_screen_text
+*
+* 1.  convert a binary 16 bit page to a float
+* 2.  mulptiply by float 8192 for a byte count
+* 3.  convert floater to a string
+* 4.  write string to the screen
+* 5.  write text to screen
+*
+INTSTR MOV  R11,R7
+       BL   @CLRST       go clear the string buffer
+       BL   @TTYOUT
+       DATA TAB,2        move cursor over 15 spaces from left margin
+*
+* integer to convert is in r2
+*
+       LI   R0,15        integer to float
+       LI   R1,TEMP      put new float here
+       MOV  *R7+,R2      fetch integer address
+       MOV  *R2,R2
+       XOP  @MATH,0      convert integer to float
+       LI   R0,3         float multiply
+       MOV  *R7,R1       float - put answer here
+       LI   R2,F8192     8192
+       LI   R3,TEMP      total pages
+       XOP  @MATH,0      do the float multiply
+
+       LI   R0,18        float to string
+       LI   R1,STRING    put string here
+       MOV  *R7+,R2      float is here
+       CLR  R3           go with free form
+       XOP  @MATH,0
+*
+* this routine figures the length of the number string
+*
+       MOV  R1,R6        r1 holds the string position
+       LI   R4,10        max length of string
+COUNT1 MOVB *R6,*R6+     see if string byte is a null
+       JEQ  COUNT2
+       BL   @TTYOUT
+       DATA BS,1         backspace one to the left
+       DEC  R4
+       JNE  COUNT1
+
+COUNT2 BL   @TTYOUT
+       DATA STRING,0     paint the byte count string on the screen
+       BL   @TTYOUT
+       DATA BYTES,0      put 'Bytes' up
+
+       BL   @CLRST       clear the string buffer
+       LI   R0,18        float to string
+       LI   R1,STRING    put page count as a string here
+       LI   R2,TEMP      pages as a floater is here
+       CLR  R3
+       XOP  @MATH,0      convert page floater to string
+
+       MOV  *R7+,@HEADER fetch text to print memory location
+       BL   @TTYOUT      and print the rest of the text
+HEADER DATA 0,0
+
+       BL   @TTYOUT
+       DATA STRING,0     put number of pages on the screen
+       BL   @TTYOUT
+       DATA PAGES,0      and the text 'pages'
+       B    *R7          return to main
+*
+* mdos write tty routine
+*
+TTYOUT LI   R0,>27       ttyout
+       MOV  *R11+,R1     get data address
+       MOV  *R11+,R2     get length of data to write
+       XOP  @VIDEO,0     write to the screen via xop @6,0
+       B    *R11
+*
+* clears the string buffer for ten spaces
+*
+CLRST  LI   R0,STRING    clear string buffer
+       LI   R1,10        for 10 bytes
+CLRST1 CLR  *R0+
+       DECT R1
+       JNE  CLRST1
+       RT
+*
+TSM    TEXT 'total system memory,'
+       BYTE 0
+TMA    TEXT 'total memory free,'
+       BYTE 0
+TMAF   TEXT 'fast memory free,'
+       BYTE 0
+TMU    TEXT 'total memory in use,'
+       BYTE 0
+BYTES  TEXT ' bytes '
+       BYTE 0
+PAGES  TEXT ' pages'
+       BYTE 10,13,0
+ERMSG  BYTE 10,13
+       TEXT 'Memory Error'
+BS     BYTE 8
+TAB    BYTE 9,9
+       EVEN
+
+VIDEO  DATA 6            video xop number
+MEM    DATA 7            memory xop number
+MATH   DATA 10           math xop number
+
+       END
+

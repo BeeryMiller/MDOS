@@ -1,0 +1,20 @@
+************
+*  This routine will bank in RAM on the selected peripheral card.
+*   RAM on the HFDC is located at addresses >9000->9FFF.
+*        The bank at >9000-93FF is not selectable.
+*        The remaining three banks (at >9400 to >97FF and >9800 to >9BFF )
+*        plus ( >9C00-9FFF ) are selectable via CRU bits.  Only two of
+*        the three RAM windows are really used.  On the HFDC, consecutive
+*        banks are loaded into the first two memory windows.  These are then
+*        used to hold file information.  Each window can picture 4 buffers.
+*        So 8 buffers at a time are displayed, depending on the value of R5.
+*****
+MAPR5  SRL  R5,2
+       AI   R5,>0800
+       AI   R12,>001C         *address at
+       LDCR R5,5
+       AI   R5,>0100
+       AI   R12,10
+       LDCR R5,5
+       ANDI R12,>FF00
+       RT

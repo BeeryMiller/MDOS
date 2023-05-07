@@ -1,0 +1,91 @@
+;rs232debug
+; BLWP @XMNUM
+; DATA address,#words
+;
+HEXHEX  TEXT '0123456789ABCDEF'
+SQUIG   TEXT '~~'
+        DATA 0
+DUMB1   DATA 0    temp holding for a  word
+
+;XMWS    BSS  >20
+;XMNUM  DATA XMWS,XMNUM1  hex
+
+;=============================
+; xmit  a  16-bit hex value
+; blwp @xmnum
+; data add,#words
+RSIN   DATA 0            ;0=NOT INIT'D YET
+
+XMNUM  MOV  R11,R10
+       ABS @RSIN
+       JNE XMNUM2        no
+
+       SETO @RSIN
+       LI R12,>1340
+       SBO  >1F          Reset 9902
+       LI   R5,>0200
+INITR2 DEC  R5           delay
+       JNE  INITR2
+       SBZ  >0D          Bit 13, disable interval register
+       LDCR @CREG,8      set 8n1
+       LDCR @BREG,>0C    set baud
+       SBZ  >12           Disable RCV interrupt! (and hope XB doesn't overrid
+
+XMNUMP MOV *R11+,R8      ADDRESS
+       MOV *R11+,R5      # WORDS
+
+; loop here for multiple numbers
+XMNUM2 MOV *R8+,R1     get 16-bit number
+ MOV  R1,R2 copy number for shift
+ SRL  R2,12
+ ANDI R2,>000F
+ MOVB @HEXHEX(R2),R0
+ BL  @XMIT1
+
+ MOV  R1,R2
+ SRL  R2,8
+ ANDI R2,>000F
+ MOVB @HEXHEX(R2),R0
+ BL  @XMIT1
+
+ MOV  R1,R2
+ SRL  R2,4
+ ANDI R2,>000F
+ MOVB @HEXHEX(R2),R0
+ BL  @XMIT1
+
+ MOV  R1,R2
+ ANDI R2,>000F
+ MOVB @HEXHEX(R2),R0
+ BL  @XMIT1
+
+ LI R0,>2000 xmit a space
+ BL  @XMIT1
+
+ DEC R5
+ JNE XMNUM2
+
+;      LI   R0,>0D0A   crlf
+;      BL   @XMIT1
+;      SWPB  R0
+;      BL   @XMIT1
+;
+XMTR MOV R10,R11
+     RT
+
+; BL @XMIT1
+; R0msb - xmit byte
+; might need to change from TB >17 to TB >16
+;
+XMIT1  LI  R12,>1340
+EO     TB   >17    xmit?
+       JNE  EO
+       SBO  >10
+       LDCR R0,8
+       SBZ  >10
+       RT
+
+CREG DATA  >8300 ;8n1
+BREG DATA  >000D ;38.4  1A=19.2; 34=9600
+;
+;EOF

@@ -1,0 +1,22 @@
+*
+PRTHEX MOV  *R11+,R3          get the starting location
+       MOV  R0,R1
+       MOV  *R11+,R2          bytes to print
+
+PRT2   MOVB *R3+,R5           get the next byte
+       SRL  R5,8              make it a word value
+       CLR  R4                clear R4 for the divide
+       DIV  @SIXTN,R4       divide this by sixteen
+       MOVB @HEXDEC(R4),R0  get the ASCII character (pointer to by R4)
+       BLWP @EMIT1          print it
+       MOVB @HEXDEC(R5),R0
+       BLWP @EMIT1
+       DEC  R2                any more to do?
+       JNE  PRT2              yup
+
+       MOV  R1,R0
+       RT                     no, return
+
+HEXDEC TEXT '0123456789ABCDEF'
+SIXTN DATA 16
+

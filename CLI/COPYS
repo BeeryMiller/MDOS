@@ -1,0 +1,1592 @@
+       UNL
+*      COPY A FILE
+*      GET MEMORY SIZE
+*      CLAIM 80% AVAILABLE
+*      GET SOURCE NAME
+*      GET DEST NAME
+*      SPECIAL CASES:  CAN'T COPY FROM PIO
+*                      CAN ONLY COPY RECORD BY RECORD FROM RS232
+*      COMPUTE # OF SECTORS RAM WILL HOLD
+*      COPY FILE(S) UNTIL DONE
+*      PUT OUT MESSAGE
+*      FREE UP MEMORY
+*
+       REF  TIPEXC           12.27.2020
+       DEF  FCNTIP           12.27.2020
+
+       DEF  COPY
+       REF  EMIT1,GETCAT,RSTOP
+       REF  GETSTR
+       REF  CISNIL
+       REF  BREAK
+       REF  ZFLAG             allow control-z in console input
+*
+COPRET DATA 0
+BRKSAV DATA 0
+*
+       COPY "\MDOS\CLI\TIMES"
+
+COPY   MOV  R11,@COPRET       SAVE RETURN
+       MOV  R0,R11            SAVE COMMAND LINE PTR FOR LATER USE
+       MOV  @BREAK,@BRKSAV    save old vector
+       MOV  @BRKCOD,@BREAK    put in new
+*
+* get memory from system
+*
+       MOVB @>F114,@SAV8
+       MOVB @>F113,@SAV6
+       CLR  R0                first get # of free pages in system
+       XOP  @SEVEN,0
+       MOV  R0,R0             error?
+       JNE  ERR2              yes
+*
+       CI   R1,4              are there at least 4 pages?
+       JL   ERR2              no, so error
+       JEQ  CLAIM             there are exactly 4 so use all
+*
+       SLA  R1,2              use 80%, multiply by 4
+       DIV  @FIVE,R0          divide by 5
+       MOV  R0,R1
+*
+CLAIM  LI   R0,1              get pages opcode
+       LI   R2,8              local page address
+       CLR  R3                slow speed ram
+       XOP  @SEVEN,0
+       MOV  R0,R0             error?
+       JNE  ERR2              yep, so free memory
+*
+
+       MOV  R1,R6             save page count for later use
+*
+       LI   R0,3
+       LI   R1,8
+       LI   R2,6              put it at >c000
+       XOP  @SEVEN,0
+*
+       LI   R0,4
+       LI   R1,PAGLST
+       LI   R2,256
+       XOP  @SEVEN,0          get a list of physical pages to play with
+*
+       MOV  R6,@PAGES         number of 8K pages
+       DEC  R6                one used for work area
+       SLA  R6,5              *2**5 for # of sectors
+       MOV  R6,@BUFSIZ        number of sectors in buffer
+*
+       LI   R1,COPSLF         clear out all dynamic variables
+CLRLOP CLR  *R1+
+       CI   R1,PAGLST
+       JL   CLRLOP
+*
+*    now parse the source file pathname
+*
+       MOV  R11,R1            get the pointer to the option buffer back
+       LI   R2,P1LEN          to pathname buffer in >C000
+       CLR  R3
+       MOVB @MAXLEN,*R2       max length of buffer
+       LI   R0,8              xop vector
+       XOP  @NINE,0
+       JEQ  GETDST            yes, it worked
+       JMP  BADINP            bad input device
+*
+* ERROR messages...
+*
+ERR2   LI   R2,MEMERR
+ERRCS1 B    @ERROR            free memory and bomb
+
+ERRCS  LI   R2,SDERR
+       JMP  ERRCS1
+
+BADINP LI   R2,BIDN
+       JMP  ERRCS1
+
+BADOUT LI   R2,BODN
+       JMP  ERRCS1
+*
+GETDST CB   *R0+,@H00
+       JEQ  GETDS2
+*
+GETDS1 CB   *R0+,@SPACE       skip spaces
+       JEQ  GETDS1            it is a space
+*
+GETDS2 DEC  R0                adjust R0 pointer
+       MOV  R0,R1             set pointer
+       LI   R0,8              opcode again
+       LI   R2,P2LEN          point to path name length of "to"
+       CLR  R3
+       MOVB @MAXLEN,*R2
+       XOP  @NINE,0           get destination path name
+       JNE  BADOUT            bomb
+*
+*
+*
+       LI   R10,NAMES         set up pointer for input name scan
+       MOVB @SPACE,*R10
+*
+*
+*
+       LI   R3,P2LEN
+       BL   @WHICH            go to label based on index of device name
+       DATA DEVC00,DEVR00     console,rs232
+       DATA DEVP00,DEVH00     pio,hds
+       DATA DEVD00,DEVW00     dsk,wds
+       DATA DEVH00,DEVH00     scs,tipi       12.25.2020
+       DATA DEVO00            other
+*
+DEVC00 SETO @TOCON
+       JMP  DEVO99
+*
+DEVW00 SETO @TOWDS
+       JMP  DEVO88
+*
+DEVH00 SETO @TOHDS
+DEVD00 SETO @TOFLP
+DEVO88 MOVB @P2LEN,R1         is it output to dir or specific filename
+       SRL  R1,8
+       AI   R1,P2LEN
+       CB   *R1,@DPT
+       JNE  DEVO99
+       SETO @TOMNFL           copy to directory
+*
+DEVR00
+DEVP00
+DEVO00
+DEVO99 MOV  R0,R15            code of output device
+*
+* now to check input device
+* invalid if "PIO"
+* invalid from rs232 to the same rs232
+*
+*
+       LI   R3,P1LEN
+       BL   @WHICH
+       DATA DEWC00,DEWR00     console,rs232
+       DATA BADINP,DEWH00     pio,hds
+       DATA DEWD00,DEWW00     dsk,wds
+       DATA DEWH00,DEWH00     scs,tipi
+       DATA DEWO00            other
+*
+DEWC00 SETO @FRMCON
+       JMP  DEWR99            start buffer input now
+*
+DEWR00 C    R0,R15            was output device also rs232?
+       JNE  DEWR10            no, so it has to be ok
+*
+       CB   @P1LEN+7,@P2LEN+7 is it the same rs232?
+       JEQ  BADOUT            yes, bad output device
+*
+DEWR10 SETO @RS232
+DEWO00
+DEWR99 MOV  @TOMNFL,R0        was it output to a directory (no name)?
+       JNE  BADOUT            yes, bad output name!
+       JMP  BEGBUF
+*
+DEWW00 SETO @FRMWDS           WDS
+       JMP  GETLST
+*
+DEWD00 C    R0,R15            was output device also DSK ?
+       JNE  DEWD10            no, so there's no single drive copy
+*
+       CB   @P1LEN+4,@P2LEN+4 is it the same floppy?
+       JNE  DEWD10            no, so not single drive copy
+*
+       SETO @COPSLF           copy to same floppy
+       JMP  DEWD10
+*
+DEWH00 SETO @FRMHDS           also from scsi hard drive
+DEWD10 SETO @FRMFLP
+*
+*******************************************************************************8
+*
+* now get the entire list of files needed to copy
+* (though check first to see if output is DSK and valid)
+*
+GETLST MOV  @TOFLP,R0
+       JEQ  GETL30            not to DSK
+       MOV  @TOHDS,R0
+       JNE  GETL30            to HDS, no sector 0 verify, or SCS devices
+       MOV  @COPSLF,R0
+       JNE  GETL30            to same DSK, we can't check until they swap
+*
+       LI   R1,P2LEN          output drive
+       BL   @SECZER           test if available
+       MOVB R0,R0             test for error
+       JNE  BADOUT
+*
+       LI   R0,DUMPAB
+       MOVB @BWRTOP,*R0
+       CLR  @DUMPAB+6
+       MOV  @POINT,@DUMPAB+4
+       MOV  @H0001,@DUMPAB+12 sector count
+       XOP  @EIGHT,0          test for write protect
+       MOVB @BREDOP,*R0       restore the read opcode
+*
+       MOVB @DUMPAB+2,R1      error?
+       JEQ  GETL30
+       B    @BADOUT           yes, must be write protected
+*
+GETL30 LI   R0,PAB
+       BL   @GETCAT
+       JEQ  GETL31
+       B    @BADINP           bad directory
+*
+GETL31 LI   R10,NAMES
+       MOV  R10,R7            now match up input and output files to copy
+       CLR  R8                # of files to copy
+GETL00 MOVB *R7,R9
+       JEQ  GETL01            skip this file
+       CB   R9,@SPACE         end?
+       JEQ  GETL02            yes
+       INC  R8                no, one more file to copy
+*
+GETL01 AI   R7,32             try next
+       CI   R7,DIRS           at end of list?
+       JL   GETL00
+*
+GETL02 CI   R8,1
+       JEQ  BEGBUF            one file to copy from so go ahead
+       JL   NOFILE            no files to copy from---all done!
+*
+       MOV  @TOWDS,R9
+       JNE  GETL20
+       MOV  @TOFLP,R9
+       JEQ  BEGBUF            not to mass storage device
+*
+GETL20 MOV  @TOMNFL,R9        copy to dir or single file?
+       JNE  BEGBUF
+       B    @BADOUT           to single file from many...error
+*
+*
+NOFILE LI   R1,NOFMSG
+       BL   @MESOUT
+       LI   R1,PAB
+       AI   R1,15
+       BL   @MESOUT
+       B    @CLDONE
+
+*
+* got the catalog, so perform the copy, file by file until the end
+*  or until the buffer is full,
+*  if the copy is from anything other than floppy then do a record at a time
+*
+ALLCOP B    @CLDONE
+*
+* PROMPT TO INSERT SOURCE DISKETTE
+*
+NEWBUF
+BEGBUF ABS  @DONE             all done flag set ??
+       JNE  ALLCOP
+*
+       MOV  @COPSLF,R0        is it a single drive copy?
+       JEQ  PCD001            no, so no prompt for source diskette
+*
+       LI   R1,SRFP
+       BL   @MESOUT
+       BL   @MESOCL
+WAIT00 LI   R0,4
+       XOP  @FIVE,0
+       JNE  WAIT00
+*
+       LI   R1,P1LEN
+       BL   @SECZER           read sector zero to init low-level parms
+*
+PCD001 MOV  @BUFSIZ,@SECAVL
+       LI   R14,9             virtual page number
+       CLR  R15               offset in page
+       MOV  R10,@OUTSTR       current file pointer
+*
+* create next file entry in buffer
+*
+NXTFIL MOV  R14,@HDRAD1
+       MOV  R15,@HDRAD2       address of header for this file
+*
+       MOVB @PAGLST(R14),@>F113 at >6000     7/31/88
+       C    @SECAVL,@THREE    must be 4 sectors to try (header,data,partial,end)
+       JLE  FLOUT             not enough, so flush the buffer
+       ABS  @DONE
+       JNE  FLOUT             no more files to copy
+*
+       DEC  @SECAVL           one less sector (for header)
+*
+NXT002 LI   R9,P1LEN          R9 pts to path length of dir
+       MOVB *R9,R8
+       MOVB R8,R7
+       SRL  R7,8
+       INC  R7
+*
+       LI   R6,FROMNL
+NXT003 MOVB *R9+,*R6+         move directory (RS232 name, also) 7/31/88
+       DEC  R7
+       JNE  NXT003
+*
+       MOV  @FRMWDS,R1
+       JNE  NXT004            winchester, so get name from list
+       MOV  @FRMFLP,R1
+       JEQ  CPCO01            not floppy, so don't get name from list
+*
+* now finish up by moving the file name
+*
+NXT004 CB   *R10,@SPACE
+       JEQ  NXT005            no more files to copy
+       MOVB *R10,R0
+       JNE  NXT006            now copy name to pab
+       AI   R10,32
+       CI   R10,DIRS
+       JL   NXT004            more names to check
+*
+CLDON
+NXT005 SETO @DONE             no more files to copy
+       CI   R14,9             is buffer empty?
+       JNE  FLOUT             no, flush it
+       MOV  R15,R15           is buffer empty?
+       JNE  FLOUT             no, flush it
+       B    @CLDONE           all done
+*
+NXT006 LI   R5,10             max length counter
+       CLR  R7                current name length
+       MOV  R10,R9
+NXT007 CB   *R9,@SPACE
+       JEQ  NXT008
+*
+       MOVB *R9+,*R6+
+       INC  R7
+       DEC  R5
+       JNE  NXT007
+NXT008 SWPB R7                get file name length
+       AB   R7,R8             add to dir name length
+       MOVB R8,@FROMNL        set the path name length
+*
+       MOV  @FRMWDS,R1
+       JNE  CW0000            from winchester
+       B    @CF0000           from dsk
+*
+* buffer is full, so flush it
+*
+FLOUT  SETO @>6000+20(R15)    end of buffer flag           7/31/88
+       B    @OUTBUF
+*
+********************************************************************************
+*
+* copy is from WDS so read record at a time unless it is program file
+*
+CW0000 MOVB @FFLAG(R10),R7
+       ANDI R7,>0100          is it a program file
+       JEQ  CPCO01            no, so read a record at a time
+       B    @CW0003           winchester program image file, read into buffer
+*
+********************************************************************************
+*
+*      copy from record oriented device, so do so record by record
+*           pathname from and to are both set up
+*           if winchester, file type already known
+*           if con or RS232, use DV80 parms
+*           if copy to floppy set up parms
+********************************************************************************
+CPCO01 MOV  @SECAVL,R12       used for # of data sectors in buffer
+       AI   R15,>0100         go to next sector
+       ANDI R15,>1F00
+       JNE  CPCO11
+       INC  R14
+*
+CPCO11 MOV  @APNDFL,R1        were we interrupted by a full buffer ??
+       JEQ  CR000             create entry for a new file
+*
+       ABS  @FIXEDI           continuation of old file,
+       JNE  GNR               since fixed, no data left over from last pass
+*
+* is variable, so move the last sector to the 2nd sector of the buffer
+*
+       MOV  @PAGES,R3
+*
+* fix page numbers and address 7/31/88
+*
+       MOVB @PAGLST+7(R3),@>F114             partial sector buffer
+       LI   R3,>9F00                         is at end of last page
+       MOVB @PAGLST(R14),@>F115   at >A000
+       LI   R2,>A100
+       MOVB *R3,R1            length of the record
+       SRL  R1,8
+       INCT R1                keep length and >ff byte
+       MOV  R1,R4
+CPCO57 MOVB *R3+,*R2+
+       DEC  R4
+       JNE  CPCO57
+       A    R1,R15            update r15
+       DEC  R15
+       MOV  R15,@LASTBU
+       JMP  GNR
+*
+* create a buffer entry
+*
+CR000  CLR  @FIXEDI           not fixed length records
+       LI   R7,>1400          display, variable, input
+       LI   R0,FROMPB
+       BL   @CLRPAB           zero out the pab except pathname and opcode
+       MOV  @FRMWDS,R1        is it from WDS?
+       JEQ  CP0002            no
+*
+       MOVB @FFLAG(R10),R6
+       COC  @CH8000,R6        variable or fixed?
+       JEQ  CPCO02
+*
+       SETO @FIXEDI           fixed input records...no length goes into buffer
+       LI   R7,>0400          display, fixed, input
+CPCO02 COC  @CH0200,R6        internal?
+       JNE  CP0002            no
+       ORI  R7,>0800          yes
+CP0002 MOVB R7,@FROMFL
+       MOV  @FRMCON,R1
+       JEQ  CP2002
+*
+       LI   R1,80             make this an 80 length record
+       MOV  R1,@FROMLR        when it's from console
+       JMP  GNR
+*
+CP2002 MOVB @OPENOP,*R0       already clear
+       MOVB @H00,@FROMCV
+       XOP  @EIGHT,0          open the GD file
+       MOVB @FROMER,R1        error?
+       JEQ  GNR
+       B    @BADINP           @@can't open input device
+*                             @@ recover to next file...
+*  now read in record-by-record
+* set buffer read address to next address plus 1
+*
+GNR    BL   @LOADAF
+       MOV  R15,R0
+*
+       ABS  @FIXEDI
+       JEQ  GNR001            jump if variable record file...
+*
+       ANDI R0,>00FF
+       A    @FROMLR,R0        @@need to allow for big record lengths
+       CI   R0,256
+       JLE  CP0004
+*
+CP0005 AI   R15,>FF           bump pointer into next sector
+       ANDI R15,>1F00
+       JNE  GNR000
+       INC  R14               next virtual page
+*
+GNR000 DEC  @SECAVL
+       C    @SECAVL,@THREE
+       JHE  GNR               more than enough free sectors in buffer
+*
+GNR031 LI   R8,>FFFD          assume start of file
+       ABS  @APNDFL
+       JEQ  CP0030
+       LI   R8,>FFFB          this is continuation of append
+CP0030 SETO @APNDFL
+       CLR  @BUMPOF
+*
+MAKHED S    @SECAVL,R12       number of sectors in this section of buffer
+       MOV  @HDRAD2,R3        get index into virtual page for header
+       AI   R3,>6000          7/31 assume page still mapped in
+*
+       CLR  *R3+              clear record length
+*
+       CLR  R4
+       MOVB @FROMFL,R4        get flags
+       SLA  R4,3              fv,di,xxxxxx
+       MOVB R4,R5
+       SRL  R5,5              xxxxx,fv,di,x
+       SOCB R5,R4
+       ANDI R4,>8200          fv,0,0,0,0,0,di,0
+       MOVB R4,*R3+           type flags
+*
+       CLR  R4
+       LI   R5,256
+       DIV  @FROMLR,R4
+       SWPB R4
+       MOVB R4,*R3+           rec / au
+*
+       MOV  R12,*R3+          # of sectors in the buffer
+       MOVB @LASTBU+1,*R3+    # of bytes used in last sector of file
+       MOVB @FROMLR+1,*R3+    logical record length
+       ABS  @FIXEDI           fixed?
+       JNE  MAK022            yes, move number of records written
+       SWPB R12
+       MOV  R12,*R3+
+       SWPB R12
+       JMP  MAK023
+*
+MAK022 MOV  @FROMRC,R0
+       SWPB R0                # of records written
+       MOV  R0,*R3+
+*
+*      if win, get date from header : device=get data from clock chip
+*
+MAK023 MOV  @FRMCON,R0        FIX COPY TIME 7/4/96
+       JEQ  MODTT0
+       MOV  R3,R0        SET pointer to time/date
+       BLWP @REDCOM      read compressed TIME/DATE
+       AI   R3,4
+*      CLR  *R3+
+*      CLR  *R3+
+       MOV  R3,R0        now set UPDATE time so that copy CON files to HFDC
+       BLWP @REDCOM      are at least given a time!
+       AI   R3,4
+*      CLR  *R3+         clear updated time/date...this really is
+*      CLR  *R3+         not needed..
+       JMP  MODTT1
+
+MODTT0 MOV  @20(R10),*R3+     @@@@@@@@@@@ get date and time here
+       MOV  @22(R10),*R3+
+       MOV  @24(R10),*R3+
+       MOV  @26(R10),*R3+
+
+
+MODTT1 MOV  R12,*R3+          sector count
+       MOV  R8,*R3+           flag word
+*
+       A    @BUMPOF,R10       only bump if EOF found
+*
+       B    @NXTFIL           only 1 sector left so do according
+*
+* read a record now
+*
+GNR001 INC  @FROMBA+1         allow for reclen to go into buffer
+       JNC  CP0004
+       INC  @FROMBA           inc on odd boudary semi-ok
+CP0004 MOVB @PAGLST(R14),@>F114              7/31/88
+       MOVB @PAGLST+1(R14),@>F115            map in the record buffer
+*
+       MOV  @FRMCON,R0
+       JEQ  CP1004
+*
+       MOV  R15,R1
+       AI   R1,>8001          7/31/88 string address-allow for length
+       LI   R2,80             maxlen
+       SETO @ZFLAG
+       BL   @GETSTR
+       CLR  @ZFLAG
+       S    R1,R4
+       MOVB @H00,@FROMCR
+       MOV  R4,@FROMCR+1      length to pab
+       JMP  CPCO03
+*
+CP1004 LI   R0,FROMPB
+       MOVB @READOP,*R0
+       MOVB @H00,@FROMCV
+       XOP  @EIGHT,0
+       MOVB @FROMER,R1
+       JEQ  CPCO03
+       CB   R1,@CBHA0         trying to read past end of file?
+       JNE  CPDE              no, fatal error @@ recover
+*                             file in buffer so set header
+ENDINP MOV  @D32,@BUMPOF
+       LI   R8,>FFFE          start to end
+       ABS  @APNDFL
+       JEQ  CF0035
+       LI   R8,>FFFC
+CF0035 CLR  @APNDFL
+* now make sure that the sector count is correct here
+       MOV  R15,@LASTBU       grrrr...@@ fix 10/6
+       MOV  R15,R1
+       ANDI R1,>00FF
+*      JEQ  MAKHED
+       JNE  TTTXXX            7.4.96
+       B    @MAKHED
+*
+TTTXXX DEC  @SECAVL
+       AI   R15,>00FF
+       ANDI R15,>1F00
+       JNE  PXD000
+       INC  R14
+PXD000 B    @MAKHED           make a header for this file now
+
+CPDE   B    @BADINP           @@ recovery
+*
+* now update buffer
+*
+* @@ check for a control-Z as last character in buffer
+*
+CPCO03 MOV  @FROMCR+1,R5      was it >255 chars?
+*
+       ABS  @FIXEDI           fixed or variable?
+       JEQ  CPCO08            variable
+       A    R5,R15            update in pointer
+       MOV  R15,R0
+       ANDI R0,>00FF          at start of next sector?
+       JEQ  GNR036            yes, allocate it for sure
+*
+GNR035 MOV  R15,@LASTBU
+       B    @GNR
+GNR036 B    @CP0005
+*
+CPCO08 MOV  @FRMWDS,R7
+       JNE  CPCO09            ctl-Z doesn't end a file from the winchester
+*
+       MOVB @>8001(R15),R7    7/31 is 1st char in record a control-Z?
+       ANDI R7,>7F00
+       CI   R7,>1A00
+       JNE  CPCO09            yes, end of input
+       SETO @DONE
+       JMP  ENDINP
+*
+CPCO09 MOV  R5,@LENGTH
+       MOV  R15,R7
+       ANDI R7,>00FF
+       A    R5,R7             >256 bytes?
+       INC  R7                length byte and >ff byte
+       MOVB R7,R7
+       JEQ  CP0003            everything fits in this sector
+*
+* too long for this sector, so put in beginning of next
+*
+CP0007 DEC  @SECAVL           use up one more sector
+       MOV  R15,R6            7/31 index into >6000 page
+       AI   R15,>00FF
+       ANDI R15,>1F00         r15 points to next sector---even if next page
+       JNE  CP007A
+       INC  R14
+CP007A AI   R6,>8000          7/31
+       MOV  R6,R7
+       AI   R7,>00FF
+       ANDI R7,>FF00
+*
+       MOV  R15,@LASTBU
+       C    @SECAVL,@THREE    put it into last sector?
+       JHE  CP007D
+       LI   R7,>9F00          in last sector 7/31
+*
+CP007D A    R5,R7
+       MOVB @CBHFF,@1(R7)     make sure end of sector tag gets put in
+       A    R5,R6
+       MOV  R5,R8
+       JEQ  CP007F
+CP007B MOVB *R6,*R7
+       DEC  R6
+       DEC  R7
+       DEC  R8
+       JNE  CP007B
+*
+CP007F MOVB @FROMCR+2,*R7     just in case we moved it to last sector
+       A    R5,R15
+       INC  R15               point to last char
+       JMP  CP9003            skip fixing length and EOS tag---already done
+*
+CP0003 MOVB @FROMCR+2,@>8000(R15) put in the length byte   7/31
+       A    R5,R15               update input pointer
+       INC  R15                  compensate for length
+       MOVB @CBHFF,@>8000(R15)   end of sector just in case 7/31
+*
+CP9003 C    @SECAVL,@THREE
+       JHE  GNR035
+       ANDI R15,>1F00
+       B    @GNR031
+       PAGE
+********************************************************************************
+*
+*      copy from floppy
+*           pathname and pathname length set
+*           if pgm file and
+*              copy to floppy, perform direct read/write
+*              copy not to floppy, perform a load if it will fit in ram
+*           if data file, perform direct read to end of file or end of buffer
+*
+********************************************************************************
+CF0000 MOV  @TOFLP,R9         is it copy to floppy?
+       JNE  CF0005            no
+       B    @CF0001
+*
+CF0005 LI   R0,FROMPB
+       MOVB @BREDOP,*R0       get file parms
+* do we continue an old file here?
+       ABS  @APNDFL
+       JNE  CF0411            yes, don't reread parms
+*
+CF0410 BL   @CLRPAB
+       BL   @LOADAF           set buffer address
+       MOVB @H00,@FROMCV
+       XOP  @EIGHT,0          transfer parms
+       MOVB @FROMER,R1
+       JNE  DEVE01            @@ recover
+*  get the number of sectors in this file
+CF0411 AI   R15,>0100
+       ANDI R15,>1F00
+       JNE  CF0400
+       INC  R14
+CF0400
+* now map in the page with the header on it
+       MOV  @HDRAD1,R3
+       MOVB @PAGLST(R3),@>F115 map at >A000  7/31/88
+       MOV  @HDRAD2,R3
+*
+       MOV  @SECAVL,@FROMTR
+       DEC  @FROMTR           AT LEAST ONE SECTOR FOR END
+       CLR  @NUKED
+* check level 2 allocation if this is a variable file
+       CLR  R6
+       MOVB @FFLAG(R10),R6
+       CZC  @CH7500,R6        test reserved bits,pgm/data
+       JNE  CF0402            not a data file
+       COC  @CH8000,R6        test fixed/var
+       JNE  CF0402            not a variable file
+*
+       MOV  @>A000+8(R3),R6   level 3 sector allocation (byte swapped)
+       SWPB R6
+       MOV  R6,@>A000+4(R3)   fix level 2 allocation for output file
+*
+       MOV  @FROMRC,R4
+       A    @FROMTR,R4        get offset of last sector (+1) we're trying read
+       C    R4,R6
+       JLE  CF0402            count is already shorter than file
+*
+       S    @FROMRC,R6        fix the count, to not read the empty sectors
+*
+       MOV  R6,@FROMTR        past the true end of file
+       SETO @NUKED
+*
+CF0402 BL   @LOADAF
+       MOV  @FROMTR,R4        12/2/88 after fixing BREAD[file]
+       MOVB @H00,@FROMCV
+       XOP  @EIGHT,0          read it in     @@ recover
+* now map in the page with the header on it
+       MOV  @HDRAD1,R3
+       MOVB @PAGLST(R3),@>F115 map at >A000  7/31/88
+       MOV  @HDRAD2,R3
+       S    @FROMTR,R4        calc number of sectors actually read
+       MOV  R4,@>A000+18(R3)  7/31/88
+       MOVB @FROMER,R1
+       JEQ  CF005Z            good read
+       CB   R1,@CBHA0         is it trying to read past end of file?
+       JNE  DEVE01            no, fatal error
+*                             trying to read past end of file, so
+CF005G AI   R10,32            point to next file
+*
+       LI   R5,>FFFE          entire file here
+CHFFFE EQU  $-2
+*
+       ABS  @APNDFL
+       JEQ  CF005E            yes
+       LI   R5,>FFFC          no, continuation
+CF005E CLR  @APNDFL           READ IN ALL OF FILE
+CF005C MOV  R5,@>A000+20(R3)  complete file in here        7/31/88
+CF000E S    R4,@SECAVL        UPDATE sectors
+       MOV  R4,R5
+       SRL  R5,5
+       A    R5,R14
+       SWPB R4
+       ANDI R4,>1F00
+       JEQ  OUTB00
+       A    R4,R15
+       CI   R15,>1FFF
+       JLE  OUTB00
+       ANDI R15,>1F00
+       INC  R14
+OUTB00 B    @NXTFIL
+
+DEVE01 B    @BADINP
+
+CF005Z MOV  @NUKED,R5
+       JNE  CF005G            finished reading shorter file
+*
+CF005A LI   R5,>FFFD
+       ABS  @APNDFL           are we in append mode?
+       JEQ  CF005F
+       LI   R5,>FFFB          yes
+CF005F SETO @APNDFL
+       JMP  CF005C
+       PAGE
+* copy from floppy, but not to floppy, so is it a pgm file to WDS?
+CF0001 MOV  @TOWDS,R9
+       JEQ  PALL00
+       MOVB @FFLAG(R10),R6
+       ANDI R6,>0100          is it a pgm file
+       JEQ  PALL00            no
+* is copy of pgm file from floppy to winchester
+* IT CAN NOT BE MORE THAN 4*12=48 sectors long
+CW0003 MOV  @SECUSD(R10),R6
+       CI   R6,64             can it even fit?
+       JLE  CW0004            64, one for the FCB
+       B    @BADINP           no, too big
+
+PALL00 B    @CF0005
+CW0004 C    R6,@SECAVL        must have 1 sector for ender, so fine
+       JH   OUTB02            can't fit in this buffer
+* now are we on an 8 K boundary or is it large enough?
+       LI   R8,>3F00          16 K max
+       DEC  R6                1 sector for FCB
+       S    R15,R8            the number of contiguous bytes
+       SLA  R6,8
+       C    R6,R8
+       JH   OUTB02            not enough bytes
+*
+       AI   R15,>0100
+       ANDI R15,>1F00
+       JNE  CW0005
+       INC  R14
+*
+CW0005 LI   R0,FROMPB
+       BL   @CLRPAB
+       MOVB @LOADOP,*R0
+       MOV  R8,@FROMTR
+       BL   @LOADAF
+       MOVB @H00,@FROMCV
+       XOP  @EIGHT,0          @@ recover
+       MOVB @FROMER,R1
+       JNE  DEVE01            bad load
+* NOW GET NUMBER OF BYTES LOADEd
+CF000C MOV  @FROMLR,R4        set up the header for pgm file
+       MOV  R4,R5
+       AI   R5,>00FF
+       ANDI R5,>FF00          number of sectors
+* now to complete the header
+       MOV  @HDRAD1,R3
+       MOVB @PAGLST(R3),@>F115               7/31
+       MOV  @HDRAD2,R3
+       AI   R3,>A000                         7/31
+       CLR  *R3+              no extended record length
+       MOV  @CH0100,*R3+      program file flags and 0 to R/AU
+       SWPB R5
+       MOV  R5,*R3+           number of sectors this file
+       SWPB R4
+       MOVB R4,*R3+           final sector offset
+       MOVB @CBH00,*R3+       logical rec len
+       MOV  R5,*R3+           sectors actually used
+*
+************                  put time into header
+*
+       MOV  @20(R10),*R3+
+       MOV  @22(R10),*R3+
+       MOV  @24(R10),*R3+
+       MOV  @26(R10),*R3+
+       MOV  R5,*R3+           number of sectors in buf
+       MOV  @CHFFFE,*R3       complete file in buffer
+       MOV  R5,R4
+       MOV  @HDRAD2,R3
+       B    @CF005G
+
+OUTB02 B    @FLOUT            flush the buffer
+       PAGE
+*
+OUTBUF
+*
+*  is it copy to the same floppy?
+*
+       MOV  @COPSLF,R0
+       JEQ  OUT00V
+*
+* copy to same floppy, so tell them to put in the copy floppy
+*
+       LI   R1,COFP
+       BL   @MESOUT
+       BL   @MESOCL
+WATKY1 LI   R0,4
+       XOP  @FIVE,0
+       JNE  WATKY1
+*
+       LI   R1,P2LEN
+       BL   @SECZER           read sector zero to reset diskette parms
+*
+* now write out these sectors, we have several cases
+*      1) to another floppy whereby we just try to write it out
+*      2) to WDS, a pgm file whereby we just write it out
+*      3) is a variable data file whereby we just write out
+*           with length byte inserted
+*      4) is a fixed file whereby we must put in record lengths
+*           and all the rest
+OUT00V LI   R14,9             INIT ADDRESS OUT
+       CLR  R15
+       MOV  @OUTSTR,R13       POINTER to name list
+*
+NXTFLI CB   *R13,@H00
+       JEQ  PC0001            skip this entry
+*
+       MOVB @PAGLST(R14),@>F115              7/31/88
+       MOV  @>A000+18(R15),R6   number of sectors in the buffer
+       MOV  @>A000+8(R15),R7      next record to write to if fixed
+       MOV  @>A000+20(R15),R5   get status
+       CI   R5,>FFFF
+       JEQ  FLSHED            @@ branch if buffer flushed
+       MOV  @TOFLP,R0         IS it copy to floppy?
+       JNE  PX0000            YES
+       B    @NTOFLP
+*
+* copy to floppy
+*
+PX0000 CI   R5,>FFFC          new file?
+       JH   OUT000            yes, so go set parms
+* continuation
+       MOV  @FRMFLP,R0        is it from floppy?
+       JEQ  OUT002            no, so go to append
+       JMP  OUT001
+*
+* continue writing data to this file only thing to do is
+*  put in # of sectors to copy
+*
+OUT000 SWPB R7
+       MOV  R7,@FIXED         save for next pass
+       LI   R0,TOPB
+       BL   @CLRPAB
+       MOVB @BWRTOP,*R0
+* put in buffer address
+       BL   @LOADAT
+       CLR  @>A000+18(R15)    clear out the extended record info
+       BL   @PTTONM           put in pathname to copy to
+       MOVB @H00,@TOCV
+       XOP  @EIGHT,0          @@ recover
+       MOVB @TOER,R1          error?
+       JNE  DEVE03            error in creation
+       MOV  R6,@>A000+18(R15) restore, in case it's needed again
+       INC  @FILCOP
+*  now to write the correct number of sectors
+OUT001 AI   R15,>0100         @@ next 256 byte address
+       ANDI R15,>1FFF
+       JNE  OUT01A
+       INC  R14
+OUT01A MOV  R6,@TOTR          number of sectors to copy
+       JEQ  NXTFL1            no more to copy from buffer
+CF0258 BL   @LOADAT
+       MOV  R6,R1
+       SRL  R1,5
+       A    R1,R14
+       ANDI R6,>001F
+       JEQ  OUT01B
+       SLA  R6,8
+       A    R6,R15
+       CI   R15,>1FFF
+       JLE  OUT01G
+       INC  R14
+OUT01G ANDI R15,>1F00
+OUT01B LI   R0,TOPB
+       MOVB @H00,@TOCV
+       XOP  @EIGHT,0          @@ recover
+       MOVB @TOER,R1
+       JEQ  NXTFL2            good write
+DEVE04 DEC  @FILCOP           error
+DEVE03 B    @BADOUT           bad output device
+*
+NXTFL2 ANDI R5,>0001          ONLY >FFFE AND >FFFC ARE END
+       JNE  NXTFLI            CONTINUE THIS FILE
+
+NXTFL1 MOV  @FRMWDS,R0
+       JNE  PC0000
+*
+       MOV  @FRMFLP,R0
+       JEQ  PC0001
+*
+PC0000 LI   R1,COPMES
+       BL   @MESOUT
+*
+       MOV  R13,R1
+       LI   R2,10
+PC0002 MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  PC0002
+*
+       BL   @MESOCL
+*
+PC0001 MOV  R13,R13
+       JEQ  PC0003
+       AI   R13,32
+PC0003 CB   *R13,@SPACE
+       JEQ  FLSHED
+       B    @NXTFLI
+*
+FLSHED B    @NEWBUF
+*
+OUT002
+* this is the unique case of continuing to write to the floppy
+*   only this time by records
+       MOV  @>A000+2(R15),R4  fixed or variable?           7/31/88
+       CLR  R2                assume fixed update
+       COC  @CH8000,R4
+       JNE  OUT004            fixed
+       LI   R2,>1600
+OUT004 COC  @CH0200,R4
+       JNE  OUT101
+       ORI  R2,>0800
+       JMP  OUT101
+
+NTOFLP
+* is this the first time through?
+       CI   R5,>FFFC
+       JH   OUT030            yes first time through
+*  fixed or variable?
+       MOVB @TOFL,R2
+       COC  @CH1000,R2
+       JEQ  VARAP             variable
+* fixed, so open in update mode
+       ANDI R2,>F900
+       JMP  OUT101
+
+VARAP  ORI  R2,>0600          append mode
+       JMP  OUT101
+
+* first do a delete on the file
+OUT030 CLR  @FIXED            since first time, zero out record
+       LI   R0,TOPB
+       BL   @PTTONM           load in the path name, etc
+
+*      CB   @NAME02+3,@P2LEN+0
+*      JNE  OUT030A
+*      CB   @NAME02+4,@P2LEN+1
+*      JNE  OUT030A
+*      CB   @NAME02+5,@P2LEN+2
+*      JNE  OUT030A
+*      JMP  OUT030B
+OUT030A
+       MOVB @DELEOP,*R0
+       XOP  @EIGHT,0          @@ recover
+
+OUT030B
+       INC  @FILCOP
+       MOVB @>A000+2(R15),R4  get flags here 7/31/88
+       COC  @CH0100,R4        program file?
+       JNE  OUT031
+       B    @OUT250           copy a program file to wds
+
+* is a data file, so assume fixed display
+OUT031 LI   R2,>0200
+       COC  @CH8000,R4
+       JNE  OUT100            fixed
+       LI   R2,>1200
+* is it internal?
+OUT100 COC  @CH0200,R4
+       JNE  OUT101
+       ORI  R2,>0800          internal type
+
+OUT101 MOVB R2,@TOFL          set flag byte
+*
+       ABS  @TOCON
+       JNE  CF0200            skip open if console output
+*
+       LI   R0,TOPB
+       MOVB @OPENOP,*R0       open
+       MOVB @>A000+3(R15),R3  7/31/88
+       SRL  R3,8              records per sector
+       MPY  @>A000+4(R15),R3     number of sectors allocated 7/31/88
+       MOV  R4,@TORC
+       MOVB @>A000+7(R15),R4  get record length            7/31/88
+       SRL  R4,8
+       MOV  R4,@TOLR
+       MOVB @H00,@TOCV
+       XOP  @EIGHT,0
+       MOVB @TOER,R1          error?
+       JNE  DEVE003            @@ recover
+*
+CF0200 AI   R15,>0100
+       ANDI R15,>1FFF
+       JNE  CF0230
+       INC  R14               @@ go to next sector
+* now continue writing record by record
+CF0230 MOVB @WRITOP,*R0
+* at the top of the save loop we are guarantted to start
+*      on an even sector boundary
+* record number should still be good from the last time
+* also, the flags, etc should be correct
+* need to get the char count and the data buffer pointer
+*    is it fixed or is it variable
+*      if fixed, use record length in RECLN(R13)
+*      if variable, use record length at beginning of record
+*   ALWAYS MANAGE THE BUFFER POINTERS
+       MOV  R6,R6              HOW MANY SECTORS TO COPY?
+       JNE  CF0210            none, so just close the file
+* CLOSE THIS FILE
+*
+NXTCLS ABS  @TOCON
+       JNE  PC0010
+*
+       MOVB @CLOSOP,*R0
+       MOVB @H00,@TOCV
+       XOP  @EIGHT,0          CLOSE THE FILE
+       MOVB @TOER,R1          @@ recover
+       JNE  PC0099            error on close so report it
+PC0010 B    @NXTFL2           FLUSH OUT THE NEXT FILE
+PC0099 B    @DEVE04
+*
+DEVE003 B   @DEVE03            8.21.92 FIX FOR JMP  bwm
+CF0210 MOVB @TOFL,R2          @@ trap for console output
+       ANDI R2,>1000
+       JEQ  CF0211            fixed file
+*   variable length write
+CF0204 MOVB @PAGLST(R14),@>F115   7/31/88 get the 1 byte length in r5
+       MOVB @>A000(R15),R4    7/31/88
+       SRL  R4,8
+       CI   R4,>00FF          go to next sector?
+       JEQ  CF0220            yes
+*
+       ABS  @TOCON
+       JEQ  CF1900            not console output
+       MOV  R4,R1
+       JEQ  CF1803
+*
+* console output routine
+*
+CF1800 INC  R15
+       CLR  R0
+       MOVB @>A000(R15),R0    7/31/88
+       ANDI R0,>7F00
+       CI   R0,>0D00
+       JEQ  CF1801
+       CI   R0,>0A00
+       JEQ  CF1801
+       CI   R0,>2000
+       JL   CF1802
+CF1801 BLWP @EMIT1
+CF1802 DEC  R1
+       JNE  CF1800
+CF1803 BL   @MESOCL
+       INC  R15
+       JMP  CF0204
+*
+CF1900 MOV  R4,@TOCR+1
+       INC  R15               up the pointer by 1
+       BL   @LOADAT           set buffer address in pab
+       MOVB @H00,@TOCV
+       XOP  @EIGHT,0          @@ write variable records
+       MOVB @TOER,R1          @@ recover
+       JNE  DEVE14            write error
+       A    R4,R15
+       JMP  CF0204
+
+CF0220 AI   R15,>00FF
+       ANDI R15,>1F00
+       JNE  CF0221
+       INC  R14
+CF0221 DEC  R6                one less sector to flush
+       JNE  CF0204            continue
+       JMP  NXTCLS
+
+*  copy fixed records
+CF0211 MOV  @TOLR,R4          record length
+       MOV  R4,@TOCR+1        character count
+       MOV  @FIXED,@TORC
+CF0214 LI   R7,256            use r7 as the byte within sec counter
+CF0213 S    R4,R7             use this much
+       JNC  CF0212            borrow
+*
+       ABS  @TOCON
+       JEQ  CF1700
+       MOV  R4,R1
+       JEQ  CF1603
+*
+* console output routine
+*
+CF1600 MOVB @>A000(R15),R0    7/31/88
+       ANDI R0,>7F00
+       CI   R0,>0D00
+       JEQ  CF1601
+       CI   R0,>0A00
+       JEQ  CF1601
+       CI   R0,>2000
+       JL   CF1602
+CF1601 BLWP @EMIT1
+CF1602 INC  R15
+       DEC  R1
+       JNE  CF1600
+CF1603 BL   @MESOCL
+       JMP  CF0213
+*
+CF1700 BL   @LOADAT
+       MOVB @H00,@TOCV
+       XOP  @EIGHT,0
+       MOVB @TOER,R1          @@ recover
+       JNE  DEVE14            write error
+CF0253 A    R4,R15            bump pointers by r4
+       JMP  CF0213
+
+CF0212 AI   R15,>00FF
+       ANDI R15,>1F00
+       JNE  CF0215
+       INC  R14
+CF0215 DEC  R6                one less sector to write out
+       JNE  CF0214
+       MOV  @TORC,@FIXED      save for next time
+       B    @NXTCLS
+       PAGE
+*  now save this file in program format
+OUT250 BL   @PTTONM           put in the file name
+       MOV  R6,R4
+       CLR  @TOCV
+       MOVB @>A000+6(R15),R9  7/31 get the number of bytes used in last sector
+       JEQ  OUT251            all used
+       DEC  R4                number of sectors used @@ need a check for 0?
+       MOVB R9,R4
+OUT251 SWPB R4
+       MOV  R4,@TOTR
+       AI   R15,>0100         point to next 256 byte sector buffer
+       ANDI R15,>1F00
+       JNE  OUT255
+       INC  R14
+OUT255 LI   R0,TOPB
+       MOVB @SAVEOP,*R0
+       B    @CF0258
+*
+DEVE14 B    @DEVE04
+       PAGE
+*
+* routine to figure out which device is being used
+*      pointer to device name length in r3
+*      returns through table after r11
+WHICH  CLR  R0
+       LI   R1,NAMLST
+WHCH00 MOV  R1,R2
+       INCT R2                point at name length
+       CB   *R3,*R2
+       JL   WHCH20            go to check next entry, name in list too long
+       MOVB *R2+,R4           length count
+       SRL  R4,8
+       MOV  R3,R5
+       INC  R5                point to text of name
+WHCH01 CB   *R2+,*R5+
+       JNE  WHCH20            match fail, try next entry
+       DEC  R4
+       JNE  WHCH01
+*
+WHCH10 MOV  R11,R1
+       A    R0,R1
+       MOV  *R1,R1
+       B    *R1
+*
+WHCH20 INCT R0                next routine code
+       MOV  *R1,R1            point to next node
+       JNE  WHCH00            next node is ok
+       JMP  WHCH10            no more nodes
+*
+CLRPAB INC  R0
+       SZCB *R0,*R0+
+       CLR  *R0+
+       CLR  *R0+
+       CLR  *R0+
+       CLR  *R0+
+       CLR  *R0+
+       CLR  *R0+
+       SZCB *R0,*R0
+       AI   R0,-14
+       RT
+*
+LOADAF LI   R2,FROMER
+       JMP  LOADA
+
+LOADAT LI   R2,TOER
+LOADA  MOV  R14,R1
+       SRL  R1,3
+       MOV  R1,*R2+
+       MOV  R14,R1
+       SLA  R1,13
+       A    R15,R1
+       MOV  R1,*R2
+       RT
+********************************************************************************
+*
+* still need to close all open files (max 2)
+*
+BRKSTR LI   R0,FROMPB
+       MOVB @CLOSOP,*R0
+       XOP  @EIGHT,0
+*
+       LI   R0,TOPB
+       MOVB @CLOSOP,*R0
+       XOP  @EIGHT,0
+*
+
+       BL   @RELMEM           release memory
+       MOV  @BRKSAV,R11       get return to OS BREAK routine
+       MOV  R11,@BREAK        restore vector?
+       B    *R11              out of here cleanly we hope
+*
+ERROR  BL   @MESOCL
+       MOV  R2,R1
+       BL   @MESOUT
+CLDONE
+CFMES  BL   @MESOCL
+*
+       MOV  @FILCOP,R8
+       BL   @CISNIL
+       LI   R1,FLCO
+       BL   @MESOUT           @@ NUMBER OF FILES COPIED HERE
+*
+       BL   @MESOCL
+       BL   @RELMEM
+
+
+       ABS  @TIPEXC          12.27.2020
+       JEQ  CFMES1           12.27.2020
+       BL   @MESG            12.27.2020
+       DATA FCNTIP           12.27.2020
+
+CFMES1
+       MOV  @BRKSAV,@BREAK
+       MOV  @COPRET,R11       RETURN to OS
+       RT
+
+*
+MESOCL LI   R1,CRLF           put out CR LF
+MESOUT MOVB *R1+,R9           put out message pointed to by R1
+       JEQ  MES000
+       SRL  R9,8
+MES001 MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R9
+       JNE  MES001
+MES000 RT
+*
+SECZER LI   R0,DUMPAB
+       MOVB @4(R1),@DUMPAB+19 get drive number from caller
+       CLR  @DUMPAB+6
+       MOV  @POINT,@DUMPAB+4
+       MOV  @H0001,@DUMPAB+12
+       XOP  @EIGHT,0          leave error for calling routine
+       MOVB @DUMPAB+2,R0      @@ recover
+       RT
+*
+RELMEM MOV  @PAGES,R1         number to release
+       LI   R0,2              release pages opcode
+       LI   R2,8
+       XOP  @SEVEN,0          do it
+       MOVB @SAV8,@>F114
+       MOVB @SAV6,@>F113
+       RT
+SAV8   BYTE 0
+SAV6   BYTE 0
+*
+PTTONM LI   R9,P2LEN          MOVE THE "TO" FILE NAME IN PAB 2
+       MOVB *R9+,R1           GET LENGTH
+       JEQ  PT0000            ZERO LENGTH
+       LI   R8,TONL
+       MOVB R1,*R8+
+       SRL  R1,8
+
+PT0001 MOVB *R9+,*R8+
+       DEC  R1
+       JNE  PT0001
+       MOV  @TOWDS,R9
+       JNE  PT0005
+       MOV  @TOFLP,R9
+       JEQ  PT0000
+PT0005 MOV  @TOMNFL,R9
+       JEQ  PT0000
+       LI   R1,10             YES, PUT IN FILE NAME
+       MOV  R13,R9
+PT0003 CB   *R9,@SPACE
+       JEQ  PT0004
+       MOVB *R9+,*R8+
+       DEC  R1
+       JNE  PT0003
+PT0004 LI   R8,10             NOW CORRECT PATHNAME LENGTH
+       S    R1,R8
+       SLA  R8,8
+       AB   R8,@TONL
+PT0000 RT
+*
+BFOTCM CI   R15,ENBFLS
+       JNE  BF0000
+       CI   R14,ENBFMS
+BF0000 RT
+
+MESG   MOV  *R11+,R1
+MESG2  MOVB *R1+,R0
+       JEQ  MESGE
+       BLWP @EMIT1
+       JMP  MESG2
+MESGE  RT
+
+
+
+
+       PAGE
+ONE    DATA 1
+THREE  DATA 3
+FIVE   DATA 5
+SEVEN  DATA 7
+EIGHT  DATA 8
+NINE   DATA 9
+POINT  DATA PNTRS-PNTRS       @@ 1-23-89, since address is really >1 0000
+*
+DUMPAB DATA >0A00,>0001,PNTRS
+       DATA >0000,>0000,>0000
+       DATA >0001,>0005
+       TEXT 'DSK!.'
+*
+BRKCOD DATA BRKSTR            start of break operation
+H0001  DATA >0001
+CH8000 DATA >8000
+CH1000 DATA >1000
+CH0200 DATA >0200
+CH6000 DATA >6000
+OPENOP EQU  $-1
+CBH00  EQU  $-1
+CHFE00 DATA >FE00
+CH0800 DATA >0800
+CH0080 DATA >0080
+CH2000 DATA >2000
+CH7500 DATA >7500
+*
+NUKED  DATA 0
+*
+CLOSOP EQU  $
+CBH01  EQU  $
+CH0100 DATA >0100
+D32    DATA 32
+BUMPOF DATA 0
+*
+H00    BYTE >00
+READOP BYTE 02
+WRITOP BYTE 03
+LOADOP BYTE 05                load opcode
+SAVEOP BYTE 06                save opcode
+DELEOP BYTE 07
+BREDOP BYTE >0A               BINARY READ
+BWRTOP BYTE >0B               BINARY WRITE
+CBH1A  BYTE >1A               cntl x (EOF from RS232)
+CBHA0  BYTE >A0
+CBHFF  BYTE >FF
+CBHFE  BYTE >FE
+CBHFC  BYTE >FC
+MAXLEN BYTE 40                MAXIMUM PATHNAME LENGTH
+CBH13  BYTE >13
+CBH14  BYTE >14
+SLASH  TEXT '/'
+FLCO   BYTE 15
+SPACE  EQU  $
+       TEXT ' File(s) copied'
+NOFMSG BYTE 16
+       TEXT 'File not found: '
+BIDN   BYTE 16
+       TEXT 'Bad input device'
+BODN   BYTE 17
+       TEXT 'Bad output device'
+DPT    TEXT '.'
+COPIED BYTE 7
+       TEXT ' COPIED'
+MEMERR BYTE 18
+       TEXT 'Memory usage error'
+SDERR  BYTE 27
+       TEXT 'Can not copy to same device'
+CRLF   BYTE 2,>0D,>0A
+COFP   BYTE 35
+       TEXT 'Insert copy diskette, press any key'
+SRFP   BYTE 37
+       TEXT 'Insert source diskette, press any key'
+COPMES BYTE 8
+       TEXT 'Copied: '
+*
+NAMLST DATA NAME01
+       BYTE 3
+       TEXT 'CON'
+NAME01 DATA NAME02
+       BYTE 5
+       TEXT 'RS232'
+NAME02 DATA NAME03
+       BYTE 3
+       TEXT 'PIO'
+NAME03 DATA NAME04
+       BYTE 3
+       TEXT 'HDS'
+NAME04 DATA NAME05
+       BYTE 3
+       TEXT 'DSK'
+NAME05 DATA NAME0S
+       BYTE 3
+       TEXT 'WDS'
+NAME0S DATA NAME0T
+       BYTE 3
+       TEXT 'SCS'
+NAME0T DATA 0            12.25.2020
+       BYTE 3            12.25.2020
+       TEXT 'TIP'        12.25.2020
+
+
+FCNTIP TEXT '  (Warning: TI file limit exceeded!)'  ;12.27
+       BYTE >0D,>0A,0
+
+*
+       EVEN
+       PAGE
+NAME   EQU  0                 STRucture of names below
+RECLN  EQU  10
+FFLAG  EQU  12
+RCPRAU EQU  13                REcords per AU
+SECUSD EQU  14                includes FDR and all
+STATBT EQU  20                status byte
+*                                 00-file not yet used or file done with
+*                                 FF-entire new file in buffer
+*                                 FE-new file not to competion in buf
+*                                 FD-Continuation of file in buf
+*                                 FC-continuation to end in buf
+MODF   EQU  21                mode flag like in PAB format
+SCINBF EQU  22                # of sectors of this file in buffer
+STSEC  EQU  24                starting sector of data in buffer
+RCCTMS EQU  26
+RCCTLS EQU  28
+*
+       PAGE
+       COPY "\MDOS\CLI\CATMAPS"
+*
+P1LEN  EQU  DIRLEN
+*
+       LIST
+*
+*
+*    now set up the actual copy PABs
+*
+       DATA 0
+*
+FROMPB
+FROMOP BYTE 0          0
+FROMFL BYTE 0          1
+FROMER BYTE 0          2
+FROMBA BYTE 0          3      3 byte from address
+       DATA 0          4
+FROMSO
+FROMRC DATA 0          6      record number
+FROMLR DATA 0          8
+FROMCV BYTE 0          A      cpu=0, vdp<>0
+FROMCR BYTE 0          B      3 byte char count
+FROMTR DATA 0          C      also # of sectors to transfer
+FROMST BYTE 0          E      status byte
+FROMNL BYTE 0          F      pathname length
+FROMPN BSS  42
+       DATA 0
+TOPB
+TOOP   BYTE 0          0
+TOFL   BYTE 0          1
+TOER   BYTE 0          2
+TOBA   BYTE 0          3      3 byte from address
+       DATA 0          4
+TOSO
+TORC   DATA 0          6      record number
+TOLR   DATA 0          8
+TOCV   BYTE 0          A      cpu=0, vdp<>0
+TOCR   BYTE 0          B      3 byte char count
+TOTR   DATA 0          C      # of sectors to transfer
+TOST   BYTE 0          E      status byte
+TONL   BYTE 0          F      pathname length
+TOPN   BSS  42
+P2LEN  BSS  43
+       EVEN
+PAGES  DATA 0                 # OF 8K PAGES AVAILABLE
+BUFSIZ DATA 0                 # of 256 byte blocks we can use for buffering
+SECAVL DATA 0                 # of 256 byte blocks available presently
+COPSLF DATA 0                 SET IF COPY to same floppy
+ENBFMS DATA 0                 end of buffer location msb
+ENBFLS DATA 0                 end of buffer loc least sig
+OUTSTR DATA 0                 pointer to input list
+LENGTH DATA 0                 length of record
+LENGTB EQU  $-1
+FIXEDI DATA 0                 flag when reading from fixed input file
+FIXED  DATA 0                 RECORD # written to already
+TOFLP  DATA 0                 set if copy to floppy
+FRMFLP DATA 0                 set if copy is from dsk
+TOHDS  DATA 0
+FRMHDS DATA 0
+TOWDS  DATA 0                 set if copy to WDS
+FILCOP DATA 0                 number of files copied
+FRMCON DATA 0                 from console flag
+TOCON  DATA 0                 to console flag
+RS232  DATA 0                 RS232 FLAG (from device)
+FRMWDS DATA 0                 flag for wds copy from
+TOMNFL DATA 0                 flag set if copy file to W or F and name not given
+HDRAD1 DATA 0
+HDRAD2 DATA 0
+APNDFL DATA 0                 APPEND FLAG
+LASTBU DATA 0                 last byte used in sector
+DONE   DATA 0
+PAGLST BSS  256
+*
+       END
+*

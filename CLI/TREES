@@ -1,0 +1,416 @@
+*
+* TREE command for MDOS       -pc 11/26/88
+*
+*      tree <dirspec>         lists all dirs <suffix name with `r>
+*      tree <dirspec> /f      lists all dirs and files
+*
+*
+*      setcat
+*      level = 0
+*      clear stats
+*      set initial dirname
+*
+*      a:   getcat            (returns recnum of first subdir)
+*           dirdump                          \
+*           accumulate stats                  \ DIR
+*
+*           save subdir recnum               \
+*           inc level                         \
+*           subdir recnum = first subdir       \ PUSH
+*
+*      b:   read next dirname
+*           if dirname <> null
+*             {
+*               strip backquote options
+*               suffix name + backquote options
+*               goto a
+*             }
+*
+*           dec level                        \
+*           if level = 0 goto c               \
+*           remove last suffix from name       \
+*           restore and +1 subdir recnum        \ POP
+*           goto b
+*
+*      c:   print stats
+*           release cat
+*
+       DEF  TREE
+*
+       REF  SETCAT,GETCAT,RELCAT,FSTDIR,VOLON
+       REF  TRECAT
+       REF  DIRDMP
+       REF  DIRCNT,FILCNT
+       REF  SECUSE,SECUS2
+       REF  WIDEOP,PAUZOP
+       REF  EMIT1
+       REF  BIGNIL
+*
+TREE   MOV  R11,@TREERT+2
+       MOV  R0,R12            save string pointer
+       BL   @SETCAT
+       JNE  MEMERR
+*
+       MOV  R12,R1            get pointer to option buffer
+       LI   R2,DIRLEN
+       MOVB @MAXLEN,*R2       to point to string rather than length byte @@
+       LI   R0,8              parse opcode
+       XOP  @NINE,0
+       JNE  BADDIR            invalid directory name
+       MOV  R0,@OPTION        save pointer to option strings
+       JMP  PRESET
+*
+MEMERR LI   R1,ERRM1
+       JMP  BADSTF
+*
+DEVERR LI   R1,ERRM2
+       JMP  BADSTF
+*
+BADDIR LI   R1,ERRM3
+BADSTF BL   @MESG2
+       B    @ERRORX
+*
+ERRM1  TEXT 'Insufficient memory'
+       BYTE >0D,>0A,0
+ERRM2  TEXT 'Device error'
+       BYTE >0D,>0A,0
+ERRM3  TEXT 'Bad directory name'
+       BYTE >0D,>0A,0
+*
+* preset variables
+*
+PRESET CLR  @CNTF00
+       CLR  @CNTF01
+       CLR  @CNTD00
+       CLR  @CNTD01
+       CLR  @CNTS00
+       CLR  @CNTS01
+*
+       CLR  @TREELV
+       CLR  @SUBREC
+*
+* parse option strings...  /f /w /p
+*
+GETOP  CLR  @FILEOP
+       CLR  @WIDEOP
+       CLR  @PAUZOP
+*
+       MOV  @OPTION,R4
+       CLR  R3
+PCL1   MOVB *R4+,R3
+       JEQ  OPDONE
+       CI   R3,'/'*256
+       JNE  PCL1
+       MOVB *R4+,R3
+       JEQ  OPDONE
+       ANDI R3,>DF00
+       CI   R3,'F'*256
+       JNE  PCJ1
+       SETO @FILEOP
+       JMP  PCL1
+*
+PCJ1   CI   R3,'W'*256
+       JNE  PCJ2
+       SETO @WIDEOP
+       JMP  PCL1
+*
+PCJ2   CI   R3,'P'*256
+       JNE  PCL1
+       SETO @PAUZOP
+       JMP  PCL1
+*===========================================================+
+*                                                           +
+*                                                           +
+*===========================================================+
+OPDONE LI   R0,PAB
+       CLR  @VOLON
+       MOV  @TREELV,R1        starts at 0
+       JEQ  GETC10            so first time through use GETCAT (getc10)
+*
+       BL   @TRECAT           second and beyond use wildcards set on first pass
+       JNE  DEVERR            but enter with TRECAT
+       JMP  GETC20
+*-------------------
+* only show the below info first time through
+*
+GETC10 BL   @GETCAT          (getcats)sets wildcard flags/strings on first pass
+       JNE  DEVERR
+*
+       BL   @MESG
+       DATA US1               "Volume in "
+*
+       LI   R1,PAB+15         show name....
+       MOVB *R1+,R2
+       SRL  R2,8
+       JEQ  NAMX1             zero length pathname (error, really)
+NAMX0  MOVB *R1+,R0
+       CB   R0,@PERIOD
+       JEQ  NAMX1             last char in name has been sent
+       BLWP @EMIT1
+       DEC  R2
+       JNE  NAMX0             more in name
+*
+NAMX1  BL   @MESG
+       DATA US2               "is"
+*
+       LI   R2,VOLNAM         show volume name.....
+VOL1   MOVB *R2+,R0
+       BLWP @EMIT1
+       CI   R2,VOLNAM+10
+       JLT  VOL1
+
+*-------------------
+* accumulate stats
+*
+GETC20 BL   @DIRDMP      dump it
+
+       A    @FILCNT,@CNTF00                  file count
+       JNC  STAT00
+       INC  @CNTF01
+STAT00 A    @DIRCNT,@CNTD00                  directory count
+       JNC  STAT10
+       INC  @CNTD01
+STAT10 A    @SECUSE,@CNTS00                  sectors used count
+       JNC  STAT20
+       INC  @CNTS01
+STAT20 A    @SECUS2,@CNTS01
+*
+* push down a level
+*
+       MOV  @TREELV,R1        save subdir recnum
+       MOV  @SUBREC,@SBDIRS(R1)
+       INCT @TREELV           inc level
+       MOV  @FSTDIR,@SUBREC   subdir recnum = first subdir
+       JEQ  POP000            no subdirs
+
+* IF FLOPPY, MOVE DIR FROM LIST, THEN CATALOG.  WILL THAT WIPE THE DIR LIST??
+
+
+
+
+*
+* read next subdir name from current dir
+*
+READ00 LI   R0,PAB
+       MOV  R0,R1
+       MOV  @H000D,*R0
+       CLR  @8(R1)            use default record length
+       CLR  @10(R1)           cpu transfer, high byte of char count
+       CLR  @12(R1)           char count used is default
+*
+       XOP  @EIGHT,0          open current dir
+       MOVB @PAB+2,R2
+       JNE  DEVER0
+*
+       MOV  @H020D,*R0
+       MOV  @SUBREC,@6(R1)
+       MOVB @H00,@10(R1)      cpu transfer
+*
+       XOP  @EIGHT,0          read dir rec (buf @pntrs...from getcat)
+       MOVB @PAB+2,R2
+       JNE  DEVER0
+*
+       MOV  @H010D,*R0
+       XOP  @EIGHT,0          close current dir
+       MOVB @PAB+2,R2
+       JNE  DEVER0
+*
+       CB   @PNTRS,@H00       length 0?
+       JEQ  POP000            no subdir here
+       CB   @PNTRS+1,@H20     space where name should be?
+       JEQ  POP000            no subdir here
+*
+       LI   R1,PAB+15         Aha!  something like a DIR is here!
+       MOVB *R1,R2            get previous len
+       SRL  R2,8              add it
+       MOV  R2,R3             so we can
+       A    R1,R3             point to last char in name
+       INC  R3                and point to space after current name
+*
+       LI   R4,PNTRS
+       MOVB *R4+,R5           length byte for the string(IF style)
+       SRL  R5,8
+READ20 MOVB *R4+,*R3+         suffix subdir name
+       INC  R2                one more char on name
+       DEC  R5                any more?
+       JNE  READ20            yes
+*
+       INC  R4                now, let's get the type. Skip first byte
+       MOVB *R4+,R5
+       SRL  R5,8
+       MOVB *R4+,R5
+       CI   R5,>0640          dir is a type #6 file...test it
+       JNE  POP000            this record is not a subdir
+*
+       MOVB @PERIOD,*R3+      tack on period and
+       INC  R2                add length for the period
+*
+       CI   R2,40             over 40?
+       JH   DEVER0
+       SLA  R2,8              no, so put the new length
+       MOVB R2,*R1            into the PAB
+*
+       B    @OPDONE           go back and get me some more data!
+*
+DEVER0 B    @DEVERR
+
+*****************************************************
+* pop up a level         SBDIRS is a 20-level "stack"
+*****************************************************
+POP000 DECT @TREELV
+       JEQ  PSTATS
+       MOV  @TREELV,R1
+       MOV  @SBDIRS(R1),@SUBREC
+       INC  @SUBREC
+*
+       LI   R1,PAB+15
+       MOVB *R1,R2
+       SRL  R2,8
+*
+       MOV  R2,R3
+       A    R1,R3             point to last char in current name
+*
+POP100 DEC  R2                go backwards to next period
+       DEC  R3
+       CB   *R3,@PERIOD       find it?
+       JNE  POP100            not yet, keep backing up
+*
+       SLA  R2,8              found it, save length
+       MOVB R2,*R1            write shortened length to pab
+       JMP  READ00            go open the directory
+
+*==========================================================================
+* print stats                 sectors,dirs,files,etc
+*==========================================================================
+*
+PSTATS BL   @MESG
+       DATA TREEM0
+*
+       MOV  @CNTS01,R14
+       MOV  @CNTS00,R15       # sectors in
+       CI   R15,1
+       JNE  PSTA10
+       MOV  R14,R14
+       JNE  PSTA10
+       BL   @BIGNIL
+       DATA TREEM5
+       JMP  PSTA11
+*
+PSTA10 BL   @BIGNIL
+       DATA TREEM1
+*
+PSTA11 MOV  @CNTF01,R14
+       MOV  @CNTF00,R15       # files
+       CI   R15,1
+       JNE  PSTA20
+       MOV  R14,R14
+       JNE  PSTA20
+       BL   @BIGNIL
+       DATA TREEM6
+       JMP  PSTA21
+*
+PSTA20 BL   @BIGNIL
+       DATA TREEM2
+*
+PSTA21 MOV  @CNTD01,R14
+       MOV  @CNTD00,R15       # dirs
+       CI   R15,1
+       JNE  PSTA30
+       MOV  R14,R14
+       JNE  PSTA30
+       BL   @BIGNIL
+       DATA TREEM7
+       JMP  PSTA31
+*
+PSTA30 BL   @BIGNIL
+       DATA TREEM3
+*
+PSTA31 MOV  @SECFR2,R14
+       MOV  @SECFRE,R15       # sectors free
+       CI   R15,1
+       JNE  PSTA40
+       MOV  R14,R14
+       JNE  PSTA40
+       BL   @BIGNIL
+       DATA TREEM8
+       JMP  PSTA41
+*
+PSTA40 BL   @BIGNIL
+       DATA TREEM4
+PSTA41
+*
+* release cat
+*
+ERRORX BL   @RELCAT
+*
+TREERT B    @0
+*
+MESG   MOV  *R11+,R1
+MESG2  MOVB *R1+,R0
+       JEQ  MESGE
+       BLWP @EMIT1
+       JMP  MESG2
+MESGE  RT
+*
+* stats...total files, directories, and sectors used
+*
+CNTF00 DATA 0
+CNTF01 DATA 0
+CNTD00 DATA 0
+CNTD01 DATA 0
+CNTS00 DATA 0
+CNTS01 DATA 0
+*
+TREEM0 BYTE >0D,>0A
+       TEXT 'Tree summary:'
+       BYTE >0D,>0A,0
+TREEM1 TEXT ' sectors in '
+       BYTE 0
+TREEM2 TEXT ' files'
+       BYTE >0D,>0A
+       TEXT 'and '
+       BYTE 0
+TREEM3 TEXT ' directories,'
+       BYTE >0D,>0A,0
+TREEM4 TEXT ' sectors free.'
+       BYTE >0D,>0A,0
+*
+TREEM5 TEXT ' sector in '
+       BYTE 0
+TREEM6 TEXT ' file'
+       BYTE >0D,>0A
+       TEXT 'and '
+       BYTE 0
+TREEM7 TEXT ' directory,'
+       BYTE >0D,>0A,0
+TREEM8 TEXT ' sector free.'
+       BYTE >0D,>0A,0
+*
+US1    BYTE >0D,>0A
+       TEXT 'Volume in '
+       BYTE 0
+US2    TEXT ' is '
+       BYTE 0
+*
+PERIOD BYTE '.'
+MAXLEN BYTE 40
+H00    BYTE >00
+H20    BYTE >20
+*
+H000D  DATA >000D
+H010D  DATA >010D
+H020D  DATA >020D
+*
+EIGHT  DATA 8
+NINE   DATA 9
+FILEOP DATA 0
+OPTION DATA 0
+TREELV DATA 0
+SUBREC DATA 0
+SBDIRS DATA 0,0,0,0,0,0,0,0,0,0
+       DATA 0,0,0,0,0,0,0,0,0,0
+*
+       COPY "\MDOS\CLI\CATMAPS"
+*
+       END
+*

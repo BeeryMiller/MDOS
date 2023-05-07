@@ -1,0 +1,6 @@
+*
+* GenMAKE, (C) COPYRIGHT 1989, J. Paul Charlton
+*
+DEL !DOIT
+$MAKE %1
+!DOIT

@@ -1,0 +1,159 @@
+       REF  FREPTR
+       DEF  STRNOD
+       DEF  NODSTR
+       DEF  FRELST
+*
+* conversion routines
+*      convert string to nodes @ user pointer
+*      convert node pointer to string
+*
+FRELST DATA FREPTR
+*
+*************************************************************************
+*
+*      STRING TO NODES
+*      IN:  R0=PTR TO USER'S POINTER LOCATION
+*           R1=POINTS TO 1ST CHAR IN THE STRING (AFTER THE LENGTH)
+*
+*      OUT: ERROR, NOT ENOUGH NODES EQUAL FLAG RESET R0<>0
+*           OK,                     EQUAL FLAG SET   R0=0
+*
+*
+STRNOD CLR  R3                CLEAR COUNT OF FREE NODES
+       MOV  @FRELST,R2
+STRL1  MOV  *R2,R2
+       JEQ  STRJ1
+       INC  R3
+       JMP  STRL1
+*
+STRJ1  MOV  R0,R2             COUNT NODES USER ALREADY HAS
+STRL2  MOV  *R2,R2
+       JEQ  STRJ2
+       INC  R3
+       JMP  STRL2
+*
+STRJ2  SLA  R3,1              MULTIPLY FREE NODES BY SIX TO GET # OF BYTES
+       MOV  R3,R2
+       SLA  R3,1
+       A    R3,R2             R2= NUMBER OF FREE BYTES
+*
+       MOVB @-1(R1),R6        GET LENGTH OF USER'S STRING
+       JEQ  DELSTR            DELETE THIS STRING!!!!!
+       SRL  R6,8
+*      INC  R6                NUMBER OF BYTES NEEDED, INCLUDING LENGTH & NULL
+       INCT R6                NUMBER OF BYTES NEEDED, INCLUDING LENGTH & NULL
+       C    R6,R2
+       JLE  STRJ3             USER'S STRING WILL FIT INTO AVAILABLE NODES
+*
+       SETO R0                ERROR CODE
+       JMP  STRRET            RETURN TO USER
+*
+STRJ3  MOV  R1,R5
+       DEC  R5
+       MOV  *R0,R2            CHECK TO SEE IF THE USER ALREADY HAS NODES
+       JNE  NEWNOD
+       MOV  R0,R2             THIS IS WHERE THE LINK HAS TO GO
+       JMP  GETFRE            GET THE NODE FROM THE FREE LIST TO USE
+*
+* HERE, R2 HAS POINTER TO NEXT NODE (ALREADY LINKED) TO PUT DATA INTO
+*
+NEWNOD MOV  R2,R3             SETUP CURSOR INTO OUR NODE
+       INCT R3
+       MOV  R2,R4             SETUP POINTER TO END OF NODE
+       AI   R4,8
+*
+STRL3  MOVB *R5+,*R3+
+       DEC  R6                ANY MORE CHARS IN USER'S STRING?
+       JEQ  STRJ6             NOPE
+       C    R3,R4             MORE EMPTY PLACES IN THIS NODE?
+       JL   STRL3             YES, USE THEM UP
+*
+       MOV  *R2,R3            GET THE LINK TO THE NEXT NODE
+       JNE  STRJ5             IF IT'S ZERO, GET A FREE NODE
+*
+*
+GETFRE MOV  @FRELST,R4
+       MOV  *R4,R3            CAN'T BE NIL, WE ALREADY CHECKED
+       MOV  R3,*R2            CONTINUE THE LINK
+       MOV  *R3,*R4           MAKE FREE LIST SHORTER
+       CLR  *R3               THIS NODE IS THE END OF THE LIST
+*
+STRJ5  MOV  R3,R2             SET POINTER TO NEXT NEW NODE
+       JMP  NEWNOD            THEN GO BACK TO USE IT
+*
+DELSTR MOV  *R0,R3
+       JEQ  STRR1
+       CLR  *R0
+       JMP  STRL4
+*
+*******************
+*
+* CHECK TO SEE IF THERE ARE UNUSED NODES AT THE END OF THIS LIST,
+*      IF THERE ARE, RETURN THEM TO THE FREE LIST
+*
+STRJ6  MOV  *R2,R3
+       JEQ  STRR1
+       CLR  *R2               MARK THE END OF A SHORTER LIST
+*
+* R3 IS NODE TO RETURN TO FREE LIST
+*
+STRL4  MOV  *R3,R2            SAVE LINK, IF THERE WAS ONE
+       MOV  @FRELST,R4
+       MOV  *R4,*R3           MAKE THIS NODE NEW HEAD
+       MOV  R3,*R4            GIVE POINTER TO NEW HEAD
+       MOV  R2,R2             WAS THERE A LINK?
+       JEQ  STRR1             NOPE, RETURN
+       MOV  R2,R3
+       JMP  STRL4             DELETE THE NEXT NODE
+*
+STRR1  CLR  R0
+STRRET MOV  R0,R0
+       RT
+*
+*******************************************************************************
+*
+*      CONVERT NODES INTO STRING
+*      IN:  R0 POINTS TO USER'S NODE POINTER
+*           R1 POINTS TO STRING (BYTE AFTER LENGTH BYTE)
+*           LENGTH BYTE MUST HAVE LENGTH OF BUFFER
+*
+*      OUT:  OK     R0=0  EQUAL FLAG SET
+*            ERROR  R1=-1 EQUAL FLAG RESET
+*
+NODSTR MOV  *R0,R2
+       JEQ  NO#STR            ZERO LENGTH STRING
+       CB   @2(R2),@-1(R1)    COMPARE LENGTHS OF STRINGS
+       JHE  BADLEN            STRING TOO LONG FOR THEIR BUFFER
+       MOV  R1,R5             CURSOR TO USER'S STRING
+       DEC  R5
+       MOVB @2(R2),R6         COUNT OF CHARS TO MOVE
+       SRL  R6,8
+*      INC  R6
+       INCT R6
+*
+NXTNOD MOV  R2,R3             CURSOR WITHIN NODE
+       INCT R3
+       MOV  R2,R4             POINTER TO END OF NODE
+       AI   R4,8
+*
+NODL1  MOVB *R3+,*R5+
+       DEC  R6
+       JEQ  NODJ1
+       C    R3,R4
+       JL   NODL1
+       MOV  *R2,R2            THIS LINK NEVER ZERO IF VALID STRING
+       JMP  NXTNOD
+*
+NODJ1  CLR  R0
+       JMP  NODRET
+*
+NO#STR CLR  R0
+       MOVB R0,@-1(R1)
+       MOVB R0,*R1
+       JMP  NODRET
+*
+BADLEN SETO R0
+NODRET MOV  R0,R0
+       RT
+*
+       END

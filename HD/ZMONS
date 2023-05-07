@@ -1,0 +1,52 @@
+*
+DUMPWS BSS  32
+DUMP16 DATA DUMPWS,DUMP00
+DUMPCH DATA DUMPWS,DUMP50
+*
+DUMP00 MOV  @12(R13),R3       caller r6
+       LI   R4,8
+DUMP10 MOV  *R3+,R2
+*
+       MOV  R2,R1
+       SRL  R1,12
+       BL   @SECHEX
+*
+       MOV  R2,R1
+       SRL  R1,8
+       BL   @SECHEX
+*
+       MOV  R2,R1
+       SRL  R1,4
+       BL   @SECHEX
+*
+       MOV  R2,R1
+       BL   @SECHEX
+*
+       LI   R0,'  '
+       BL   @SECBYT
+*
+       DEC  R4
+       JNE  DUMP10
+*
+       LI   R0,>0D0A
+       JMP  DUMP60
+*
+DUMP50 MOV  @12(R13),R0
+DUMP60 BL   @SECBYT
+       SWPB R0
+       BL   @SECBYT
+       RTWP
+*
+SECHEX ANDI R1,>000F
+       MOVB @MONCHR(R1),R0
+SECBYT LI   R12,>1380
+       SBO  16
+SECBY2 TB   22
+       JNE  SECBY2
+       LDCR R0,8
+       SBZ  16
+       RT
+*
+MONCHR TEXT '0123456789ABCDEF'
+*
+       DEF  MONCHR

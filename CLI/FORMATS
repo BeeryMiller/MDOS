@@ -1,0 +1,654 @@
+; CLI.FORMATS
+;
+;7.17.2022  Inhibit format based on remap devices (1-4, 10-13)
+;
+       DEF  FORMAT
+       REF  CISNIL,CISSPC
+       REF  EMIT1,GETSTR
+       REF  DRVMAP       ;L8.SECT2-P, for remap unit test 7.17.2022
+
+       COPY "HEAD\PAGENUMS"  ;7.17.2022, for dsr page references
+
+*      DEF  INTERS              SINGLE DENSITY INTERLACE SETTING
+*      DEF  INTERD              DOUBLE DENSITY INTERLACE SETTING
+*       1.4.94 ADDED MODS TO TURN OFF FLOPPY VERIFICAITON AFTER DRIVE FORMAT
+UFLOP   DATA 0          /U FLAG FOR NO FLOPPY VERIFICATION
+*
+*
+* FORMAT a disk:
+*      get drive name
+*      parse options
+*      kill winchester access for now
+*      check drive-prompt if disk is not blank
+*
+*      get volume label if requested
+*      format disk
+*      write sector 0
+*      read sectors & allocate them in bitmap if error on read
+*      write sector 0, sector 1
+*
+FORMAT MOV  R11,@FRMRET
+       MOV  R0,R11            save string pointer
+*
+       MOV  R11,R1            get pointer to option buffer
+       LI   R2,PABLEN
+       CLR  R3
+       MOVB @MAXLEN,*R2       to point to string rather than length byte @@
+       LI   R0,8              parse opcode
+       XOP  @NINE,0
+       JEQ  GETOPT
+       JMP  BADDIR
+*
+ERRM1  TEXT 'Insufficient memory'
+       BYTE >0D,>0A,0
+ERRM2  TEXT 'Device error'
+       BYTE >0D,>0A,0
+ERRM3  TEXT 'Bad device name'
+       BYTE >0D,>0A,0
+ERRM4  TEXT 'Media or device error'          CP MOD 94/01/02
+       BYTE >0D,>0A,0
+ERRM5  TEXT 'Invalid floppy device'      TT 7.17.22
+       BYTE 13,10,0
+       DATA 0                 fix odd address :( 7.17.22
+
+*
+MEMERR LI   R1,ERRM1          not enough memory
+       JMP  ERR1Z
+*
+NFPERR LI R1,ERRM5       ;not floppy 7.17.2022
+       JMP ERR1Z
+
+DEVERR LI   R1,ERRM2          device error
+       JMP  ERR1Z
+*
+BADDIR LI   R1,ERRM3          not a diskette device
+*
+ERR1Z  BL   @MESG
+       B    @ERRORX
+*
+* parse option strings...  /w  /p
+*
+GETOPT CLR  @VOLOP
+       CLR  @SIDOP
+       CLR  @BIGOP            80 track flag
+       CLR  @SECOP            user specified sector count
+       CLR  @UFLOP            /N for No verify on floppy
+*                             0 = verify  >ffff = no verify
+       MOV  @NINE,@SECPTK
+*
+       MOV  R0,R4
+       CLR  R3
+PCL1   MOVB *R4+,R3
+       JEQ  GETNAM
+PCL1A  CI   R3,'/'*256
+       JNE  PCL1
+*
+       MOVB *R4+,R3
+       JEQ  GETNAM
+
+**** added 1.8.94
+       CI   R3,'N'*256
+       JEQ  DOUFLOP
+       CI   R3,'n'*256
+       JEQ  DOUFLOP
+       CI   R3,'V'*256
+       JEQ  DOVOL
+       CI   R3,'v'*256
+       JNE  PCJ1
+DOVOL  SETO @VOLOP
+       JMP  PCL1
+DOUFLOP SETO @UFLOP
+       JMP  PCL1
+
+*
+PCJ1   CI   R3,'3'*256
+       JEQ  PCJ05
+       CI   R3,'1'*256
+       JNE  PCJ2
+       MOVB *R4,R3
+       JEQ  ONESID
+       CI   R3,'6'*256
+       JNE  PCJ10
+       MOV  @SIXTEN,@SECPTK
+       JMP  PCL1
+*
+PCJ05  MOVB *R4,R3
+       CI   R3,'6'*256
+       JEQ  DO36
+PCJ10  CI   R3,'8'*256
+       JEQ  DO18
+ONESID SETO @SIDOP
+       JMP  PCL1
+DO18   MOV  @EIGHTE,@SECPTK
+       JMP  PCL1
+DO36   MOV  @THIRT6,@SECPTK
+       JMP  PCL1
+*
+PCJ2   CI   R3,'8'*256
+       JNE  PCJ3
+       SETO @BIGOP
+       JMP  PCL1
+*
+PCJ3   CI   R3,'K'*256
+       JEQ  DOSECS
+*
+       CI   R3,'k'*256
+       JNE  PCL1
+*
+DOSECS CLR  R6                accumulator for Kbytes in format
+PCJ3A  MOVB *R4+,R3
+       JEQ  PCJ3D             invalid digit
+       CI   R3,'0'*256
+       JL   PCJ3D             invalid digit
+       CI   R3,'9'*256
+       JH   PCJ3D             invalid digit
+*
+       SRL  R3,8
+       AI   R3,-'0'
+       MOV  R6,R5
+       MPY  @D10,R5
+       A    R3,R6
+       CLR  R3
+
+*      CI   R6,800
+       CI   R6,801            09/26/92 J.G.SCHROEDER
+
+       JHE  PCL1A             invalid Kbytes count from user
+       JMP  PCJ3A             get next char
+*
+PCJ3D  CI   R6,1
+       JL   PCL1A             invalid count --- too small
+       SLA  R6,2              convert to a sector count
+       MOV  R6,@SECOP         user specified sector count is ok
+*
+       CI   R6,1600
+       JLE  PCJ3E
+       SETO @BIGOP
+PCJ3E  JMP  PCL1A
+*
+DEVER9 JMP  DEVERR
+*
+* now to see if the user defaulted a volume name
+*
+GETNAM LI   R0,PABLEN
+       MOVB *R0+,R1
+       SRL  R1,8
+       JEQ  DEVERRR         MODIFIED 1.8.94 FOR JMP OUT OF RANGE
+       CI   R1,4
+       JLE  DEVERRR         MODIFIED 1.8.94 FOR JMP OUT OF RANGE
+*
+       LI   R2,DSKNAM
+       CB   *R0+,*R2+         D
+       JNE  DEVRRE
+       CB   *R0+,*R2+         S
+       JNE  DEVRRE
+       CB   *R0+,*R2+         K
+       JNE  DEVRRE
+       MOVB *R0,R3       ;7.17.2022, save for unit test
+       CB   *R0+,*R2+         .
+       JEQ  DEVRRE            can't format by volume name
+
+;7.17.2022  - no period detected, let's check unit# against remap table
+;             we can use R3,R4
+       CB   R3,@ONENINE       first test unit is within 1-9 range
+       JL   DEVRRE
+       CB   R3,@ONENINE+1
+       JH   DEVRRE
+
+       MOVB @>F113,@PAGEDSR2+1  ;assumes this code is before >4000.
+       MOVB @PAGEDSR2,@>F113    ;verify later.
+       LI   R4,DRVMAP         ;See L8.SECT2-P , CLI.NEWCMDS
+       AI   R4,>2000     ;could we do this as MOVB @>2000(R4),R3 below?
+       SRL  R3,8              unit#
+       AI   R3,->0030         mask ascii [R3 = >0001 to >0009]
+       A    R3,R4             get remap offset (offset 0 not used, ok)
+       MOVB *R4,R3            get current remap device
+
+       MOVB @PAGEDSR2+1,@>F113  ;restore pagemap before continuing
+
+       SRL  R3,8              8 bit
+       CI   R3,4              assume remap 1-26. Is it Floppy 1-4?
+       JLE  OVER              yes, continue
+       CI   R3,10             is it <10? (HFDC #1)
+       JL   REMAPERR          error
+       CI   R3,13             is it >13  (HFDC #4)
+       JH   REMAPERR          error
+       JMP  OVER              Good to go. Continue
+
+PAGEDSR2    BYTE P_DSR2  ;drvmap resides in this page
+            BYTE 0       ;to store current page
+ONENINE     TEXT '19'
+
+REMAPERR    B  @NFPERR   ;not a floppy spinny device
+
+; um, why two jump helpers?
+DEVERRR B    @DEVERR        MODIFIED 1.8.94 FOR JMP OUT OF RANGE
+
+DEVRRE B    @DEVERR
+*
+OVER   LI   R3,PABLEN
+       A    R1,R3             r3 points to last char in name
+       CB   *R3,@PERIOD
+       JEQ  FRMNAM
+*
+       MOV  R3,R4
+CNAM00 DEC  R3
+       C    R3,R2
+       JLE  DEVER9            no periods in name
+       CB   *R3,@PERIOD       period?
+       JNE  CNAM00
+       LI   R5,PABNAM
+       S    R3,R5
+       NEG  R5
+       INC  R5
+       SLA  R5,8
+       MOVB R5,@PABLEN
+*
+       INC  R3                r3 points to volume name
+       LI   R5,VOLNAM
+CNAM01 CI   R5,VOLNAM+10
+       JHE  DEVER9            new name too long
+       MOVB *R3+,*R5+
+       C    R3,R4
+       JLE  CNAM01
+*
+CNAM02 CI   R5,VOLNAM+10
+       JHE  WAIT00
+       MOVB @H20,*R5+
+       JMP  CNAM02
+*
+FRMNAM LI   R1,VOLNAM
+FRMN00 MOVB @H20,*R1+
+       CI   R1,VOLNAM+10
+       JL   FRMN00
+*
+       MOV  @VOLOP,R1         did they want to specify it?
+       JEQ  WAIT00
+*
+       LI   R1,US1
+       BL   @MESG
+       LI   R1,VOLNAM
+       LI   R2,10
+       BL   @GETSTR
+*
+WAIT00 LI   R1,MES1
+       BL   @MESG
+       LI   R1,PABLEN
+       MOVB *R1+,R2
+       JEQ  WAIT02
+       SRL  R2,8
+       DEC  R2
+WAIT01 MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JGT  WAIT01
+       LI   R1,US2
+       BL   @MESG
+*
+WAIT02 LI   R0,4
+       XOP  @FIVE,0
+       JNE  WAIT02            no new key yet
+       ANDI R1,>FF00
+       CI   R1,>0D00
+       JNE  WAIT02            it's not ENTER key
+*
+
+WACK   MOVB @REDSEC,@PAB
+       LI   R0,PAB
+       CLR  @PAB+2
+       MOV  @SECADR,@PAB+4
+       CLR  @PAB+10
+       CLR  @PAB+6
+       MOV  @ONE,@PAB+12      count of sectors to read
+       XOP  @EIGHT,0          read sector zero
+       MOVB @D40,@PAB+3       tracks/side
+       MOV  @BIGOP,R1
+       JEQ  WACK00
+       MOVB @D80,@PAB+3
+*
+WACK00 MOVB @H04,@PAB+4       skew
+       MOVB @H07,@PAB+5       HIGH   density interlace
+       MOVB @H03,@PAB+6       density
+       C    @SECPTK,@THIRT6
+       JHE  WACK01
+       MOVB @H04,@PAB+4       skew
+       MOVB @H04,@PAB+5       double density interlace
+       MOVB @H02,@PAB+6       density
+       C    @SECPTK,@SIXTEN
+       JHE  WACK01
+
+       MOVB @H02,@PAB+4
+*      MOVB @INTERS,@PAB+5
+       MOVB @H02,@PAB+5       single density interlace
+       MOVB @H01,@PAB+6       density
+WACK01 MOVB @H02,@PAB+7
+       MOV  @SIDOP,R1
+       JEQ  WACK02
+       MOVB @H01,@PAB+7
+*
+WACK02 LI   R1,MES2
+       BL   @MESG
+*
+       MOVB @FRMDSK,@PAB
+
+       MOVB @PAB+7,@SIDESM    QUICK HAX FIX FOR MDOS FORMATTING ROUTINE
+
+       LI   R0,PAB
+       XOP  @EIGHT,0
+       MOVB @PAB+2,R1
+       JEQ  WACK03
+       B    @ERRORM            @@            modified cp 94/01/02
+*
+WACK03 LI   R1,SECTOR
+       LI   R2,256
+SECZ00 CLR  *R1+
+       DECT R2
+       JNE  SECZ00
+*
+* bytes 0-9
+*
+       LI   R1,SECTOR
+       LI   R2,VOLNAM
+SECZ01 MOVB *R2+,*R1+
+       CI   R2,VOLNAM+10
+       JL   SECZ01
+*
+       MOV  @SECOP,@SECTOR+10 use the lusers specified count
+       JNE  SECZ02            if it was set
+*
+       MOV  @PAB+8,@SECTOR+10
+       C    @SECPTK,@SIXTEN
+       JNE  SECZ02
+       C    @SECTOR+10,@D720
+       JNE  FIX000
+       MOV  @D640,@SECTOR+10
+       JMP  SECZ02
+*
+FIX000 C    @SECTOR+10,@D1440
+       JNE  FIX001
+       MOV  @D1280,@SECTOR+10
+       JMP  SECZ02
+D640   DATA 640
+D720   DATA 720
+D1280  DATA 1280
+D1440  DATA 1440
+D2560  DATA 2560
+*
+FIX001 MOV  @D2560,@SECTOR+10
+*
+SECZ02 MOVB @SECPTK+1,@SECTOR+12
+       MOVB @DSKNAM,@SECTOR+13
+       MOVB @DSKNAM+1,@SECTOR+14
+       MOVB @DSKNAM+2,@SECTOR+15
+       MOVB @H20,@SECTOR+16
+       MOVB @PAB+3,@SECTOR+17
+
+       MOVB @SIDESM,@SECTOR+18               FIX FOR BUG IN HFDC FORMATTER
+
+*      MOVB @PAB+11,@SECTOR+18                sides
+
+       MOVB @PAB+6,@SECTOR+19
+*
+* now to set bitmap
+*
+       MOVB @H03,@SECTOR+>38
+       MOV  @SECTOR+10,R1
+       CI   R1,1600
+       JLE  BIT000
+       SRL  R1,1
+       MOVB @H01,@SECTOR+>38
+       CI   R1,1600
+       JLE  BIT000
+       SRL  R1,1
+*
+BIT000 LI   R0,1600
+       S    R1,R0
+       MOV  R0,R1
+*
+       SETO R2                bits to turn on
+       SRL  R1,3              8 bits per byte
+       ANDI R0,>0007          how many stray bits?
+       JEQ  BIT001            none
+       INC  R1                one more partial byte
+*
+*      LI   R2,>0100
+*      SLA  R2,R0
+*      DEC  R2
+*
+       LI   R2,>FF00          7/22/90
+       SRA  R2,R0
+       SWPB R2
+*
+BIT001 LI   R3,SECTOR+256
+       S    R1,R3             point to correct byte
+*
+BIT002 CI   R3,SECTOR+256     7/22/90
+       JHE  BIT003            -PUT COMPARE AT TOP OF LOOP
+*
+       MOVB R2,*R3+
+       SETO R2
+       JMP  BIT002
+*
+BIT003 MOVB @WRTSEC,@PAB
+       LI   R0,PAB
+       CLR  @PAB+2
+       MOV  @SECADR,@PAB+4
+       CLR  @PAB+10
+       CLR  @PAB+6
+       MOV  @ONE,@PAB+12
+*
+       XOP  @EIGHT,0          write sector zero
+       MOVB @PAB+2,R1
+       JNE  EXR               @@
+*
+       LI   R1,SECTOR
+       MOV  R1,@PAB+4         7/22/90
+*
+WIPE00 CLR  *R1+
+       CI   R1,SECTOR+256
+       JL   WIPE00
+*
+       LI   R0,PAB
+       MOV  @ONE,@PAB+6
+       MOV  @ONE,@PAB+12
+       XOP  @EIGHT,0          write sector one
+       MOVB @PAB+2,R1
+       JNE  EXR               @@
+*
+       LI   R1,MES3
+       BL   @MESG             format complete
+*
+* verify goes here...read sector zero, read all others & fix bitmap
+* double numbad for 1600+
+*
+       MOV @UFLOP,R0        added 1.8.94 for no floppy verification
+       JEQ UFLOP1
+       B   @MORE02
+UFLOP1
+       LI   R1,MES3A        ADDED 1.8.94
+       BL   @MESG
+       MOVB @REDSEC,@PAB
+       LI   R0,PAB
+       CLR  @PAB+2
+       MOV  @SECADR,@PAB+4
+       CLR  @PAB+10
+       CLR  @PAB+6
+       MOV  @ONE,@PAB+12      count of sectors to read
+*
+       XOP  @EIGHT,0          read sector zero
+       MOVB @PAB+2,R1
+       JEQ  EXR1
+EXR    B    @ERRORM            @@            cp mod 94/01/02
+*
+EXR1   CLR  @NUMBAD
+       CLR  @PAB+6            start sector number
+       MOV  @SECTOR+10,@PAB+12      number of sectors on disk is count
+*
+VERX02 CLR  @PAB+2
+       MOVB @H01,@PAB+3       undefined address to verify into
+       CLR  @PAB+4
+       CLR  @PAB+10
+*
+       LI   R0,PAB
+       XOP  @EIGHT,0          read all sectors
+       MOVB @PAB+2,R1
+       JEQ  GOODER            @@
+*
+       INC  @NUMBAD           bad sector, handle it
+       MOV  @SECTOR+10,R0
+       MOV  @PAB+6,R1         sector number of bad sector
+       CI   R0,1600
+       JLE  VERX00
+       INC  @NUMBAD
+       SRL  R1,1              two sectors/bit
+       CI   R0,3200
+       JLE  VERX00
+       INCT @NUMBAD
+       SRL  R1,1
+*
+VERX00 MOV  R1,R0
+       LI   R2,>0100          bit to shift for mask
+       ANDI R0,>0007          get bit number to set
+       JEQ  VERX01
+       SLA  R2,0
+VERX01 SRL  R1,3
+       SOCB R2,@SECTOR+>38(R1)               mark it bad
+       INC  @PAB+6            point to next sector to read
+       C    @PAB+6,@SECTOR+10
+       JL   VERX02            more sectors to check
+*
+GOODER MOV  @NUMBAD,R0
+       JEQ  GOOD00
+*
+       LI   R0,PAB
+       MOVB @WRTSEC,*R0
+       CLR  @PAB+2
+       MOV  @SECADR,@PAB+4
+       CLR  @PAB+10
+       CLR  @PAB+6
+       MOV  @ONE,@PAB+12
+*
+       XOP  @EIGHT,0          write sector zero
+       MOVB @PAB+2,R1
+       JNE  ERRORM            @@             cp mod 94/01/02
+*
+GOOD00 MOV  @NUMBAD,R8
+       BL   @CISNIL
+       LI   R1,MES4
+       BL   @MESG
+*
+       MOV  @SECTOR+10,R8
+       DECT R8
+       CI   R8,3200-2
+       JLE  NOTHD
+       DECT R8
+NOTHD  S    @NUMBAD,R8
+       BL   @CISNIL
+       LI   R1,MES5
+       BL   @MESG
+
+MORE02 LI   R1,MES5A    ADDED 1.8.94
+       BL   @MESG       ADDED 1.8.94
+*
+MORE00 LI   R0,4
+       XOP  @FIVE,0
+       JNE  MORE00
+*
+       ANDI R1,>DF00
+       CI   R1,>0D00
+       JEQ  MORE01
+       CI   R1,'Y'*256
+       JEQ  MORE01
+       CI   R1,'N'*256
+       JNE  MORE00
+*
+MORE01 MOV  R1,R2
+       MOV  R1,R0
+       BLWP @EMIT1
+       LI   R1,CRLF
+       BL   @MESG
+       CI   R2,'N'*256
+       JNE  LONGFR
+       MOV  @FRMRET,R11
+       RT
+*
+ERRORM LI   R1,ERRM4          CP MOD 94/01/02
+       BL   @MESG
+ERRORX LI   R1,CRLF
+       MOV  @FRMRET,R11
+       B    @MESG
+*
+LONGFR B    @FRMNAM
+*
+MESG   MOVB *R1+,R0
+       JEQ  MESGR
+       BLWP @EMIT1
+       JMP  MESG
+MESGR  RT
+*
+US1    TEXT 'Volume label?'
+       BYTE >0D,>0A
+       TEXT '(10 characters, "Enter" for none)'
+US2    BYTE >0D,>0A,0
+MES1   TEXT 'Press "Enter" to begin formatting '
+       BYTE 0
+MES2   TEXT 'Formatting...'
+       BYTE 0
+MES3   TEXT 'Format complete'
+       BYTE >0D,>0A,0
+MES3A  TEXT 'Verifying...'
+       BYTE 0
+MES4   TEXT 'bad sectors,'
+       BYTE >0D,>0A,0
+MES5   TEXT 'sectors available'
+       BYTE >0D,>0A,0
+MES5A  TEXT 'Format another diskette (Y/N)? '
+       BYTE 0
+CRLF   BYTE >0D,>0A,0
+       EVEN
+*
+SIDESM BYTE 0               QUICK HACK FIX FOR HFDC FORMAT RETURN VARIABLE
+*
+PERIOD BYTE '.'
+H20    BYTE ' '
+MAXLEN BYTE 40
+DSKNAM TEXT 'DSK.'
+*
+REDSEC BYTE >0A
+WRTSEC BYTE >0B
+FRMDSK BYTE >0E
+D40    BYTE 40
+D80    BYTE 80
+H01    BYTE 1
+H02    BYTE 2
+H03    BYTE 3
+H04    BYTE 4
+H07    BYTE 7
+NUMBAD DATA 0
+SECADR DATA SECTOR
+FRMRET DATA 0
+ONE    DATA 1
+FIVE   DATA 5
+EIGHT  DATA 8
+NINE   DATA 9
+D10    DATA 10
+SIXTEN DATA 16
+EIGHTE DATA 18
+THIRT6 DATA 36
+VOLOP  DATA 0
+SIDOP  DATA 0
+SECPTK DATA 0
+BIGOP  DATA 0
+SECOP  DATA 0                 user specified sector count==0 if none specified
+*
+VOLNAM DATA 0,0,0,0,0,0
+SECTOR EQU  >7F00             sigh buffer
+PAB    DATA >0000,>0000,SECTOR,>0000
+       DATA >0000,>0000,>0001
+       BYTE 0
+PABLEN BYTE 0
+PABNAM TEXT '0123456789 123456789 123456789 123456789'
+*
+       END
+*
+

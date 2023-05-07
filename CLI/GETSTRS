@@ -1,0 +1,509 @@
+       UNL
+* GETSTRS
+*      05.01.01 TAT - Added code to change cursor when using INSert mode
+*
+       REF  CURCMD,LSTCMD,CMDFRE,CMDSTK
+       REF  FRELST,STRNOD,NODSTR,BREAK
+       REF  PAGING
+*
+       DEF  ZFLAG
+       DEF  GETSTR,STKFLG
+       REF  EMIT1,EMITF
+*
+FIRST  EQU  1
+LAST   EQU  2
+CURREN EQU  3
+HIDDEN EQU  4
+SAVE   EQU  5
+*
+*
+*     R0---CURRENT CHARACTER
+*     R1---POINTER TO BUFFER START
+*     R2---MAXLEN (MUST BE >= 1 )
+*     R3---MAX ADDRESS POINTER
+*     R4---ADDRESS POINTER
+*
+GETSTR MOV  R2,R2
+       JNE  GETJ1
+       RT                SHOULD REPORT AN ERROR!
+*
+GETJ1  MOV  @LSTCMD,@CURCMD   init stack index
+       INC  @CURCMD
+*
+       CLR  @IMODE
+       A    FIRST,R2
+GETSET MOV  FIRST,CURREN
+       MOV  FIRST,HIDDEN
+*
+LOOPY  MOVB *CURREN,@CURCHR
+       JEQ  LOOPY1
+       C    CURREN,HIDDEN
+       JL   LOOPY2
+LOOPY1 MOVB @H20,@CURCHR
+*
+LOOPY2 CLR  R0
+       BLWP @KSCAN
+LOOPY3 CI   R0,>FF00
+       JEQ  LOOPY2
+*
+       CI   R0,>2000
+       JLT  GETCTL
+       CI   R0,>7E00
+       JGT  GETCTL
+*
+* TYPE OUT THE CURRENT CHARACTER
+*
+       MOVB R0,@JUNK00
+       MOV  @IMODE,@IMODE
+       JEQ  TYPE
+       B    @GETINS
+*
+TYPE   MOVB @JUNK00,R0
+       MOVB R0,*CURREN+
+       BLWP @EMIT1
+*
+ENDCHK C    CURREN,HIDDEN
+       JLE  TYPE1
+       MOV  CURREN,HIDDEN
+*
+TYPE1  C    CURREN,LAST
+       JL   LOOPY
+       DEC  CURREN
+       LI   R0,>0800
+GETSE1 BLWP @EMIT1
+       JMP  LOOPY
+*
+GETCTL CI   R0,>8900          (FS)
+       JEQ  GETFS
+       CI   R0,>8800          (BS)
+       JEQ  GETBS
+       CI   R0,>8700          (ERASE)
+       JEQ  ERAS1
+       CI   R0,>8300          (DELETE)
+       JEQ  GETDEL
+*      CI   R0,>8400          (INSERT)
+*      JEQ  TOGINS
+       CI   R0,>8A00          (next saved line)
+       JEQ  NXTCMD
+       CI   R0,>8B00          (last saved line)
+       JEQ  PRVCMD
+       CI   R0,>0900          (SHOW LINE / CTRL-I)
+       JEQ  SHOWJ0
+       CI   R0,>8C00          (page up)
+       JEQ  PAGEUP
+       CI   R0,>1A00
+       JEQ  DOCTLZ            control-Z
+       CI   R0,>0C00          home           9.12.2009
+       JEQ  GETHME
+       CI   R0,>8400  (insert)
+       JEQ  TOGINS
+       CI   R0,>0D00          (ENTER)
+       JNE  LOOPY
+       B    @GETRET
+DOCTLZ B    @GETCTZ
+SHOWJ0 B    @SHOW
+PAGEUP BLWP @PAGING
+       JMP  LOOPY3            return termination keycode
+*
+NXTCMD MOV  @STKFLG,R0
+       JEQ  LOOPY
+       BLWP @NEXT1
+       JMP  DISPLA
+*
+PRVCMD MOV  @STKFLG,R0
+       JEQ  LOOPY
+       BLWP @LAST1
+*
+DISPLA CLR  @IMODE            10/10/89...for Lou (idiosyncrasy)
+       MOV  FIRST,CURREN
+       MOVB @-1(FIRST),HIDDEN
+       SRL  HIDDEN,8
+       A    FIRST,HIDDEN
+DISP00 C    HIDDEN,LAST
+       JL   OOR
+       B    @SHOW
+*      JHE  SHOW         JUMP OUT OF RANGE GRRRR
+OOR    MOVB @H20,*HIDDEN+
+       JMP  DISP00
+*
+************************************************************
+*
+GETFS  MOVB *CURREN,R0
+       CI   R0,>2000
+       JHE  GETFS1
+*
+       LI   R0,>2000
+GETFS1 INC  CURREN
+       BLWP @EMIT1
+       JMP  ENDCHK
+*
+************************************************************
+*
+GETHME C    CURREN,FIRST
+       JEQ  LOOPY
+       DEC  CURREN
+       LI   R0,>0800
+       BLWP @EMIT1
+       JMP  GETHME
+
+GETBS  C    CURREN,FIRST
+       JNE  GETBS1
+       B    @LOOPY
+GETBS1 DEC  CURREN
+       LI   R0,>0800
+       JMP  GETSE1
+*
+************************************************************
+*
+ERAS1  LI   R0,>0800
+ERAS1A C    CURREN,FIRST
+       JEQ  ERAS2
+       BLWP @EMIT1
+       DEC  CURREN
+       JMP  ERAS1A
+*
+ERAS2  LI   R0,' '*256
+*
+ERASL1 BLWP @EMIT1
+       MOVB R0,*CURREN+
+       C    CURREN,HIDDEN
+       JLE  ERASL1
+*
+       LI   R0,>0800
+ERASL2 BLWP @EMIT1
+       DEC  CURREN
+       C    CURREN,FIRST
+       JH   ERASL2
+       B    @GETSET
+*
+************************************************************
+*
+GETDEL C    CURREN,HIDDEN
+       JL   GETDL0
+       B    @LOOPY
+*
+GETDL0 MOV  CURREN,SAVE
+*
+GETDL1 INC  CURREN
+       C    CURREN,HIDDEN
+       JHE  GETDJ1
+*
+       MOVB *CURREN,@-1(CURREN)
+       MOVB *CURREN,R0
+       BLWP @EMIT1
+       JMP  GETDL1
+*
+GETDJ1 C    CURREN,HIDDEN
+       JH   GETDJ2
+*
+       MOVB *CURREN,@-1(CURREN)
+       LI   R0,' '*256
+       BLWP @EMIT1
+       INC  CURREN
+       JMP  GETDJ1
+*
+GETDJ2 BLWP @EMIT1
+*
+       LI   R0,>0800
+GETDL2 BLWP @EMIT1
+       DEC  CURREN
+       C    CURREN,SAVE
+       JH   GETDL2
+*
+       DEC  HIDDEN
+       B    @LOOPY
+*
+************************************************************
+*
+IMODE  DATA 0
+TOGINS INV  @IMODE
+       B    @LOOPY
+*
+H20    EQU  $+2
+GETINS LI   R0,>2000
+       BLWP @EMIT1
+       MOV  CURREN,SAVE
+*
+GETIL1 C    CURREN,HIDDEN
+       JHE  GETIJ1
+       MOVB *CURREN,R0
+       BLWP @EMIT1
+       INC  CURREN
+       JMP  GETIL1
+*
+GETIJ1 LI   R0,>0800
+       BLWP @EMIT1
+*
+       C    CURREN,SAVE
+       JEQ  GETIJ2
+       DEC  CURREN
+       JMP  GETIJ1
+*
+GETIJ2 MOV  LAST,CURREN
+*
+GETIL2 MOVB @-1(CURREN),*CURREN
+       C    CURREN,SAVE
+       JLE  GETIJ3
+       DEC  CURREN
+       JMP  GETIL2
+*
+GETIJ3 MOVB @H20,*CURREN
+       C    HIDDEN,LAST
+       JHE  GETIJ4
+       INC  HIDDEN
+GETIJ4 B    @TYPE
+*
+************************************************************
+*
+SHOW   MOV  LAST,HIDDEN
+*
+SHOWL1 C    HIDDEN,CURREN
+       JLE  SHOWJ1
+*
+       CB   *HIDDEN,@H20
+       JNE  SHOWJ1
+       DEC  HIDDEN
+       JMP  SHOWL1
+*
+SHOWJ1 C    HIDDEN,FIRST
+       JL   SHOWN             fix 2/21/88 was JLE
+*
+       INC  HIDDEN
+*
+SHOWL2 C    CURREN,HIDDEN
+       JHE  SHOWJ2
+*
+       MOVB *CURREN+,R0
+       BLWP @EMIT1
+       JMP  SHOWL2
+*
+SHOWJ2 C    CURREN,LAST
+       JLE  SHOWN
+*
+       DEC  CURREN
+       LI   R0,>0800
+       BLWP @EMIT1
+*
+SHOWN  B    @LOOPY
+*
+************************************************************
+*
+GETCTZ MOV  @ZFLAG,R0
+       JNE  GETCT1
+       B    @LOOPY
+GETCT1 MOVB @CTLZ,*R1         make it the 1st buffer character
+       MOVB *R1,@FIXCHR       just in case string was zero length
+       JMP  GETCT2
+*
+GETRET MOVB @H20,@FIXCHR      marker for end of string
+GETCT2 MOV  HIDDEN,R0
+GETR2  C    HIDDEN,LAST
+       JH   DONE
+*
+       MOVB @H20,*HIDDEN+
+       JMP  GETR2
+*
+DONE   MOV  R0,HIDDEN         restore the pointer
+       MOVB @H00,*R0
+       MOV  R0,R3
+*
+       S    R1,R0
+       MOVB @STKFLG,R0
+       JEQ  DONE2
+       SLA  R0,8
+       MOVB R0,@-1(R1)
+*
+       MOV  R1,R0
+       BLWP @PUSH1
+*
+DONE2  MOVB @FIXCHR,*R3
+DONE3  LI   R0,>0D0A
+       BLWP @EMIT1
+       SWPB R0
+       BLWP @EMIT1
+       DEC  R2
+       RT
+*
+JUNK00 BYTE 0
+H04    BYTE >04
+HFF    BYTE >FF
+CURCHR BYTE 0
+UNDLIN BYTE '_'
+INSLIN BYTE '+'
+*
+FIVE   DATA 5
+STKFLG DATA 0
+KSCAN  DATA >F020,$+2
+*
+KLA    SETO @EMITF            no echo to printer right now!
+
+* 5.1.01 TAT - ADDED code to change cursor when using INSert mode
+       MOVB @UNDLIN,R0
+       MOV  @IMODE,@IMODE
+       JEQ  TTINS1
+       MOVB @INSLIN,R0
+*      MOVB @UNDLIN,R0        5.1.01 TAT
+
+TTINS1 BLWP @EMIT1
+       LI   R0,>0800
+       BLWP @EMIT1
+*
+       LI   R4,500
+KL     LI   R0,>0004
+       XOP  @FIVE,0
+       JEQ  KEXIT
+       DEC  R4
+       JNE  KL
+*
+       MOVB @CURCHR,R0
+       BLWP @EMIT1
+       LI   R0,>0800
+       BLWP @EMIT1
+       LI   R4,700
+KL2    LI   R0,4
+       XOP  @FIVE,0
+       JEQ  KEXIT
+       DEC  R4
+       JNE  KL2
+       JMP  KLA
+*
+KEXIT  MOVB @CURCHR,R0
+       BLWP @EMIT1
+       LI   R0,>0800
+       BLWP @EMIT1
+       CLR  @EMITF            turn echo on again
+       MOVB R1,*R13
+       RTWP
+*
+PUSH1  DATA >F020,PUSH
+NEXT1  DATA >F020,NXT000
+LAST1  DATA >F020,LST000
+*
+NXT000 C    @CURCMD,@LSTCMD   we're at stack bottom already
+       JHE  STK999
+*
+       INCT @CURCMD
+       JMP  STK000
+*
+LST000 MOV  @LSTCMD,R1
+       SRL  R1,1
+       JOC  STK999            empty stack
+*
+LST001 C    @CURCMD,@LSTCMD
+       JLE  LST002
+       DEC  @CURCMD           1st up arrow command
+       JMP  STK000
+*
+LST002 DECT @CURCMD
+       C    @CURCMD,@CMDAD2
+       JHE  STK000            ok to move up in stack
+*
+       INCT @CURCMD
+       JMP  STK999
+*
+STK000 MOV  @2(R13),R1        first
+       MOV  @6(R13),R2        current
+       MOV  @8(R13),R3        hidden
+*
+       LI   R0,>0800
+STK001 C    R2,R1             back to start of line
+       JLE  STK002
+       BLWP @EMIT1
+       DEC  R2
+       JMP  STK001
+*
+STK002 LI   R0,'  '           and erase display copy of template
+STK003 C    R2,R3
+       JH   STK004
+       BLWP @EMIT1
+       INC  R2
+       JMP  STK003
+*
+STK004 LI   R0,>0800
+STK005 C    R2,R1
+       JLE  STK006
+       BLWP @EMIT1
+       DEC  R2
+       JMP  STK005
+*
+STK006 MOV  @4(R13),R0
+       S    R1,R0
+       SLA  R0,8
+       MOVB R0,@-1(R1)
+       MOV  @CURCMD,R0
+       ANDI R0,>FFFE
+       BL   @NODSTR           got the string, now to display it
+       RTWP                   display is done after calling routine
+*
+STK999 LI   R14,LOOPY         return to top loop since nothing happened
+       RTWP
+*
+PUSH   MOV  @BREAK,@BRKSAV
+       CLR  @BREAK
+       MOV  @FRELST,@SAVFRE
+       MOV  @CMDADR,@FRELST
+PUSH00 MOV  @LSTCMD,R0
+       MOV  R0,R1
+       SRL  R1,1
+       JNC  PUSH80            stack not empty, jump
+       DEC  R0
+       DEC  @LSTCMD
+       MOV  *R13,R1
+       BL   @STRNOD           empty stack, make this one the 1st entry
+       JMP  PUSH91
+*
+PUSH80 INCT R0
+PUSH81 LI   R2,CMDSTK
+       AI   R2,64
+       C    R0,R2
+       JHE  PUSH01            zap the 1st entry
+*
+       MOV  *R13,R1
+       BL   @STRNOD
+       JEQ  PUSH90            assigned it ok
+*
+PUSH01 LI   R0,CMDSTK
+       LI   R1,ZAPDAT
+       BL   @STRNOD           zap the 1st string
+*
+       LI   R1,CMDSTK
+       MOV  R1,R2
+       AI   R2,64
+*
+       DECT @CURCMD
+       C    R1,@CURCMD
+       JLE  PUSH02
+       MOV  R1,@CURCMD
+PUSH02 DECT @LSTCMD
+       C    R1,@LSTCMD
+       JLE  PUSH03
+       MOV  R1,@LSTCMD
+*
+PUSH03 MOV  @2(R1),*R1+
+       C    R1,R2
+       JL   PUSH03
+       CLR  @-2(R1)
+       JMP  PUSH00
+*
+PUSH90 INCT @LSTCMD           always points to valid one, since we
+*                             zapped 1st stack entry if it was full
+PUSH91 MOV  @SAVFRE,@FRELST
+       MOV  @BRKSAV,@BREAK
+       RTWP
+*
+H00    BYTE 0
+CTLZ   BYTE >1A
+FIXCHR BYTE 0
+*
+       BYTE 0                 this is the length for zapdat
+ZAPDAT BYTE 0
+*
+BRKSAV DATA 0
+SAVFRE DATA 0
+ZFLAG  DATA 0
+CMDADR DATA CMDFRE
+CMDAD2 DATA CMDSTK
+*
+       LIST
+       END
+*

@@ -1,0 +1,29 @@
+*
+* dependent files: chkdsks,copys,dirs,fileops,getcats,matchs,vols,trees
+*
+       DORG >C000
+PNTRS  BSS  256
+HEADER DATA 0,0
+SORTED BSS  512
+VOLNAM BSS  10                name of volume
+TOTSEC DATA 0                 total sectors on volume
+TOTSE2 DATA 0                 msWord of total sectors on volume
+SECFRE DATA 0                 free sectors on volume
+SECFR2 DATA 0                 total sectors free on volume
+WILD   DATA 0
+WILDST DATA 0,0,0,0,0
+LENSAV BYTE 0,0
+*
+PAB    DATA 0,>0001,>0000
+       DATA 0
+RECLEN DATA 0
+CPUFLG BYTE 0
+CHRHIG BYTE 0
+       DATA 0
+       BYTE 0
+DIRLEN BYTE 0
+       BSS  40
+*
+NAMES  BSS 128*32
+DIRS   BSS 16*128
+*

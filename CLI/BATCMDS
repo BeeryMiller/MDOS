@@ -1,0 +1,1019 @@
+; BATCMDS
+; 1.1.2020  Added TIMODE2 command DEFinition and entry AUTTIN
+;           Possible bug in allocation loop; see R2
+;           Spooler allocation/ratios in this file
+;
+; 7.5.2022 ******
+;          TEST for ROM banking; TIMODE2 reserves ONLY >36,>ED,>EE,>EF
+;          ******
+; 7.10.2022 Reverted to standard TIMODE2; order of pages changed slightly
+;           for possible future timode3
+;
+       DEF  ECHON,ECHOFF
+       REF  RSTOP
+       REF  PROMPT
+       REF  DOCMD
+       REF  CBUF
+       REF  MAXDRV
+       REF  MESG
+       REF  EMIT1
+       REF  BATFLG,BATPAB,ECHO
+       REF  SAVR13,SAVR14,SAVR15
+       REF  GPLPAR
+       DEF  FORVAR
+       DEF  BATECH,BATFOR,BATGOT,BATIF,BATPAU,BATREM
+       DEF  AUTLAS,AUTRAM,AUTSPO,AUTTIM
+       DEF  AUTTIN       ;slimmed down TIMODE 1.1.2020
+*
+       COPY "\MDOS\HEAD\PAGENUMS"
+
+BATREM MOV  R11,R10
+      BL   @BATCHK
+      B    *R10
+*
+*
+* TIMODE command ...
+*
+AUTTIM LI   R6,TIMPAG         original TIMODE with all pages
+       JMP  AUTTIP
+AUTTIN LI   R6,TINPAG         TIMODE 'light' without pages >28-2F
+
+AUTTIP MOV  R11,R10
+       BL   @AUTCHK
+*
+       STST R15               keep status for later
+       LIMI 0
+       MOV  @>F110,@SAVMAP    save our zero page
+       CLR  @>F110            batch interp must be >4000+ in CLI
+;;     LI   R6,TIMPAG    ;1-1-2020; set at entry TT
+*
+AUTT10 LI   R0,>000A
+       MOVB *R6+,R1           get a reserved page number from map
+       SRL  R1,8
+       CLR  R2
+       XOP  @SEVEN,0          get a pointer to the page
+       MOV  R0,R0
+       JNE  AUTT88            error! (already allocated)
+*
+       LI   R0,>000C          ;Is this really correct?
+       XOP  @SEVEN,0          release this page forever!
+*
+       CI   R6,TIMPA9
+       JL   AUTT10
+*
+* done with page allocation, now to exit command
+*
+       LI   R1,TIMER2         no error!
+       SETO R2                set flag for timode emulator
+       JMP  AUTT99
+*
+AUTT88 LI   R1,TIMERR
+AUTT99 MOV  @SAVMAP,@>F110    finished playing with OS internals
+       DATA >008F             LST R15
+       MOV  R2,@GPLPAR   ;$$ If memory alloc loop fails, R2<>0 ! bug?
+       BL   @MESG
+       B    *R10
+*
+TIMPAG BYTE >28,>29,>2A,>2B   ;Original TIMODE, for MyWord, etc.
+       BYTE >2C,>2D,>2E,>2F
+
+TINPAG
+       BYTE >3F,>3E,>3D,>3C   ;Slimmed down
+       BYTE >3B,>3A,>39,>38
+;;     BYTE >37,>36,>35,>34   ;7.5.22
+       BYTE >37,>35,>34
+       BYTE >33
+       BYTE >EC       ;;  7.5.22 >EC,>ED,>EE,>EF
+
+; Future list entry for 'TIMODE3' if needed for rom emulation
+       BYTE >36,>ED,>EE,>EF   ;7.5.2022, test for ROM256 emulation
+
+*      BYTE >03                  BWM 8.24.92 MOVE TO PERM. TASK MEMORY
+TIMPA9 BYTE 0                                FOR TIMODE PROTECT
+
+
+
+
+;;;;
+;ORIGINAL ORDER for reference only  1-1-2020 TT
+;TIMPAG BYTE >3F,>3E,>3D,>3C
+;      BYTE >3B,>3A,>39,>38
+;      BYTE >37,>36,>35,>34
+;      BYTE >33
+;      BYTE >EC,>ED,>EE,>EF
+;      BYTE >28,>29,>2A,>2B
+;      BYTE >2C,>2D,>2E,>2F
+;*      BYTE >03                  BWM 8.24.92 MOVE TO PERM. TASK MEMORY
+;TIMPA9 BYTE 0                                FOR TIMODE PROTECT
+;;
+*
+* ECHO command
+*
+BATECH MOV  R11,R10
+*
+*      BL   @BATCHK           batch mode only-no real reason!
+*
+       MOV  R0,R1
+       MOV  *R1,R2            'ON' ?
+       ANDI R2,>5F5F
+       C    R2,@ECHON
+       JNE  BATE00
+       CB   @2(R1),@ECHON+2   ' '
+       JNE  BATE00
+       SETO @ECHO
+       JMP  BATE99
+*
+BATE00 MOV  *R1,R2
+       ANDI R2,>5F5F
+       C    R2,@ECHOFF
+       JNE  BATE01
+       MOV  @2(R1),R2
+       ANDI R2,>5F7F
+       C    R2,@ECHOFF+2
+       JNE  BATE01
+       CLR  @ECHO
+       JMP  BATE99
+*
+BATE01 MOV  R1,R2
+       AI   R2,79
+BATE02 C    R2,R1
+       JL   BATE04
+       CB   *R2,@H20
+       JNE  BATE03
+       DEC  R2
+       JMP  BATE02
+*
+BATE03 MOVB *R1+,R0
+       BLWP @EMIT1
+       C    R1,R2
+       JLE  BATE03
+*
+BATE04 LI   R1,CRLF
+       BL   @MESG
+BATE99 B    *R10
+*
+* FOR command
+*
+FORR1  B    @BATF85
+FORR2  B    @BATF86
+*
+BATFOR MOV  R11,R10
+       BL   @BATCHK
+       MOV  @FORVAR,R11
+       JNE  FORR1             can't nest FOR
+*
+       MOV  R0,R1
+       MOV  R1,R2
+       AI   R2,80             point to end of option buffer
+*
+       CB   *R1+,@PERCEN      must be a variable argument
+       JNE  FORR2
+*
+       MOVB *R1+,R0
+       ANDI R0,>5F00
+       CI   R0,'A'*256
+       JL   FORR2             syntax error, illegal variable
+       CI   R0,'Z'*256
+       JH   FORR2             syntax error, illegal variable
+*
+       MOV  R0,@FORVAR        this is the variable assigned to FOR
+*
+       LI   R3,BATFC1         " IN ("
+       LI   R5,BATFA1
+       LI   R4,5
+BATF01 MOVB *R1+,R6
+       SZCB *R5+,R6
+       CB   R6,*R3+
+       JNE  FORR2             improper syntax
+       DEC  R4
+       JNE  BATF01
+*
+* now to save the variables into the FOR buffer
+* create pointer to current variable, pointer to command in buffer
+*
+*
+       LI   R3,FORBUF
+       MOV  R3,@FORCUR        address of current variable parameter
+BATF08 MOVB *R1+,*R3+         copy part of string
+       C    R1,R2
+       JL   BATF08
+*
+BATF09 CI   R3,FORBUF+80      blank out rest of buffer
+       JHE  BATF10
+       MOVB @H20,*R3+
+       JMP  BATF09
+*
+BATF10 LI   R1,FORBUF         find the end of the variables
+       LI   R2,FORBUF+80
+BATF11 C    R1,R2
+       JHE  FORR2             syntax error
+       CB   *R1,@BATFC2       ")" ?
+       JEQ  BATF14
+       INC  R1
+       JMP  BATF11
+*
+BATF14 LI   R3,BATFC2         ") DO "
+       LI   R5,BATFA2
+       LI   R4,5
+BATF15 MOVB *R1+,R6
+       SZCB *R5+,R6
+       CB   R6,*R3+
+       JNE  BATF86            syntax error
+       DEC  R4
+       JNE  BATF15
+*
+       MOV  R1,@FORCMD        save a pointer to the command part of "FOR"
+*
+* now to move the command to the command buffer, replacing
+* legal variables by constants as we go
+* (there are as many passes here as there are elements in (set)
+*
+BATF20 MOV  @FORCMD,R1
+       LI   R2,FORBUF+80
+       LI   R3,CBUF
+       MOV  R3,R4
+       AI   R4,80
+       MOV  @FORCUR,R5
+*
+BATF21 CB   *R5,@BATFC2       ")"
+       JEQ  BATF99            no more elements in set, all done!
+*
+BATF22 CB   *R1,@PERCEN       variable?
+       JNE  BATF30            not a variable
+*
+       INC  R1
+       C    R1,R2
+       JHE  BATF40            all copied
+*
+       MOVB *R1+,R0
+       ANDI R0,>5F00
+       C    R0,@FORVAR
+       JEQ  BATF23
+       DECT R1
+       JMP  BATF30            copy the bad variable into command buffer
+*
+BATF23 MOV  R5,R6
+BATF24 CB   *R6,@BATFC2       ")"
+       JEQ  BATF29            finished copying variable to buffer
+       CB   *R6,@H20
+       JEQ  BATF29            finished copying variable to buffer
+       MOVB *R6+,*R3+
+       C    R3,R4
+       JL   BATF24
+       JMP  BATF40            buffer full, no more copying to do
+*
+BATF30 MOVB *R1+,*R3
+       CB   *R3+,@H20
+       JEQ  BATF31
+BATF29 MOV  R3,R7             pointer past last-nonspace character
+*
+BATF31 C    R1,R2
+       JHE  BATF40            no more chars to copy
+       C    R3,R4             buffer full?
+       JL   BATF22
+*
+* now to echo the command to the screen if echo is on
+*
+BATF40 MOV  @ECHO,R0
+       JEQ  BATF49            no echo of command
+*
+       BL   @PROMPT
+       LI   R1,CBUF
+BATF41 MOVB *R1+,R0
+       BLWP @EMIT1
+       C    R1,R7
+       JL   BATF41
+       LI   R1,CRLF
+       BL   @MESG
+*
+* now to point to next variable, then execute command
+*
+BATF49 MOV  @FORCUR,R5
+*
+BATF50 CB   *R5,@BATFC2       ")"
+       JEQ  BATF52
+       CB   *R5+,@H20
+       JNE  BATF50
+BATF51 CB   *R5,@H20
+       JNE  BATF52            found the 1st char in next variable
+       INC  R5
+       JMP  BATF51
+*
+BATF52 MOV  R5,@FORCUR        pointer for next pass thru FOR loop
+       MOV  R10,@FORR10
+       MOV  @SAVR13,@FORR13
+       MOV  @SAVR14,@FORR14
+       MOV  @SAVR15,@FORR15
+       STWP R13
+       LI   R14,FORCON
+       STST R15
+       LI   R0,CBUF           buffer start
+       MOV  R0,R1             buffer start
+       MOV  R7,R2             buffer end + 1
+       B    @DOCMD            execute the nested command
+*
+FORCON MOV  @FORR10,R10
+       MOV  @FORR13,@SAVR13
+       MOV  @FORR14,@SAVR14
+       MOV  @FORR15,@SAVR15
+       JMP  BATF20
+*
+BATF85 LI   R1,BATFM0         "Can't nest FOR"
+       JMP  BATF90
+*
+BATF86 LI   R1,BATFM1         "Syntax error"
+*
+BATF90 BL   @MESG
+       CLR  @BATFLG
+       LI   R1,BATPAB
+       MOV  R1,R0
+       MOVB @CLOCOD,*R0
+       XOP  @EIGHT,0          close the batch file since there was an error
+*
+BATF99 CLR  @FORVAR
+       B    *R10
+
+*
+* GOTO command
+*
+BATGOT MOV  R11,R10
+       BL   @BATCHK           batch mode only
+       LI   R2,CBUF           copy the symbol name to a safe place
+       MOV  *R0+,*R2+
+       MOV  *R0+,*R2+
+       MOV  *R0+,*R2+
+       MOV  *R0+,*R2+
+       LI   R2,CBUF           keep pointer to the symbol name
+*
+       LI   R1,BATPAB
+       MOVB @RESCOD,*R1
+       MOV  R1,R0
+       XOP  @EIGHT,0
+       MOVB @2(R1),R0
+       JNE  BATG80            file error-> symbol not found
+*
+       MOVB @REDCOD,*R1
+BATG00 MOV  R1,R0
+       XOP  @EIGHT,0
+       MOVB @2(R1),R0
+       JNE  BATG80            symbol not found (end of file now probably)
+*
+       MOV  @4(R1),R3         buffer address
+       MOV  @12(R1),R4        length of buffer
+       JEQ  BATG00            no chars in buffer, stop
+*
+       A    R3,R4             pointer to char after the last in the buffer
+*
+       CB   *R3+,@COLON       is it a symbol?
+       JNE  BATG00            no, read next line from the file
+*
+       MOV  R2,R5             pointer to symbol name
+       MOV  R2,R6
+       AI   R6,8              only 8 significant characters
+*
+BATG01 C    R5,R6             all done?
+       JHE  BATG99            yes, no more to compare
+       C    R3,R4
+       JHE  BATG10
+       CB   *R3+,*R5+
+       JEQ  BATG01
+       JMP  BATG00            match failed, try more lines from file
+*
+BATG10 CB   *R5,@H20
+       JNE  BATG00
+       JMP  BATG99
+*
+BATG80 CLR  @BATFLG           error, so terminate batch file
+       LI   R1,BATGM0
+       BL   @MESG
+BATG99 B    *R10
+*
+* IF command
+*
+BATIF  MOV  R11,R10
+       BL   @BATCHK
+       CLR  @IFNOT            there's no NOT yet
+       MOV  R0,R1
+       MOV  R1,R2
+       AI   R2,80
+*
+       LI   R3,BATIC1         'NOT '
+       LI   R5,BATIA1         masks
+       LI   R4,4
+BATI10 MOVB *R1+,R6
+       SZCB *R5+,R6
+       CB   R6,*R3+
+       JNE  BATI11
+*
+       DEC  R4
+       JNE  BATI10
+       SETO @IFNOT            'NOT ' is there...
+       JMP  BATI12
+*
+BATI11 MOV  R0,R1             restore the pointer
+BATI12 MOV  R1,R0             update pointer past parsed info
+       LI   R3,BATIC2         'EXISTS '
+       LI   R5,BATIA2
+       LI   R4,5
+BATI20 MOVB *R1+,R6
+       SZCB *R5+,R6
+       CB   R6,*R3+
+       JNE  BATI30            not EXISTS, must be string compare
+       DEC  R4
+       JNE  BATI20
+*
+       MOVB *R1+,R6
+       SZCB *R5+,R6
+       CB   R6,*R3+           is there an 'S'
+       JEQ  BATI21
+*
+       CB   @-1(R1),*R3       was it a space???
+       JEQ  BATI22
+       JMP  BATI30            not EXIST or EXISTS
+*
+BATI21 CB   *R3+,*R1+
+       JNE  BATI30
+*
+* "EXISTS " ... now to parse filename and do a status
+*
+BATI22 MOV  R2,R4             save max pointer
+       LI   R0,8
+       LI   R2,TSTPAB+15
+       MOVB @MAXLEN,*R2
+       CLR  R3
+       XOP  @NINE,0           parse a filename
+*
+       JNE  BATI88            syntax error on parse
+       MOV  R4,R2             restore max pointer
+*
+       CB   *R0+,@H20         proper ending delimiter?
+       JNE  BATI88            no, syntax error
+*
+       MOV  R0,R1
+       LI   R0,TSTPAB
+       XOP  @EIGHT,0          do a status call
+       MOVB @TSTPAB+2,R0
+       JNE  FAIL              might as well FAIL on device error
+*
+       MOVB @TSTPAB+14,R0
+       JLT  FAIL              file does not exist
+       JMP  GOOD
+*
+* do a string compare, first search for "=="
+*
+BATI30 MOV  R0,R1             restore pointer
+       MOV  R1,R3             pointer to start of 1st string
+BATI31 C    R1,R2
+       JHE  BATI88            syntax error, full line with no equals
+*
+       CB   *R1+,@EQUALS
+       JNE  BATI31            search more chars
+*
+       C    R1,R2             more chars to test?
+       JHE  BATI88            no, syntax error
+*
+       CB   *R1+,@EQUALS
+       JNE  BATI88            one equals, not two, is syntax error
+*
+BATI32 C    R1,R2             more chars to test?
+       JHE  BATI88            no, syntax error
+       CB   *R3,@EQUALS       done with 1st string?
+       JEQ  BATI40            yes, check if done with 2nd string too
+       CB   *R1,@H20          done with 2nd string?
+       JEQ  BATI88            yes, syntax error
+       CB   *R3+,*R1+         match chars?
+       JNE  BATI60            not a good match, done with check
+       JMP  BATI32
+*
+BATI40 CB   *R1+,@H20
+       JEQ  GOOD
+*
+* done with check, move r1 pointer to end of second string
+*
+BATI60 C    R1,R2
+       JHE  BATI88
+       CB   *R1+,@H20
+       JNE  BATI60            more to scan
+*
+FAIL   MOV  @IFNOT,R0
+       JEQ  BATI99            false condition and no "NOT", return
+       JMP  BATI50            execute the command
+*
+GOOD   MOV  @IFNOT,R0
+       JNE  BATI99            true condtion and "NOT" set, return
+*
+BATI50 C    R1,R2             any chars left?
+       JHE  BATI88            nope, no command to execute
+       LI   R3,CBUF
+       CLR  @80(R3)
+       MOV  R3,R7
+BATI59 C    R1,R2
+       JHE  BATI61
+       MOVB *R1+,*R3
+       CB   *R3+,@H20
+       JEQ  BATI59
+       MOV  R3,R7             save pointer past last non-space character
+       JMP  BATI59
+*
+* now to echo the command to the screen if echo is on
+*
+BATI61 MOV  @ECHO,R0
+       JEQ  BATI70            no echo of command
+*
+       BL   @PROMPT
+       LI   R1,CBUF
+BATI62 MOVB *R1+,R0
+       BLWP @EMIT1
+       C    R1,R7
+       JL   BATI62
+       LI   R1,CRLF
+       BL   @MESG
+*
+BATI70 LI   R0,CBUF
+       MOV  R0,R1
+       MOV  R1,R2
+       AI   R2,80
+       B    @DOCMD            pass r0,r1,r2
+*
+BATI88 LI   R1,BATIM0         "Syntax error"
+       BL   @MESG
+BATI99 B    *R10
+*
+* PAUSE command
+*
+BATPAU MOV  R11,R10
+       BL   @BATCHK           batch mode only...
+       LI   R1,BATPM0
+       BL   @MESG
+BATP00 LI   R0,4
+       XOP  @FIVE,0
+       JNE  BATP00
+       B    *R10
+*
+* LASTDRIVE command
+*
+AUTLAS MOV  R11,R10
+       BL   @AUTCHK
+       C    *R0,@LASCHK
+       JNE  AUTL99
+       MOV  R0,R1
+       MOVB @2(R1),R0
+       ANDI R0,>5F00
+       CI   R0,'A'*256
+       JL   AUTL99            bad drive letter
+       CI   R0,'P'*256
+       JH   AUTL99            bad drive letter
+*
+       MOVB R0,@MAXDRV        set the max drive number
+       B    *R10
+*
+AUTL99 LI   R1,LASERR
+       BL   @MESG
+       B    *R10
+*
+* RAMDISK command
+*
+AUTRAM MOV  R11,R10
+
+       MOV  @GPLPAR,R11       bwm quick fix for ramdisk
+       JEQ  AUTRAM1           bwm quick fix for ramdisk
+       CLR  @RAMFLG           bwm quick fix for ramdisk
+
+AUTRAM1
+       BL   @AUTCHK
+*
+       BL   @GETNUM
+       CI   R0,800
+       JLE  AUTR00            ramdisk size ok
+AUTRAA B    @AUTR88           can't have more than 800k on a disk
+*
+AUTR00 MOV  R0,R4
+       CLR  R0
+       XOP  @SEVEN,0          get count of free pages in system
+       AI   R1,-4             leave some pages free!
+       JLT  AUTRAA            not enough memory
+       JEQ  AUTRAA
+       MOV  R4,R5
+       JEQ  AUTRAA            zero pages needed
+*
+*      AI   R5,7              we're gonna round this number
+       AI   R5,8              we're gonna round this number 8/26/89
+       SRL  R5,3              change from K to page count
+       C    R5,R1
+       JH   AUTR88            not enough memory
+*
+       C    R4,@RAMFLG        is it the same size ramdisk ?
+       JEQ  AUTR09            yes, don't blitz it...
+*
+* @@ this routine "knows" the internal memory management structures!
+*
+       LI   R1,RAMPAG
+AUTR01 MOV  @NULLP,*R1+
+       CI   R1,RAMEND
+       JL   AUTR01
+*
+AUTR09 STST R15               keep status for later
+       LIMI 0
+       MOV  @>F110,@SAVMAP    save our zero page
+       CLR  @>F110            batch interp must be >4000+ in CLI
+       LI   R6,RAMPAG
+*
+AUTR10 LI   R0,>000A
+       SETO R1                get 1st free page
+       CLR  R2                we'd rather have slow pages for ramdisk
+*
+       C    @RAMFLG,R4        if ramdisk is to be reformatted
+       JNE  AUTR08            then get 1st free page from memory management
+*
+       MOVB *R6,R1            else get old page number from disk map
+       SRL  R1,8
+*
+AUTR08 XOP  @SEVEN,0
+
+       MOV  R0,R0             BWM FIX FOR SYSTEM
+       JNE  AUTRAA
+
+       MOVB R2,*R6+           set the page number into the disk map
+*
+       LI   R0,>000C
+       XOP  @SEVEN,0          release this page forever!
+*
+       DEC  R5
+       JNE  AUTR10
+*
+* done with page allocation, now to init the ramdisk
+*
+       MOV  @SAVMAP,@>F110    finished playing with OS internals
+       DATA >008F             LST R15
+*
+       C    @RAMFLG,R4
+       JEQ  AUTR80            ramdisk was already initialized, return
+*
+       MOV  R4,@RAMFLG        mark number of pages used in ramdisk
+*
+*      set ramdisk
+*
+       MOVB @RAMPAG,@>F115
+       LI   R1,>A000
+AUTR11 CLR  *R1+
+       CI   R1,>A300
+       JL   AUTR11
+*
+       LI   R1,ADAT
+AUTR12 MOV  *R1+,R2
+       JEQ  AUTR14
+       MOV  *R1+,R3
+AUTR13 MOV  *R1+,*R2+
+       DEC  R3
+       JNE  AUTR13
+       JMP  AUTR12
+*
+AUTR14 LI   R2,>A138          now to block out the bitmap
+AUTR15 SETO *R2+
+       CI   R2,>A200
+       JLT  AUTR15
+*
+       LI   R6,>0400          assume this is the bit to start with
+       MOV  R4,R5
+       SLA  R5,2              convert from K to sector count
+*      DEC  R5                minus 1 for 256 byte header 1-27-89
+*                             different approach 8-26-89
+       MOV  R5,@>A10A         sector count into sector zero
+       DECT R5                minus two sectors for bitmap & pointers
+       CI   R5,1598
+       JLE  AUTR16
+*
+       SRL  R5,1
+       LI   R6,>0200          bit to start with in bitmap
+AUTR16 LI   R3,>A138
+*
+AUTR17 DEC  R5
+       JLT  AUTR19            entire bitmap has been set
+*
+       SZCB R6,*R3
+       SLA  R6,1
+       JNC  AUTR17            still in the same byte
+       INC  R3
+       LI   R6,>0100
+       JMP  AUTR17
+*
+AUTR19 LI   R2,>A002+100
+AUTR20 MOV  @NULLP,*R2+
+       CI   R2,>A100
+       JL   AUTR20
+*
+AUTR80 MOVB @DSRPAG+1,@>F115  play with the OS some more!
+       MOV  @>A010,R1         pointer in DSR to header page variable
+       MOV  R1,R2
+       SRL  R2,13
+       MOVB @DSRPAG(R2),@>F115
+       ANDI R1,>1FFF
+       MOVB @RAMPAG,@>A000(R1) set ramdisk header page
+       MOVB @NULLP,@>F115      restore our original page
+       JMP  AUTR99             all done
+*
+AUTR88 LI   R1,AUTRM0
+       BL   @MESG
+AUTR99 B    *R10
+*
+ADAT   DATA >A000
+       DATA 52
+       DATA >BB99             drive validation flag
+RAMPAG BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL,P_NULL,P_NULL,P_NULL
+       BYTE P_NULL,P_NULL
+*
+RAMEND DATA >A100
+       DATA 10
+       TEXT 'RAM-DISK  '
+       DATA 720
+       BYTE 9,'D','S','K',' ',40,2,1
+*
+       DATA 0
+NULLP  BYTE P_NULL,P_NULL     dummy pages for ramdisk
+DSRPAG BYTE P_HEAD,P_DSR1,P_DSR2,P_DSR3
+*
+* SPOOLER command
+*
+AUTS87 B    @AUTS88
+*
+AUTSPO MOV  R11,R10
+       BL   @AUTCHK
+*
+AUTS00 BL   @GETNUM
+       CI   R0,1024
+       JH   AUTS87            max size for spooler
+       CI   R0,16
+       JLE  AUTS77            16k already pre-allocated!
+*
+       MOV  R0,R4
+       CLR  R0
+       XOP  @SEVEN,0          get free page count
+       AI   R1,-4
+       JLT  AUTS88
+       JEQ  AUTS88
+*
+       MOV  R4,R5
+       AI   R5,7              round up on page count
+       SRL  R5,3              8k / page
+       DECT R5                allow for pre-allocated pages
+       C    R5,R1
+       JH   AUTS88
+*
+       MOVB @DSRPAG+1,@>F115  map in DSR header page
+       MOV  @>A012,R6
+       MOV  R6,R7
+       ANDI R6,>1FFF
+       AI   R6,>A002          point to correct page
+       SRL  R7,13
+       MOVB @DSRPAG(R7),@>F115               map in the correct DSR page
+*
+       STST R15
+       LIMI 0
+       MOV  @>F110,@SAVMAP
+       CLR  @>F110
+*
+AUTS10 LI   R0,>000A
+       SETO R1                get 1st free page
+       CLR  R2                we'd rather have slow pages for spooler
+*
+       C    @SPOFLG,R4
+       JNE  AUTS08
+*
+       MOVB *R6,R1
+       SRL  R1,8
+*
+AUTS08 XOP  @SEVEN,0
+       MOVB R2,*R6+           put the page number into the spooler table
+       LI   R0,>000C
+       XOP  @SEVEN,0
+       DEC  R5
+       JNE  AUTS10
+*
+* done with page allocation, now to initialize pointers
+*
+       MOV  @SAVMAP,@>F110    finished playing with the OS internals
+       DATA >008F             LST R15
+*
+*      C    @SPOFLG,R4
+*      JEQ  AUTS99
+*
+       MOV  R4,@SPOFLG
+       JMP  AUTS78
+*
+AUTS77 LI   R4,16             entry to partition original 16k only
+AUTS78 MOVB @DSRPAG+1,@>F115
+       MOV  @>A014,R5         pointer into SPPNT table
+       MOV  R5,R6
+       SRL  R6,13
+       MOVB @DSRPAG(R6),@>F115
+       ANDI R5,>1FFF
+       AI   R5,>A000
+*
+       LI   R6,RATIO
+AUTS20 MOV  *R5+,R7           get pointer to this spooler info
+       ANDI R7,>1FFF          assume spooler info on same page!
+       AI   R7,>A000
+*
+       MOV  R4,R1
+*
+       MPY  *R6+,R1
+       MOV  *R6+,R0           shift count for divide
+*
+AUTS22 SRL  R2,1              32bit shift the cheesy way
+       SRL  R1,1
+       JNC  AUTS23
+       ORI  R2,>8000
+AUTS23 DEC  R0
+       JNE  AUTS22
+*
+       MOV  R1,*R7
+       MOV  R2,@2(R7)         buffer start
+       MOV  R1,@8(R7)
+       MOV  R2,@10(R7)        get char address
+       MOV  R1,@12(R7)
+       MOV  R2,@14(R7)        put char address
+*
+       MOV  R4,R1
+       MPY  *R6+,R1
+       MOV  *R6+,R0           shift count for divide
+*
+AUTS24 SRL  R2,1
+       SRL  R1,1
+       JNC  AUTS25
+       ORI  R2,>8000
+AUTS25 DEC  R0
+       JNE  AUTS24
+*
+       DEC  R2                same as adding >ffff for setting carry!
+       JOC  AUTS21
+       DEC  R1
+*
+AUTS21 MOV  R1,@4(R7)
+       MOV  R2,@6(R7)         end char address
+*
+       CI   R6,RATEND
+       JL   AUTS20
+*
+       MOVB @NULLP,@>F115
+       JMP  AUTS99
+*
+AUTS88 LI   R1,AUTSM0
+       BL   @MESG
+AUTS99 B    *R10
+*
+* ratios used in setting spooler sizes
+*
+RATIO  DATA 1024,6,1024,3
+       DATA 0,1,1024,8
+       DATA 1024,3,1024,2
+       DATA 1024,8,1024,7
+       DATA 1024,1,3072,2
+       DATA 1024,1,3072,2
+       DATA 1024,2,3072,3
+       DATA 1024,7,3072,8
+       DATA 3072,3,1024,1
+       DATA 3072,8,1024,6
+       DATA 3072,2,4096,2
+RATEND EQU  $
+*
+* get a number from option string
+*
+GETNUM MOV  R0,R3
+       CLR  R0
+GETN00 MOVB *R3+,R2
+       SRL  R2,8
+       AI   R2,-'0'
+       JLT  GETN99
+       CI   R2,10
+       JHE  GETN99
+       MPY  @D10,R0
+       A    R2,R1
+       MOV  R1,R0
+       JMP  GETN00
+*
+GETN99 RT
+*
+* check for batch mode
+*
+BATCHK MOV  @BATFLG,R12
+       JNE  BATC99            we're in batch mode
+       LI   R1,BATONL
+       MOV  R10,R11
+       B    @MESG
+BATC99 RT
+*
+* check for autoexec batch file
+*
+AUTCHK MOV  @BATFLG,R12
+       INC  R12
+       JEQ  AUTC99            we're in the autoexec file
+       LI   R1,AUTONL
+       MOV  R10,R11
+       B    @MESG
+AUTC99 RT
+*
+* PAB reserved for EXISTS status
+*
+TSTPAB DATA >0900,0,0,0
+       DATA 0,0,0,0
+       TEXT '                                        '
+       DATA 0
+MAXLEN BYTE 40
+LASCHK DATA '= '
+ECHON  DATA 'ON','  '
+ECHOFF DATA 'OF','F '
+H20    BYTE >20
+EQUALS BYTE '='
+PERCEN BYTE '%'
+COLON  BYTE ':'
+CLOCOD BYTE >01
+RESCOD BYTE >04
+REDCOD BYTE >02
+*
+FORVAR DATA 0
+FORCMD DATA 0
+FORCUR DATA 0
+FORR10 DATA 0
+FORR13 DATA 0
+FORR14 DATA 0
+FORR15 DATA 0
+IFNOT  DATA 0
+*
+SAVMAP DATA 0
+RAMFLG DATA 0
+SPOFLG DATA 0
+FIVE   DATA 5
+SEVEN  DATA 7
+EIGHT  DATA 8
+NINE   DATA 9
+D10    DATA 10
+*
+       DATA 0
+FORBUF TEXT '                                        '
+       TEXT '                                        '
+       DATA 0
+*
+TIMERR TEXT 'TIMODE configuration failure'
+       BYTE >0D,>0A
+TIMER2 BYTE 0
+*
+BATFC1 TEXT ' IN ('
+BATFA1 BYTE >80,>A0,>A0,>80,>80
+BATFC2 TEXT ') DO '
+BATFA2 BYTE >80,>80,>A0,>A0,>80
+BATFM0 TEXT 'Can''t nest FOR'
+       BYTE >0D,>0A,0
+*
+BATIM0
+BATFM1 TEXT 'Syntax error!'
+       BYTE >0D,>0A,0
+*
+BATGM0 TEXT 'Label not found!'
+       BYTE >0D,>0A,0
+*
+BATIC1 TEXT 'NOT '
+BATIA1 BYTE >A0,>A0,>A0,>80
+BATIC2 TEXT 'EXISTS '
+BATIA2 BYTE >A0,>A0,>A0,>A0,>A0,>A0,>80
+*
+BATPM0 TEXT 'Strike a key when ready . . .'
+CRLF   BYTE >0D,>0A,0
+*
+LASERR TEXT 'Invalid drive letter.'
+       BYTE >0D,>0A,0
+*
+AUTSM0 TEXT 'Insufficient memory for Spooler!!'
+       BYTE >0D,>0A,0
+AUTRM0 TEXT 'Insufficient memory for Ramdisk!!'
+       BYTE >0D,>0A,0
+*
+BATONL TEXT 'Only in batch file.'
+       BYTE >0D,>0A,0
+*
+AUTONL TEXT 'Only in autoexec file.'
+       BYTE >0D,>0A,0
+*
+*
+*
+       EVEN
+       END
+*

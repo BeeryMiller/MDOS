@@ -1,0 +1,1332 @@
+; File: HCLIS
+;
+; 1994      SCSI support added mjm
+; 05/07/96  tat, added PSYS command for psystem support
+; 05.01.01  TAT, added PDMA command for SCSI pdma/non-pdma support
+;
+; 1. 1.2021 AUTTIN REF added;  TIMODE2 command added
+; 1.18.2021 Removed DISKCOMP/DISCKOPY (bwm 12.2020)
+;           Added TIPI devices in LOD002 (is PI really needed?)
+;
+; 1.13.2021 BWM, added TIPI boot tracking for autoexec
+; 1.18.2021 tat, note DSK6 force for ramdisk requires remap match
+;                Add IDE/SCSI later
+; 2.08.2021 BWM, add MAP command to show mapped memory pages
+;           BWM, add mapping recovery to COMMAN for MDOS CLI external access
+;
+; 2.14.2021 tat, Added CLSCOD to 'hello' routine; CLS removed from VER/htitles
+;
+; 2.16.2021 BWM, add OPEN command to Open simple connection terminal
+;
+; 2.27.2021 BWM, added check for IDE device in IDECHK
+; 2.27.2021 BWM, removed WDS device check in WDSCHK since not supported
+; 2.27.2021 BWM, added IDE AUTOEXEC boot tracking
+; 2.27.2021 BWM, added SCS AUTOEXEC boot tracking
+; 3.01.2021 BWM, updated LOGO information
+; 3.03.2021 BWM, ECHO defaults to OFF on boot-up
+; 3.03.2021 BWM, VER COMMAND DOES NOT CLEAR SCREEN
+; 3.03.2021 BWM, default to IBMGRF ON
+; 4.04.2021 BWM, fixed IDE autoboot tracking for AUTOEXEC to SCS6
+; 6.02.2021 BWM, cleaned up AUTOEXEC code for multi device boot
+; 6.03.2021 BWM, fixed filepath open for a "&" entry for a reset of the
+;                autoexec file.  HDS1 will still be checked if present in
+;                the L8 XOP powerup call at L8\DSRPASS-S
+;
+; 7.25.2022 BWM, added CYA mapping for AUTOEXEC, label CYAMP9, CYAMPA, CYAMPB
+;                added CYA mappingfor default colors, CYAMPD
+; 1.03.2023 BWM, added pagenumber/vector or last task PAB loaded
+;
+;
+; @@ need to make _all_ dynamic variables reside in 1st 8k page of cli
+;
+       COPY "\MDOS\CLI\HVERSIONS"
+       COPY "\MDOS\HEAD\PAGENUMS"
+*
+       DEF  CYAMP9,CYAMPA,CYAMPB,CYAMPD      7.25.2022
+
+       REF  OPCODE                           1.03.2023
+
+       REF  MEMORY                           3.06.2021
+       REF  CHARD
+       REF  TELNET                           2.16.2021
+       DEF  COMMAN,START
+       DEF  DOSCMD
+       DEF  WARMBO
+       DEF  MESG
+       DEF  DOCMD
+       DEF  CRLF
+       DEF  UWIDTH,ULINES     window width, height
+       DEF  BATFLG,BATPAB,ECHO
+       DEF  SAVR13,SAVR14,SAVR15
+       DEF  SCRPAG
+*
+       REF  NAME,CBUF,OPTBUF,OPTEND
+       REF  BATOPT,BATEND
+       REF  OPTLEN,OPTBM1,BATO80
+       REF  CBUF79,CBUF80
+       REF  OPTADR
+       REF  DRVMAP            *BWM 10.2.92 FOR DRIVE REMAPPING
+*                             *use DEFMAP for warm reboot remapping
+
+*      REF  TI                *Flag utility for WDS1 usage on HFDC
+*      REF  MIRROR            *HFDC BACKUP CAPABILITY
+
+       REF  HARD              *HFDC ON/OFF
+       REF  DEONOF            *DSK1 ON/OFF FOR HFDC USE
+       REF  PSYSTM            * 5/7/96, TAT, Psystem
+       REF  SCSMAP            * SCSI Remap  3.21.98
+       REF  IBMGRF,IBMON1     * High ASCII Enable/disable
+       REF  SCSIPD            * 04.29.01 TAT
+
+       REF  SCRUB1,SCRUB2,SCRNXT
+       REF  GPLPAR
+       REF  OUTPAB,OUTERR,OUTLEN,OUTFLG
+       REF  FORVAR
+       REF  BATECH,BATFOR,BATGOT,BATIF,BATPAU,BATREM
+*      REF  AUTBUF,AUTFIL
+       REF  AUTLAS,AUTRAM,AUTSPO,AUTTIM,AUTTIN
+       REF  TREE,MKDIR,RMDIR
+*
+       REF  CMDSTK,CURCMD,LSTCMD,CMDFRE,CMDS
+       REF  STKFLG
+*
+       REF  PATH#P,CMDSTR
+       REF  NODSTR,STRNOD
+
+;      REF  DSKCOM       removed, 1.18.2021  see commands below
+;      REF  DSKCOP       removed, 1.18.2021  "             "
+
+       REF  CHKDSK
+       REF  COPY,ATTRIB,RENAME,ERASE
+       REF  FORMAT
+       REF  LABCOD
+       REF  MODE
+       REF  VOLCOD
+       REF  TYPE
+       REF  DIR
+       REF  CNVRTF
+       REF  CHGDRV
+       REF  PROMPT,GETPMT,GETDIR
+       REF  ASSIGN,GETPTH               ,GETSPD @@ dead command
+       REF  VSET,EMIT1
+       REF  GETSTR
+       REF  GTIME,DTIME,GDATE,DDATE
+       REF  CTIME,CDATE
+       REF  DATBL
+       REF  BREAK
+       REF  EMITF
+       REF  PAGE,PAGEPX,COTASK
+       REF  TURY,TURX,TURYMX,TURXMN
+       REF  DELON
+       REF  HELLO,VERMSG,VERNUM
+       REF  LOGO,LOGO1                  BWM      3.2.2021
+       REF  VONOFF                      B. Boone 8/21/92
+
+       REF  VIDOFF            added back 12 may 1998 tat
+       REF  OUTOPN                      Clint Pulley 7/93
+       REF  CONOFF                      Johnson, 24 Feb 93
+       REF  SETDSK                      BWM      10/04/92
+       REF  REMAP                       BWM      10/04/92
+*
+START  JMP  STAR1
+       DATA >ECEC
+       DATA EXTCMD
+       DATA VER#*10+REV#*10+UPD#
+HDINST DATA 'HD'
+PAGECLI BYTE P_CLI1
+        BYTE 0
+
+DSRVECTOR
+       BYTE 0,P_LAST     01.03.2023
+       DATA OPCODE       VECTOR FOR LAST PAB LOADED IN >A000 PAGE RANGE
+
+H11     BYTE P_CLI4,0                   BWM 2.8.2021
+
+STAR1  LWPI REGS
+       CLR  R1
+       MOVB @>F111,@PAGECLI+1             SETTING UP ALLOW MDOS CLI INTERFACE
+       MOVB R1,@>F111
+       LI   R1,>3B03                      BYTE FOR CLI1 PAGE LOCATION
+       MOVB @PAGECLI,*R1
+       MOVB @PAGECLI+1,@>F111
+       CLR  R1
+
+*************************************************
+* delay routine for HFDC/DREM users with PFM
+*
+*       LI   R1,3
+*STAR3  LI   R0,>FFFF
+*STAR2
+*      DEC  R0
+*      JNE  STAR2
+*      DEC  R1
+*      JNE  STAR3
+*********************************
+
+
+
+       CLR  @GPLPAR
+       CLR  @EMITF
+       CLR  @BREAK
+       CLR  @PAGE
+       CLR  @PAGEPX
+       CLR  @COTASK
+       CLR  @OPTEND
+       CLR  @ECHO             3.3.2021    ECHO OFF UNLESS TURNED ON
+
+*      SETO @ECHO
+*      BL   @IBMON1           3.3.2021 default to IBMGRF ON call
+
+       MOVB @HFF,@>0102       reset task state
+*
+       MOVB @>F114,@SCRPAG
+       MOV  @PWRFLG,R1
+       JEQ  HDPWR9            this is a ctl-alt-del reboot
+       MOV  @>F04E,R1         test horizons boot flag
+       JEQ  HDPWR9
+       CI   R1,'TI'           1.13.2021, test for tipi boot flag
+       JEQ  HDPWRT
+       CI   R1,'SC'           2.27.2021, test for SCSI boot flag
+       JEQ  SCSWRT
+       CI   R1,'ID'           2.27.2021, test for IDE boot flag
+       JEQ  IDEWRT
+*      CI   R1,'BM'           3.06.2021, HDS2.AUTOEXEC boot
+*      JEQ  BWMWRT
+       CI   R1,'HD'           was this a load/sys boot?
+       JNE  HDPWR8            nope, must be a horizons boot
+       MOV  R1,@OLDNAM
+       LI   R1,'SX'
+       MOVB R1,@OLDNAM+2
+       JMP  HDPWR9
+*
+HDPWRT MOV  R1,@OLDNAM   this is setup for TIP1.AUTOEXEC
+*      MOV  R1,@AUTNAM
+*      MOV  R1,@BATNAM
+       LI   R1,'P1'
+       JMP  HDPWRC
+*      MOV  R1,@OLDNAM+2 6.2.2021
+*      MOV  R1,@AUTNAM+2 6.2.2021
+*      MOV  R1,@BATNAM+2 6.2.2021
+*      JMP  HDPWR9       6.2.2021
+
+SCSWRT MOV  R1,@OLDNAM   this is setup for SCS1.AUTOEXEC
+*      MOV  R1,@AUTNAM
+*      MOV  R1,@BATNAM
+       LI   R1,'S1'
+       JMP  HDPWRC       6.2.2021
+*      MOV  R1,@OLDNAM+2 6.2.2021
+*      MOV  R1,@AUTNAM+2 6.2.2021
+*      MOV  R1,@BATNAM+2 6.2.2021
+*      JMP  HDPWR9       6.2.2021
+
+IDEWRT LI   R1,'SC'
+       MOV  R1,@OLDNAM   this is setup for IDE1.AUTOEXEC
+*      MOV  R1,@AUTNAM
+*      MOV  R1,@BATNAM
+       LI   R1,'S6'
+       JMP  HDPWRC       6.2.2021
+*      MOV  R1,@OLDNAM+2 6.2.2021
+*      MOV  R1,@AUTNAM+2 6.2.2021
+*      MOV  R1,@BATNAM+2 6.2.2021
+*      JMP  HDPWR9       6.2.2021
+
+BWMWRT
+       LI   R1,'HD'
+       MOV  R1,@OLDNAM   this is setup for HDS2.AUTOEXEC
+*      MOV  R1,@AUTNAM
+*      MOV  R1,@BATNAM
+       LI   R1,'S2'
+
+*      MOV  R1,@OLDNAM+2
+*      MOV  R1,@AUTNAM+2
+*      MOV  R1,@BATNAM+2
+*      JMP  HDPWR9
+
+HDPWRC
+       MOV  R1,@OLDNAM+2
+*      MOV  R1,@AUTNAM+2
+*      MOV  R1,@BATNAM+2
+       JMP  HDPWR9
+
+
+
+*
+HDPWR8 MOVB @H36,@OLDNAM+3    ;this forces DSK6 ramdisk!
+*
+HDPWR9 LI   R1,SCRUB1         init the scroll-back buffer
+       LI   R2,>000D
+       MOV  R2,*R1+
+       MOV  R1,@SCRNXT
+HDPWRA CLR  *R1+
+       CI   R1,SCRUB2
+       JLE  HDPWRA
+*
+       SETO @PWRFLG
+       BL   @VSET
+       LI   R1,VIDSET
+       BL   @MESG
+*
+       LI   R1,CMDSTK
+       INC  R1
+       MOV  R1,@CURCMD
+       MOV  R1,@LSTCMD
+       LI   R2,32
+CMDS00 CLR  *R1+
+       DEC  R2
+       JNE  CMDS00
+       LI   R1,CMDS
+       MOV  R1,@CMDFRE
+       MOV  R1,R3
+       AI   R3,512
+*
+CMDS01 MOV  R1,R2
+       AI   R2,8
+       MOV  R2,*R1
+       MOV  R2,R1
+       C    R2,R3
+       JL   CMDS01
+       CLR  @-8(R2)
+*
+       BL   @CTIME
+       JNE  TIM1              TIME IS INVALID
+       BL   @CDATE
+       JEQ  TIM2              TIME & DATE ARE VALID
+TIM1   BL   @GTIME
+       BL   @GDATE
+       LI   R1,CRLF
+       BL   @MESG
+*
+TIM2   BL   @CLSCOD      ;clear screen for Hello
+
+       LI   R1,LOGO      3.1.2021
+       BL   @MESG        3.1.2021
+
+*      LI   R1,HELLO
+*      BL   @MESG
+
+*      BL   @CTIME       commented out 3.1.2021
+*      JNE  TIM3         "
+*      BL   @CDATE       "
+*      JNE  TIM3         "
+
+*      BL   @DTIME       "
+*      LI   R0,'  '      "
+*      BLWP @EMIT1       "
+
+
+*      LI   R0,7         "
+*      XOP  @NINE,0      "
+*      SLA  R1,1         "
+*      MOV  @DATBL(R1),R1  "
+*      BL   @MESG        "
+*      BL   @DDATE       "
+*      LI   R1,CRLF2     "
+*      BL   @MESG        "
+
+TIM3   JMP  WARM1
+*
+WARMBO LWPI REGS
+       BL   @VSET
+       LI   R0,>1A00
+       BLWP @EMIT1
+       JMP  WARM1
+*
+CTLCM0 BYTE '^','C'
+       BYTE >0D,>0A,0
+BRKADR DATA $+2
+       LWPI REGS
+       MOV  @EXTERN,R1
+       JEQ  DOBRK
+*
+       LIMI 0
+       LWPI DOSREG
+       CLR  @EXTERN
+       LI   R1,CTLCM0
+       BL   @MESG
+       MOV  @EXT13,R13
+       MOV  @EXT14,R14
+       MOV  @EXT15,R15
+       RTWP
+*
+COMMAN2 B   @COMMAN
+
+DOBRK  LI   R1,CTLCM0
+       BL   @MESG
+*
+       LI   R0,2
+       LI   R1,255
+       LI   R2,5              CLI uses pages 0,1,2,4,5
+       XOP  @SEVEN,0          release tons of memory
+*
+* if batch on, ask about terminating batch job
+*
+       MOV  @BATFLG,R0
+       JEQ  ECHF00            batch is not on
+*
+       LI   R1,KILMSG
+       BL   @MESG
+BRK10  LI   R0,4
+       XOP  @FIVE,0
+       ANDI R1,>5F00
+       CI   R1,'N'*256
+       JEQ  COMMAN2
+       CI   R1,'Y'*256
+       JNE  BRK10
+*
+BRK99  MOVB @CLOCOD,@BATPAB   forget asking right now
+       LI   R0,BATPAB
+       XOP  @EIGHT,0
+       CLR  @BATFLG
+*
+ECHF00 MOV  @OUTFLG,R0
+       JEQ  WARM1             echo file is not on
+       LI   R0,OUTPAB
+       MOVB @CLOCOD,*R0
+       XOP  @EIGHT,0
+       CLR  @OUTFLG
+*
+WARM1  CLR  @FORVAR
+       MOV  @BRKADR,@BREAK
+       CLR  @BATFLG           we can't be in a batch file yet
+       MOV  @PWRFLG,R0
+       JEQ  COMMAN
+*
+* 8/29/88 added autoexec redirection
+*
+       MOV  @NEWAUT,R0
+       JNE  WARM09            don't use main autoexec, user overrode it
+*
+       LI   R1,OLDPAB
+       LI   R0,AUTPAB
+WARM08 MOVB *R1+,*R0+
+       CI   R1,AUTPAB
+       JL   WARM08
+*
+* 9/13/88 added DELete key to force DSK1 access
+*
+       LI   R0,5
+       XOP  @FIVE,0
+       MOV  @DELON,R0
+       JEQ  WARM09
+       LI   R1,'DS'
+       MOV  R1,@AUTPAB+16
+       LI   R1,'K1'
+       MOV  R1,@AUTPAB+18
+*
+WARM09 CLR  @NEWAUT
+       LI   R1,AUTPAB
+       LI   R0,BATPAB
+WARM10 MOVB *R1+,*R0+
+       CI   R1,BATPAB
+       JL   WARM10
+*
+       CLR  @PWRFLG           clear for subsequent warm boots
+       SETO @BATFLG           auto-exec flag
+
+
+***********
+       LI   R0,BATNAM         6.3.2021 TEST FOR PERIOD ENDING PATH
+       MOV  @BATPAB+14,R1
+       DEC  R1
+       MOV  R1,@WARM10B+2
+WARM10B
+       AI   R0,0
+       MOVB *R0,R0
+       CB   R0,@PERIOD
+       JEQ  WARM10A
+***********
+
+
+       LI   R0,BATPAB
+       XOP  @EIGHT,0          open the auto-exec file
+       MOVB @BATPAB+2,R0
+       JEQ  COMMAN            successful open, read commands from the file
+WARM10A
+       CLR  @BATFLG           bad open, no batch file open
+       JMP  COMMAN
+*
+REACH1 B    @COMM00
+REACH2 ANDI R11,>E000
+       CI   R11,>A000         EOF ERROR
+       JEQ  REACH3
+       CI   R11,>E000         general error---shouldn't happen on open file
+       JEQ  REACH3
+       LI   R1,BADBAT
+       BL   @MESG
+REACH3 B    @COMM10
+*
+BADBAT BYTE >0D,>0A
+       TEXT 'File error reading batch file, aborting'
+       BYTE >0D,>0A,0
+*
+COMMAN
+       MOVB @H11,@>F113                      2.8.2021
+
+       MOV  @BATFLG,R0
+       JEQ  REACH1            no batch file active
+*
+       LI   R0,BATPAB
+       MOVB @REDCOD,*R0       read a line from the file
+*
+       XOP  @EIGHT,0          read a line from the batch file
+*
+       MOVB @BATPAB+2,R11     file error reading from batch?
+       JNE  REACH2            yes, exit batch mode
+*
+* parse input line and replace variables with string constants
+*
+*
+       LI   R1,OPTBUF
+       MOV  R1,R2
+       A    @BATPAB+12,R2
+       MOVB @H00,*R2
+*
+       LI   R3,CBUF
+       LI   R4,CBUF80
+*
+VARI00 CB   *R1,@PERCEN
+       JNE  VARI80
+       INC  R1
+       C    R1,R2
+       JHE  VARI99            all done
+*
+       CB   *R1,@PERCEN
+       JEQ  VARI80            "%%" gets copied normally as "%"
+*
+       CB   *R1,@H30
+       JL   VARI80            "%<char>" gets copied as "<char>"
+       JEQ  VARI50            batch filename is "%0"
+       CB   *R1,@H39
+       JH   VARI80            "%<char>" again
+*
+       MOVB *R1+,R5
+       SRL  R5,8
+       AI   R5,-'0'
+       LI   R6,BATOPT
+       LI   R7,BATO80
+*
+VARI10 DEC  R5
+       JEQ  VARI30            copy chars until delim
+VARI11 CB   *R6,@H00          end of string?
+       JEQ  VARI81            variable is nil
+*
+       CB   *R6+,@H20         filler character?
+       JEQ  VARI20            yes, find next set of chars.
+       C    R6,R7
+       JL   VARI11
+       JMP  VARI81            out of characters
+*
+VARI20 CB   *R6,@H00
+       JEQ  VARI81
+*
+       CB   *R6,@H20
+       JNE  VARI10            find next set of white space
+*
+       INC  R6
+       C    R6,R7
+       JL   VARI20
+       JMP  VARI81            out of characters to search
+*
+VARI30 CB   *R6,@H00
+       JEQ  VARI81            done with this variable
+*
+       CB   *R6,@H20
+       JEQ  VARI81            done with this variable
+*
+       MOVB *R6+,*R3+
+       C    R3,R4
+       JHE  VARI82            line too long
+*
+       C    R6,R7
+       JL   VARI30            more chars in this variable
+       JMP  VARI81
+*
+VARI50 INC  R1                skip the zero
+       MOVB @BATPAB+15,R5
+       SRL  R5,8
+       JEQ  VARI81            no filename on batch?? <check anyway>
+       AI   R5,BATPAB+15      point to last char
+       MOV  R5,R6             save as high fence
+VARI51 CI   R5,BATPAB+15
+       JEQ  VARI55
+       CB   *R5,@PERIOD       start of filename?
+       JEQ  VARI55            yes, time to copy name over
+       DEC  R5
+       JMP  VARI51
+*
+VARI55 INC  R5
+VARI56 MOVB *R5+,*R3+
+       C    R3,R4
+       JHE  VARI82            line too long
+       C    R5,R6
+       JLE  VARI56            more chars to copy
+       JMP  VARI81            done with this parameter
+*
+VARI80 MOVB *R1+,*R3+
+VARI81 C    R1,R2             end of input line?
+       JHE  VARI99            yes
+*
+       C    R3,R4             end of command buffer?
+       JL   VARI00            nope, get more characters
+*
+VARI82 LI   R1,VARIM0         command line too long
+       BL   @MESG
+       B    @BRK99            close the batch file
+*
+VARI99 LI   R4,CBUF
+       S    R4,R3
+       MOV  R3,@BATPAB+12     never zero length
+*
+* is it a label?
+*
+       CB   @CBUF,@COLON      yes, ignore it (no echo, either)
+       JEQ  COMMAN
+
+       CB   @CBUF,@H00        null line? (see start of parse/read code) 4.18.21
+       JEQ  COMMANA           skip                                      4.18.21
+
+
+*
+* check echo flag, echo line if appropriate
+* then fill remainder of line with spaces
+*
+       MOV  @ECHO,R0
+       JEQ  BAT10             no echo
+*
+       BL   @PROMPT
+       LI   R1,CBUF
+       MOV  @BATPAB+12,R2     line length
+       JEQ  BAT10
+BAT00  MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  BAT00
+       LI   R1,CRLF
+       BL   @MESG
+*
+BAT10  LI   R1,CBUF
+       A    @BATPAB+12,R1
+BAT11  CI   R1,CBUF79
+       JH   BAT12
+       MOVB @SPACE,*R1+
+       JMP  BAT11
+
+COMMANA
+       B    @COMMAN      4.18.2021 Added as JMP from instruction above too far
+
+
+*
+BAT12  LI   R1,CBUF
+       MOV  R1,R2
+       AI   R2,79             end of command buffer
+       JMP  COMM01            execute the command
+*
+COMM10 CLR  @BATFLG           since error, no longer in batch mode
+COMM00 BL   @PROMPT
+       LI   R1,CBUF
+       LI   R2,79
+       SETO @STKFLG           enable command stack
+       BL   @GETSTR      R1=1ST, R2=LAST
+       CLR  @STKFLG
+COMM01 BLWP @DOSCMD
+
+
+       B    @COMMAN
+
+
+
+
+*
+* COPY OPTIONS TO OPTION BUFFER
+*
+EXTCMD DATA DOSREG,EXTENT
+DOSCMD DATA DOSREG,DOSENT
+EXTERN DATA 0
+EXT13  DATA 0
+EXT14  DATA 0
+EXT15  DATA 0
+*
+EXTENT SETO @EXTERN
+       MOV  R13,@EXT13        save these in case of a control-C
+       MOV  R14,@EXT14
+       MOV  R15,@EXT15
+*
+       MOVB @HFE,@>0102       non-preemptive task state
+       LIMI  2
+       JMP  DOSEN1
+*
+DOSENT CLR  @EXTERN           this is a CLI generated command
+DOSEN1 MOV  @2(R13),R0
+       MOV  R0,R1
+       MOV  @4(R13),R2
+DOCMD  CB   *R0,@ASTER
+       JNE  DOCMD0
+DOCMD1 B    @DOSRET           this was a remark...
+*
+DOCMD0 CB   *R0,@AMPERS
+       JNE  ECHO00
+       MOV  @EXTERN,R3
+       JNE  DOCMD1            can't exec an autoexec from another program
+*
+       INC  R0                point to filename
+       MOV  R0,R1
+       LI   R0,8              parse opcode
+       LI   R2,AUTNAM-1       autoexec pab
+       MOVB @MAXLEN,*R2
+       CLR  R3
+       XOP  @NINE,0
+       JNE  DOCMD1            parse error
+*
+       LIMI 0
+       SETO @NEWAUT
+       MOV  @REBOO1,R0
+       MOV  @REBOO1+2,R1
+       MOV  @REBOO2,R2
+       MOV  @REBOO2+2,R3
+       B    R0
+*
+REBOO1 CLR  @>F110
+REBOO2 BLWP @0
+
+*
+* check for a ">" outside of quotes
+*
+ECHO00 MOV  R0,R4
+       MOV  R2,R5
+ECHO01 C    R0,R2
+       JHE  ECHO99
+       CB   *R0,@QUOTE
+       JNE  ECHO10
+*
+ECHO02 INC  R0
+       C    R0,R2
+       JHE  ECHO99
+       CB   *R0,@QUOTE
+       JNE  ECHO02            still inside of quoted string
+*
+ECHO10 CB   *R0+,@GREATR
+       JNE  ECHO01            search the whole buffer, still not found
+       MOV  R0,R6
+       DEC  R6
+*
+ECHO20 C    R0,R2
+       JHE  ECHO88
+       CB   *R0,@SPACE
+       JNE  ECHO25
+       INC  R0
+       JMP  ECHO20
+*
+ECHO25 MOV  R0,R1
+       LI   R0,8              parse opcode
+       LI   R2,OUTLEN
+       MOVB @MAXLEN,*R2
+       CLR  R3
+       XOP  @NINE,0
+       JNE  ECHO88            parse error, don't open file
+*
+       BLWP @OUTOPN
+
+
+*      LI   R0,OUTPAB
+*      MOVB @OPNCOD,*R0
+*      XOP  @EIGHT,0          open the GD file
+*      MOVB @OUTERR,R0
+*      JNE  ECHO88            didn't open the file successfully
+
+*      MOVB @WRTCOD,@OUTPAB
+*      SETO @OUTFLG
+
+
+*
+ECHO88 C    R6,R5
+       JHE  ECHO99
+       MOVB @SPACE,*R6+
+       JMP  ECHO88
+*
+ECHO99 MOV  R4,R0             restore pointers
+       MOV  R4,R1
+       MOV  R5,R2
+*
+OPTL1Z C    R0,R2
+       JH   OPTOUT
+       CB   *R0,@SPACE
+       JEQ  OPTOUT
+       CB   *R0+,@SLASH
+       JNE  OPTL1Z
+       DEC  R0                POINT AT THE SLASH
+*
+OPTOUT LI   R3,OPTBUF
+OPTKIL CI   R3,OPTEND
+       JHE  OPOUT1
+       MOVB @SPACE,*R3+
+       JMP  OPTKIL
+*
+OPOUT1 CLR  *R3
+       LI   R3,OPTBUF
+       MOV  R0,R6
+       S    R1,R6             R6 HAS LENGTH
+       JEQ  DRET1
+       SWPB R6
+*
+OPTL2  C    R0,R2
+       JH   OPTJ2
+       CB   *R0+,@SPACE       skip all intervening spaces...
+       JEQ  OPTL2
+OPTJ2  DEC  R0                POINT AT THE 1ST NON-SPACE
+*
+OPTL3  C    R0,R2
+       JH   EXECIT
+       MOVB *R0+,*R3+
+       JMP  OPTL3
+*
+* CHECK FOR INTERNAL COMMAND
+*
+EXECIT LI   R4,COMTBL
+*
+* CHECK FOR DRIVE CHANGE
+*
+       CI   R6,>0200
+       JNE  COML1A
+       CB   @1(R1),@COLON
+       JNE  COML1A
+       MOVB *R1,R1
+       BL   @CHGDRV
+DRET1  B    @DOSRET
+*
+COML1A MOV  *R4+,R5
+       JEQ  LOADIT
+*
+       MOVB *R4,R7
+       SRL  R7,8
+*
+       CB   *R4+,R6
+       JNE  NEXT1
+*
+* LENGTH OK, NOW TO CHECK CHARACTERS
+*
+       MOV  R1,R3
+*
+COML2  MOV  R7,R7
+       JNE  COMJ1
+       LI   R0,OPTBUF
+       MOV  R13,@SAVR13
+       MOV  R14,@SAVR14
+       MOV  R15,@SAVR15
+       BL   *R5
+       MOV  @SAVR13,R13
+       MOV  @SAVR14,R14
+       MOV  @SAVR15,R15
+       B    @DOSRET
+*
+COMJ1  MOVB *R3+,R0
+       CI   R0,>6100
+       JL   NOTLOW
+       CI   R0,>7B00
+       JHE  NOTLOW
+       ANDI R0,>5F00
+NOTLOW DEC  R7
+       CB   R0,*R4+
+       JEQ  COML2
+
+NEXT1  A    R7,R4        POINT AT NEXT TABLE ENTRY
+       INC  R4
+       ANDI R4,>FFFE
+       JMP  COML1A
+*
+* LOADIT
+*
+LOADIT LI   R0,OPTEND
+LOD000 DEC  R0
+       CB   *R0,@H20
+       JNE  LOD001
+       CI   R0,OPTBUF
+       JH   LOD000
+       DEC  R0
+*
+LOD001 MOV  R0,R1
+       MOVB @H00,@1(R1)
+*
+       LI   R1,OPTBM1
+       S    R1,R0
+       SLA  R0,8
+       MOVB R0,@OPTBM1
+       LI   R0,CMDSTR
+       LI   R1,OPTBUF
+       BL   @STRNOD
+*
+       LI   R0,PATH#P
+       LI   R1,OPTBUF
+       MOVB @OPTLEN,@-1(R1)
+       BL   @NODSTR           get the path string
+       LI   R4,OPTBUF         pointer into path string
+*
+LOD002 LI   R0,8
+       LI   R1,CBUF
+       LI   R2,DOSNAM
+       MOVB @MAXLEN,*R2
+       CLR  R3
+       XOP  @NINE,0
+       JNE  LODNXT
+*      C    @DOSPAB+16,@WDSCHK   ; REMOVED 2.27.2021
+*      JEQ  LOD003               ; REMOVED 2.27.2021
+       C    @DOSPAB+16,@WDSCH2
+       JEQ  LOD003      H
+       C    @DOSPAB+16,@SCSCHK
+       JEQ  LOD003
+
+       C    @DOSPAB+16,@IDECHK   ;IDE 2.27.2021
+       JEQ  LOD003
+
+       C    @DOSPAB+16,@TIPCHK   ;TIPI 12.4.2020
+       JEQ  LOD003
+       C    @DOSPAB+16,@URICHK
+       JEQ  LOD003
+       C    @DOSPAB+16,@PICHK
+       JNE  LODDDA
+       CB   @DOSPAB+18,@PERIOD   ;disambiguate PI. vs. PIO.
+       JEQ  LOD003
+
+LODDDA C    @DOSPAB+16,@DSKCHK
+       JNE  LODNXT            bad file name
+*
+* try loading a pgm image, then a batch file
+* if both fail, try next prefix from path string
+*
+LOD003 MOV  @EXTERN,R0
+       JNE  LOD004            disallow more tasks by this method
+*
+       LI   R0,9              opcode for load
+       LI   R1,DOSNAM
+       XOP  @NINE,0
+       JEQ  DOSRET            good load
+*
+*      CI   R0,4              NOT FOUND=4    @@
+*      JNE  COMERR            others are bad media, out of memory, etc
+*
+* not found, now try to see if a d/v80 file of same name exists
+* (open it) if open successful, close BATCH file if it was open,
+* set batch processing flag and move the name into the BATCH pab.
+*
+LOD004 LI   R0,DOSPAB
+       XOP  @EIGHT,0
+       MOVB @DOSPAB+2,R1
+       JEQ  BATCHO            we found a batch file!
+*
+LODNXT CB   *R4,@H00
+       JEQ  COMERR            no more prefixes left in path string
+       LI   R1,CBUF
+LOD010 MOVB *R4,R2
+       JEQ  LOD020            go to move name onto end of string
+*
+       INC  R4
+       CB   R2,@SEMI          end of this prefix?
+       JEQ  LOD020            yes, go move name onto the end
+       MOVB R2,*R1+           copy this character over
+       JMP  LOD010
+*
+LOD020 CI   R1,CBUF
+       JEQ  LOD022
+*
+       CB   @-1(R1),@COLON
+       JEQ  LOD022
+       CB   @-1(R1),@PERIOD
+       JEQ  LOD022
+       CB   @-1(R1),@BSLASH
+       JEQ  LOD022
+*
+       MOVB @BSLASH,*R1+      concatenate char for dir+filespec
+LOD022 MOVB @DOSNAM,R2
+       SRL  R2,8
+       AI   R2,DOSNAM
+       MOV  R2,R3
+*
+LOD021 CI   R2,DOSNAM
+       JLE  COMERR            really, we can't get here!
+       CB   *R2,@PERIOD
+       JEQ  LOD030            suffix the name onto the current filespec
+       DEC  R2
+       JMP  LOD021
+*
+LOD030 INC  R2
+LOD031 MOVB *R2+,*R1+
+       C    R2,R3
+       JLE  LOD031
+       MOVB @H00,*R1+
+       JMP  LOD002
+*
+COMERR LI   R1,CMDERR
+       BL   @MESG
+DOSRET MOV  @OUTFLG,R0
+       JEQ  DOSRE2
+       CLR  @OUTFLG
+       LI   R0,OUTPAB
+       MOVB @CLOCOD,*R0
+       XOP  @EIGHT,0
+*
+DOSRE2 MOVB @HFF,@>0102       return to cli state.
+       RTWP
+*
+
+CMDERR TEXT 'Bad command or filename.'
+       BYTE >0D,>0A,0
+*
+***********************************************************
+*
+BATCHO MOV  @BATFLG,R0
+       JEQ  BATO00            no batch file currently open
+*
+       MOVB @CLOCOD,@BATPAB
+       LI   R0,BATPAB
+       XOP  @EIGHT,0          close the current batch file
+*
+BATO00 LI   R0,BATPAB+15
+       LI   R1,DOSPAB+15
+       LI   R2,41
+BATO01 MOVB *R1+,*R0+         move name of new batch file over
+       DEC  R2
+       JNE  BATO01
+*
+* move option string into batch variable buffer
+*
+*
+       LI   R0,CMDSTR
+       LI   R1,BATOPT
+       MOVB @OPTLEN,@-1(R1)
+       BL   @NODSTR           get the option string
+*
+* control-C can screw things up before flag is set @@ (fix later)
+* set up the batch flags now...
+*
+       SETO @BATFLG
+       INCT @BATFLG           flag==1 for normal batch mode
+       MOVB @REDCOD,@BATPAB
+       RTWP                   return to calling routine
+*
+************************************************************
+*
+MESG   MOVB *R1+,R0
+       JEQ  MESG1
+       BLWP @EMIT1
+       JMP  MESG
+MESG1  RT
+*
+******************************
+*
+CLSCOD LI   R0,>1A00
+       BLWP @EMIT1
+       MOV  @TURYMX,@TURY
+       MOV  @TURXMN,@TURX
+       RT
+*
+*******************************
+*
+RSBUG  DATA >2C40
+       RT
+*
+*VERS   LI   R1,LOGO1
+*      B    @MESG
+
+VERS
+       LI   R1,VERMSG
+       B    @MESG
+
+*
+********************************
+*
+SAVR13 DATA 0
+SAVR14 DATA 0
+SAVR15 DATA 0
+UWIDTH DATA 40
+ULINES DATA 24
+REGS   EQU  >F060
+DOSREG EQU  >F040
+*
+VIDSET BYTE >1A,>1B,'C'                      set colors
+CYAMPD BYTE >2F,>24,0                        set colors
+KILMSG BYTE >0D,>0A
+       TEXT 'Terminate batch job (Y/N)? '
+       BYTE >0D,>0A,0
+VARIM0 BYTE >0D,>0A
+       TEXT 'Line too long, killing batch.'
+CRLF   BYTE >0D,>0A,0
+CRLF2  BYTE >0D,>0A,>0A,0
+*
+SEVEN  DATA 7
+PERIOD BYTE '.'
+H20    BYTE >20
+SPACE  BYTE ' '
+PERCEN BYTE '%'
+SLASH  BYTE '/'
+ASTER  BYTE '*'
+AMPERS BYTE '&'
+COMMA  BYTE ','
+QUOTE  BYTE '"'
+GREATR BYTE '>'
+COLON  BYTE ':'
+SEMI   BYTE ';'
+BSLASH BYTE '\'
+H30    BYTE '0'
+H31    BYTE '1'
+H36    BYTE '6'
+H39    BYTE '9'
+H00    BYTE 0
+HF8    BYTE >F8
+HFE    BYTE >FE
+HFF    BYTE >FF
+SCRPAG BYTE >00
+MAXLEN BYTE 40
+*
+* @@
+FIVE   DATA 5
+SIX    DATA 6
+EIGHT  DATA 8
+NINE   DATA 9
+DSKCHK TEXT 'DS'
+*WDSCHK TEXT 'WD'
+WDSCH2 TEXT 'HD'
+SCSCHK TEXT 'SC'
+TIPCHK TEXT 'TI'         ;tipi 12.4.2020
+URICHK TEXT 'UR'
+PICHK  TEXT 'PI'         ;is PI text nowhere else?
+IDECHK TEXT 'ID'
+
+*
+OPNCOD BYTE 0
+CLOCOD BYTE 1
+REDCOD BYTE 2
+WRTCOD BYTE 3
+       BYTE 0
+*
+PWRFLG DATA -1                cleared after cold boot
+ECHO   DATA -1
+BATFLG DATA 0                 -1 is AUTOEXEC, 0 is user input, 1 is batch input
+NEWAUT DATA 0                 0 is main autoexec, -1 is replacement autoexec
+*
+OLDPAB DATA >0014,>0000,OPTADR,>0000
+       DATA 80,0,80
+       DATA OLDLEN
+
+CYAMP9 EQU  $
+OLDNAM TEXT 'DSK1.AUTOEXEC'
+OLDLEN EQU  $-OLDNAM
+*
+AUTPAB DATA >0014,>0000,OPTADR,>0000
+       DATA 80,0,80
+       DATA AUTLEN
+
+CYAMPA EQU  $
+AUTNAM TEXT 'DSK1.AUTOEXEC'
+AUTLEN EQU  $-AUTNAM
+       TEXT '                           '
+*
+BATPAB DATA >0014,>0000,OPTADR,>0000
+       DATA 80,0,80
+       DATA BATLEN
+
+CYAMPB EQU  $
+BATNAM TEXT 'DSK1.AUTOEXEC'
+BATLEN EQU  $-BATNAM
+       TEXT '                           '
+*
+DOSPAB DATA >0014,>0000,OPTADR,>0000
+       DATA 80,0,80
+       DATA DOSLEN
+DOSNAM EQU  $-1
+DOSN   TEXT '                                        '
+DOSLEN EQU  $-DOSN
+       DATA 0
+*
+COMTBL
+COM1   DATA VERS
+       BYTE 3
+       TEXT 'VER'
+       DATA LABCOD
+       BYTE 5
+       TEXT 'LABEL'
+       DATA TYPE
+       BYTE 4
+       TEXT 'TYPE'
+       DATA DIR
+       BYTE 3
+       TEXT 'DIR'
+       DATA CLSCOD
+       BYTE 3
+       TEXT 'CLS'
+       DATA VOLCOD
+       BYTE 3
+       TEXT 'VOL'
+COM2   DATA GETPMT
+       BYTE 6
+       TEXT 'PROMPT'
+COM3   DATA GETDIR
+       BYTE 5
+       TEXT 'CHDIR'
+COM3A  DATA GETDIR
+       BYTE 2
+       TEXT 'CD'
+       DATA GDATE
+       BYTE 4
+       TEXT 'DATE'
+       DATA GTIME
+       BYTE 4
+       TEXT 'TIME'
+       DATA GETPTH
+       BYTE 4
+       TEXT 'PATH'
+       DATA ASSIGN
+       BYTE 6
+       TEXT 'ASSIGN'
+       DATA MODE
+       BYTE 4
+       TEXT 'MODE'
+       DATA ATTRIB
+       BYTE 6
+       TEXT 'ATTRIB'
+       DATA CHKDSK
+       BYTE 6
+       TEXT 'CHKDSK'
+       DATA COPY
+       BYTE 4
+       TEXT 'COPY'
+
+;      DATA DSKCOM       ;removed 12.2020
+;      BYTE 8
+;      TEXT 'DISKCOMP'
+;      DATA DSKCOP
+;      BYTE 8
+;      TEXT 'DISKCOPY'
+
+       DATA ERASE
+       BYTE 3
+       TEXT 'DEL'
+       DATA ERASE
+       BYTE 5
+       TEXT 'ERASE'
+       DATA FORMAT
+       BYTE 6
+       TEXT 'FORMAT'
+       DATA RENAME
+       BYTE 3
+       TEXT 'REN'
+       DATA RENAME
+       BYTE 6
+       TEXT 'RENAME'
+       DATA VONOFF            *VERIFY COMMAND AFTER BARRY BOONE
+       BYTE 6
+       TEXT 'VERIFY'
+
+       DATA DEONOF           * TURNS HDS1.DSK1. SEARCHES ON/OFF IN GPL MODE
+       BYTE 5
+       TEXT 'DISK1'
+
+       DATA PSYSTM            * tat 5/7/96, Psystem modification
+       BYTE 4
+       TEXT 'PSYS'
+
+       DATA SETDSK            *SETDSK COMMAND AFTER BRUCE HELLSTROM
+       BYTE 6
+       TEXT 'SETDSK'
+
+       DATA CONOFF            cli\newcmds - case on/off, 24 Feb 93, jj
+       BYTE 4
+       TEXT 'CASE'            toggles case sensitive cli on or off
+*
+* batch mode commands
+*
+       DATA BATECH
+       BYTE 4
+       TEXT 'ECHO'
+       DATA BATFOR
+       BYTE 3
+       TEXT 'FOR'
+       DATA BATGOT
+       BYTE 4
+       TEXT 'GOTO'
+       DATA BATIF
+       BYTE 2
+       TEXT 'IF'
+       DATA BATPAU
+       BYTE 5
+       TEXT 'PAUSE'
+       DATA BATREM
+       BYTE 3
+       TEXT 'REM'
+*
+* autoexec batch file commands
+*
+       DATA VIDOFF
+       BYTE 5
+       TEXT 'VIDEO'
+
+       DATA AUTLAS
+       BYTE 9
+       TEXT 'LASTDRIVE'
+       DATA AUTRAM
+       BYTE 7
+       TEXT 'RAMDISK'
+       DATA AUTSPO
+       BYTE 5
+       TEXT 'SPOOL'
+
+       DATA AUTTIM
+       BYTE 6
+       TEXT 'TIMODE'     ;Standard TIMODE
+       DATA AUTTIN
+       BYTE 7
+       TEXT 'TIMODE2'    ;secondary TIMODE; no Myword pages reserved!
+
+       DATA RSBUG
+       BYTE 5
+       TEXT 'RSBUG'
+       DATA TREE
+       BYTE 4
+       TEXT 'TREE'
+       DATA RMDIR
+       BYTE 5
+       TEXT 'RMDIR'
+       DATA RMDIR
+       BYTE 2
+       TEXT 'RD'
+       DATA MKDIR
+       BYTE 5
+       TEXT 'MKDIR'
+       DATA MKDIR
+       BYTE 2
+       TEXT 'MD'
+
+       DATA REMAP
+       BYTE 5
+       TEXT 'REMAP'      10.2.92             BWM
+       DATA HARD
+       BYTE 4
+ ;;    TEXT 'HARD'       1.8.94              bwm
+       TEXT 'HFDC'       2.6.2021
+
+       DATA SCSMAP
+       BYTE 6
+       TEXT 'SCSMAP'
+
+       DATA IBMGRF
+       BYTE 6
+       TEXT 'IBMGRF'
+
+       DATA SCSIPD
+       BYTE 4
+       TEXT 'PDMA'
+
+       DATA MEMORY
+       BYTE 3
+       TEXT 'MEM'
+
+       DATA TELNET
+       BYTE 6
+       TEXT 'TELNET'
+       DATA 0
+       EVEN
+*
+*COM1  DATA ENTER1
+*      BYTE NAMLEN
+*      TEXT 'NAME'
+*
+       END
+*

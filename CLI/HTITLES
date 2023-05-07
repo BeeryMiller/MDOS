@@ -1,0 +1,168 @@
+* File: HTITLES
+* created 8/28/90 for automated date change when reassembling
+*      -PaulC
+*
+* 2.15.2021 Added crlf to VERMSG; moved HELLO to the text. Removed CLS. See hcls
+* 7.25.2022 Added CYAMP1 reference for CYA
+
+       COPY "CLI\HVERSIONS"
+*
+       DEF  CYAMP1       CYA VERSION REFERENCE
+       DEF  VERNUM
+       DEF  VERMSG
+*      DEF  HELLO
+       DEF  LOGO,LOGO1
+*      DEF  CHARD
+*
+       MAC  SPELL_MONTH
+*
+       IFS  "!D[0,2]","01"
+       TEXT 'January'
+       ELSE
+*
+       IFS  "!D[0,2]","02"
+       TEXT 'February'
+       ELSE
+*
+       IFS  "!D[0,2]","03"
+       TEXT 'March'
+       ELSE
+*
+       IFS  "!D[0,2]","04"
+       TEXT 'April'
+       ELSE
+*
+       IFS  "!D[0,2]","05"
+       TEXT 'May'
+       ELSE
+*
+       IFS  "!D[0,2]","06"
+       TEXT 'June'
+       ELSE
+*
+       IFS  "!D[0,2]","07"
+       TEXT 'July'
+       ELSE
+*
+       IFS  "!D[0,2]","08"
+       TEXT 'August'
+       ELSE
+*
+       IFS  "!D[0,2]","09"
+       TEXT 'September'
+       ELSE
+*
+       IFS  "!D[0,2]","10"
+       TEXT 'October'
+       ELSE
+*
+       IFS  "!D[0,2]","11"
+       TEXT 'November'
+       ELSE
+*
+       IFS  "!D[0,2]","12"
+       TEXT 'December'
+       FI
+*
+       FI
+       FI
+       FI
+       FI
+       FI
+       FI
+       FI
+       FI
+       FI
+       FI
+       FI
+*
+       MEND
+       EVEN
+
+*
+       MAC  DAY
+       TEXT '!D[3,2]'
+       MEND
+       EVEN
+*
+       MAC  YEAR
+       TEXT '!D[6,2]'
+       MEND
+*
+       EVEN
+
+*HELLO  BYTE >0C          ;Restart, clear screen | VER, don't clear
+
+*HELLO  BYTE 13,10        ;crlf for VER command
+VERMSG TEXT 'Version '
+       BYTE '0'+VER#,'.','0'+REV#,'0'+UPD#
+*      TEXT ' '
+       TEXT ', compiled '
+
+       SPELL_MONTH
+       TEXT ' '
+       DAY
+       TEXT ', 20'
+       YEAR
+
+*      BYTE 13,10,10
+*      TEXT 'Copyright 9640*News Contributors'
+*      BYTE 13,10,10
+*      TEXT ' !! CAUTION - DEVELOPMENT ONLY !!'
+       BYTE 13,10,10
+       BYTE 0            signals end of text
+       EVEN
+
+* Required for CYA, etc.
+CYAMP1
+VERNUM BYTE '0'+VER#,'.','0'+REV#,'0'+UPD#
+       BYTE ' '
+       BYTE 0
+       EVEN
+
+* Contained in L6\CHARSETS
+*CHARD  DATA >0000,>7C7C,>7C7C,>7070   128    17
+*      DATA >0000,>FCFC,>FCFC,>0000   129    18
+*      DATA >0000,>0080,>C0E0,>0000   130    19
+*      DATA >7070,>7070,>7070,>7070   131    20
+*      DATA >3010,>0C00,>0004,>0C1C   132    21
+*      DATA >3C7C,>7C7C,>7870,>6040   133    22
+*      DATA >0000,>FC7C,>FCFC,>F8F0   134    23
+*      DATA >E0C0,>8000,>0000,>0000   135    24
+*      DATA >0000,>E0C0,>8000,>0000   136    25
+
+* LOGO IS LAID OUT LIKE THIS:
+*
+* 228 229 229 229 229 229 230
+* 231
+* 232 234 236
+* 233 235
+
+LOGO   BYTE >0C
+LOGO1  BYTE 228,229,229,229,229,229,229,229,229,229
+       BYTE 229,229,229,229,229,229,229,229,229,229,229,229,229,229,229
+       BYTE 229,229,229,229,229,229,229,229,229,229,229,229,229,229
+       BYTE 230,>0D,>0A
+       BYTE 231
+       TEXT ' Geneve Operating System (MDOS) v'
+       BYTE '0'+VER#,'.','0'+REV#,'0'+UPD#
+       BYTE >0D,>0A
+       BYTE 232,234,236
+       TEXT '(c) 9640News and Contributors'
+       BYTE >0D,>0A
+       BYTE 233,235
+       TEXT ' Compiled '
+
+       SPELL_MONTH
+       TEXT ' '
+       DAY
+       TEXT ', 20'
+       YEAR
+*       BYTE >0D,>0A
+*       TEXT '    CAUTION - DEVELOPMENT ONLY!!'
+       BYTE >0D,>0A,>0D,>0A
+       BYTE 0,0
+       EVEN
+*
+       END
+*

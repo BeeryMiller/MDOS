@@ -1,0 +1,24 @@
+* File: PG_NUMS
+* page equates for MDOS ... intentionally volatile, to break
+* non-standard code with each release of MDOS
+*
+; 1.18.2021 Added P_TIPI definition
+
+       COPY 'HEAD\PAGENUMS'
+*
+       DEF  P_HEAD
+       DEF  P_NULL,P_DBUG
+       DEF  P_VID1,P_VID2,P_VID3
+       DEF  P_MEM
+       DEF  P_DSR1,P_DSR2,P_DSR3
+       DEF  P_DSR4,P_DSR5,P_DSR6,P_DSR7
+       DEF  P_MATH
+       DEF  P_CLI1,P_CLI2,P_CLI3,P_CLI4,P_CLI5
+       DEF  P_HFC1,P_HFC2
+       DEF  P_SCSI
+       DEF  P_SCAC
+       DEF  P_RESV,P_LAST
+       DEF  P_TIPI       11.22.2020bwm
+*
+       END
+*

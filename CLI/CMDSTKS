@@ -1,0 +1,79 @@
+;File: CLI\cmdstks
+; 2.20.2021 bwm, added URL1 for open/telnet
+; 3.06.2021 bwm, added MEM call buffers
+
+       DEF  TFREE,TFREE0,TOTAL,TPAGE,F8192,TEMP,TA,AA,IA,TF,STRING     3.6.2021
+
+       DEF  CMDSTK
+       DEF  CMDFRE
+       DEF  CMDS
+       DEF  CURCMD,LSTCMD
+       DEF  NAMBUF
+       DEF  DIRSTR,TMPLEN,TMPSTR
+       DEF  SCRUB1,SCRUB2
+       DEF  SCRNXT
+       DEF  NAME,CBUF,OPTBUF,OPTEND
+       DEF  BATOPT,BATEND
+       DEF  OPTLEN,OPTBM1,BATO80
+       DEF  CBUF79,CBUF80
+       DEF  OPTADR
+       DEF  URL1                             used for telnet connection
+       EVEN
+       DORG >8000
+CMDFRE BSS  2                 pointer to free nodes
+CURCMD BSS  2
+LSTCMD BSS  2
+CMDSTK BSS  32*2              max number of commands in stack
+       BSS  2
+CMDS   BSS  512
+NAMBUF BSS  10
+DIRSTR BSS  128
+TMPLEN BSS  1
+TMPSTR BSS  127
+URL1   BSS  80
+*
+NAME   TEXT '          '
+*
+       DATA 0
+CBUF   TEXT '                                        '
+       TEXT '                                        '
+       DATA 0
+*
+OPTBUF TEXT '                                        '
+       TEXT '                                        '
+OPTEND DATA 0
+*
+BATOPT TEXT '                                        '
+       TEXT '                                        '
+BATEND DATA 0
+*
+CBUF79 EQU  CBUF+79
+CBUF80 EQU  CBUF+80
+*  OPTADR EQU  OPTBUF+>E000
+OPTADR EQU  OPTBUF            7/31/88
+OPTBM1 EQU  OPTBUF-1
+OPTLEN EQU  OPTEND-OPTBUF
+BATO80 EQU  BATOPT+80
+*
+       DATA 0
+SCRUB1 DATA 0
+
+TFREE  EQU  $            \                       total free goes here
+TFREE0 EQU  TFREE+2       \ values returned      total free fast pages
+TOTAL  EQU  TFREE0+2      / from the mem xop     total installed pages
+TPAGE  EQU  TOTAL+2      /                       temporary page holder
+*
+F8192  EQU  TPAGE+2      will hold 8192 as a floating point
+TEMP   EQU  F8192+10     \
+TA     EQU  TEMP+10       \
+AA     EQU  TA+10          > will hold floating point numbers
+IA     EQU  AA+10         /
+TF     EQU  IA+10        /
+STRING EQU  TF+10        will hold string of floating point number
+
+*
+       DORG >9FEC
+SCRUB2 DATA 0
+       DATA 0
+SCRNXT DATA 0
+       END

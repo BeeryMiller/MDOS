@@ -1,0 +1,12 @@
+*
+* main file for MDOS power-up and scheduling routines
+*
+       COPY "HEAD\PAGENUMS"
+       COPY "HEAD\OSHEAD1S"
+       COPY "HEAD\HPAGES"
+       COPY "HEAD\HMOVTABS"
+       COPY "HEAD\OSHEAD2S"
+;;     COPY "HEAD\RS232DEBUG"
+       COPY "HEAD\OSHEAD3S"  ;final 1D00 segment
+       END
+*

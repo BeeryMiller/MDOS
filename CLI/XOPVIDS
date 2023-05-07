@@ -1,0 +1,160 @@
+       DEF  OUTPAB,OUTERR,OUTLEN,OUTFLG
+       DEF  VSET,EMIT1
+       DEF  OUTOPN                                              cp 93/07/28
+       DEF  EMITF
+       REF  SCRPAG,SCRNXT,SCRUB1,SCRUB2
+       REF  TSKMAP,UWIDTH,ULINES
+       REF  CTLP,CTLS
+*
+FIVE   DATA 5
+H00
+SIX    DATA 6
+VSET   STWP R0
+       MOV  R0,@>F000+26
+       LWPI >F000
+       LI   R10,TSKMAP
+       MOV  @>F110,*R10+
+       MOV  @>F112,*R10+
+       MOV  @>F114,*R10+
+       MOV  @>F116,*R10+
+       CLR  R0
+       LI   R1,1              text 80
+       XOP  @SIX,0       set text mode
+       LI   R0,>25
+       CLR  R1
+       CLR  R2
+       LI   R3,23
+       LI   R4,79
+       XOP  @SIX,0       set margins
+*
+       LI   R0,6
+       LI   R1,0
+       LI   R2,0
+       LI   R3,0
+       LI   R4,24
+       MOV  R4,@ULINES
+       DEC  R4
+       LI   R5,79
+       MOV  R5,@UWIDTH        window width @@almost...calculate, really
+       LI   R6,'  '
+       LI   R7,>0F04
+       XOP  @SIX,0       cls
+       DATA >009D
+       RT
+*
+EMIT1  DATA >F000,EMIT
+*
+EMIT   MOVB *R13,R0
+       JEQ  EMIT10            bag nulls...
+*
+       MOV  @CTLS,R0
+       JEQ  EMIT05            spin, spin, spin!
+*
+       LI   R0,4              10/23/90
+       XOP  @FIVE,0           eat unwanted keystrokes
+       JMP  EMIT
+*
+EMIT05 MOV  @OUTFLG,R0
+       JNE  EMIT30            no echo to screen if output redirected
+*
+       LI   R0,>27
+       LI   R1,>F006
+       CLR  *R1
+       MOVB *R13,*R1
+       CLR  R2
+       XOP  @SIX,0
+*
+       MOV  @EMITF,R0
+       JNE  EMIT30
+*
+       MOVB @>F114,R1
+       MOVB @SCRPAG,@>F114
+       MOV  @SCRNXT,R0
+       MOVB *R13,*R0+
+       CI   R0,SCRUB2
+       JL   EMIT29
+       LI   R0,SCRUB1
+EMIT29 MOVB @H00,*R0
+       MOV  R0,@SCRNXT
+       MOVB R1,@>F114
+*
+EMIT30 MOV  @EMITF,R0
+       JNE  EMIT10            no echo flag is on (cursor blink)
+*
+       MOVB *R13,@PRNBUF      buffer for printer & file redirection
+*
+       MOV  @CTLP,R0
+       JEQ  EMIT20
+*
+* printer echo goes here!
+*
+       LI   R0,PRNPAB
+       XOP  @EIGHT,0          should we check for errors?
+*
+EMIT20 MOV  @OUTFLG,R0
+       JEQ  EMIT10
+*
+* output redirect to file goes here.
+*
+* Redirection changed from DF1 to DV80 by Clint Pulley   93/07/28
+*
+       MOVB @PRNBUF,R0         CHARACTER
+       CB   R0,@CR
+       JEQ  EMIT10             IGNORE IF CR
+       CB   R0,@LF
+       JEQ  EMIT11             WRITE RECORD IF LF
+       MOV  @OUTPTR,R1         BUFFER POINTER
+       MOVB R0,*R1             CHARACTER TO BUFFER
+       INC  @OUTCTR            BUMP COUNTER
+       C    @OUTCTR,@UWIDTH
+       JH   EMIT11             WRITE RECORD IF FULL LINE
+       INC  @OUTPTR            BUMP POINTER
+*
+EMIT10 RTWP
+*
+EMIT11 LI   R0,OUTPAB
+       XOP  @EIGHT,0           WRITE RECORD
+       JMP  OUTXXX
+*
+OUTOPN DATA >F000,OUTOPE       OPEN DV80 OUTPUT REDIRECT FILE
+*
+OUTOPE LI   R0,OUTPAB
+       MOVB @H00,*R0
+       XOP  @EIGHT,0           OPEN FILE
+       MOVB @OUTERR,R0
+       JNE  OUTOPX             IF OPEN ERROR, DONT SET FLAG ETC.
+       SETO @OUTFLG            SET REDIRECT FLAG
+       MOVB @H03,@OUTPAB       SET WRITE OPCODE
+OUTXXX CLR  @OUTCTR            CLEAR COUNTER
+       LI   R0,OUTBUF
+       MOV  R0,@OUTPTR         SET BUFFER POINTER
+OUTOPX RTWP
+*
+PRNPAB DATA >0302             DISPLAY,FIXED 1
+       DATA >0000
+       DATA PRNBUF
+       DATA 0,1,0,1
+       BYTE 0
+H03    BYTE 3
+       TEXT 'PIO'
+PRNBUF BYTE 0
+*
+OUTPAB DATA >0312             DISPLAY VARIABLE 80
+OUTERR DATA >0000
+       DATA OUTBUF
+       DATA 0,80,0
+OUTCTR DATA 0                  OUTPUT CHARACTER COUNTER
+       BYTE 0
+OUTLEN BYTE 0
+       TEXT '                                       '
+*
+OUTBUF BSS  80                 OUTPUT LINE BUFFER
+OUTPTR DATA OUTBUF             OUTPUT BUFFER POINTER
+OUTFLG DATA 0
+EMITF  DATA 0
+EIGHT  DATA 8
+CR     BYTE >0D
+LF     BYTE >0A
+*
+       END
+*

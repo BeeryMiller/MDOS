@@ -1,0 +1,21 @@
+; File: HMOVTABS
+;
+;1994       Added SCSI
+;1.18.2021  Added TIPI
+;
+;5.13.2022  These pages are copied ONCE by OSHEAD1S:OSINT0 routine. The
+;           subsequent warm restarts ("&", ctrl-alt-del) skip the copies.
+;           We could re-order pages some day to minimize the memory gymnastics
+;           Notice that once the pages are moved, the OS uses the source
+;           pages for other purposes ie, DSR buffers and print spooler.
+*
+* Dependent files: oshead1s
+*
+MOVTAB DATA >0000,P_RESV*256+P_HFC2,>0000,>2000    offset1,p1:p2,offset2:length
+       DATA >0000,P_LAST*256+P_HFC1,>0000,>2000    offset1,p1:p2,offset2:length
+       DATA >0000,P_LAST+2*256+P_SCSI,>0000,>2000  offset1,p1:p2,offset2:length
+       DATA >0000,P_LAST+3*256+P_TIPI,>0000,>2000   ;12.20.2020 tipi
+MOVEND DATA >0000,P_LAST+1*256+P_CLI4,>0000,>2000  offset1,p1:p2,offset2:length
+
+*
+*eof

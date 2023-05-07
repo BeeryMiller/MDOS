@@ -1,0 +1,11 @@
+* v6.70 Sept 2009
+* v7.00 March 4 2018
+* v7.10 December 30, 2020 TIPI prep
+* v7.30 April 3, 2021 preparing for release
+* v7.34 consolidated bwm/tat code 5-7-2022
+* v7.40 preparing 7.40 official release
+
+VER#   EQU  7
+REV#   EQU  4
+UPD#   EQU  0
+

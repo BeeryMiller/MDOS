@@ -1,0 +1,11 @@
+SETAXB  MOV  @SCSIAC,@SCSIAC
+        JEQ   SETAX0
+        LI    R1,GTSBUF
+        MOV   R1,@RAMBUF
+        RT
+
+SETAX0 LI   R1,GTSBUF+>0800
+SETAX1 S    @IOOSET,R1
+       MOV  R1,@RAMBUF
+       LI   R1,GTSBUF
+       RT

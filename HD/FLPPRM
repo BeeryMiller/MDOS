@@ -1,0 +1,201 @@
+********************************************************************************
+* File:HD\FLPPRM
+*
+*      ROUTINE TO READ AND INSTALL THE <hfdc> FLOPPY DISK PARMS
+*         FIRST FIND THE CRU BASE
+*            IF CARD IS THERE, INITIALIZE hfdc onboard memory
+*            Set HFDCRU at >6016
+*              THEN READ FLOPPY DISK PARMS
+*              THEN TRY TO READ SECTOR 0 OF HDS1. AND DETERMINE
+*                 IF EMULATION DISK EXISTS ON DRIVE 1
+*
+; 6.19.2022 HFDCRU (>6016) is set in this routine
+;             Test for SCSI CRU via SCSICRU(>6018) so HFDC must be AFTER scsi
+;             Since the SCSI card also has WDS and similar linkage!
+;           Limit CRU scan to >1D00. Skip SCSI, regardless of CRU
+;         $ Some day we could allow SCSI emulate.
+;
+; 7.25.2022 CYA Step Rates with lavels CYAMP2, CYAMP3, CYAMP4
+;
+;
+********************************************************************************
+       DEF  CYAMP2,CYAMP3,CYAMP4
+
+
+PWRUPP BLWP @PRWIN0
+       RT
+*
+PRWIN0 DATA PWRWS0,PRWIN1
+*
+PWRWS0 BSS  32
+*
+PRWIN1 CLR  R1                assume no emulate file for now
+       BL   @PRWIN2
+       MOV  R1,@2(R13)        return emulate on flag  (0 == no emulate file)
+       MOV  R12,@24(R13)      return CRU base (use HFDC floppies @>1100)
+       RTWP
+*
+PRWIN2 LI   R12,>0F00
+       MOVB @MAP968,R10       SAVE OUT PAGES USED HERE
+       SWPB R10
+       MOVB @MAP962,R10
+       MOVB @DSRPG2,@MAP962   MAP IN THE I/O PAGE
+       MOVB @CBHBA,@MAP968    MAP IN THE I/O PAGE
+
+PWR1   AI   R12,>0100         NOW LOOK FOR "WDS1" AND A GPL LINK VECTOR
+
+       MOV  @SCSICRU,@SCSICRU ;scsi in the system? 6.19.2022
+       JEQ  PWR1SD            ;0=no cru
+       C    R12,@SCSICRU      ;are we at scsi cru?
+       JEQ  PWR1              ;yea, so loop again, skipping this CRU
+
+;;;    CI   R12,>1200         must SKIP scsi card..second powerup could cause
+;;;    JNE  PWR1SD            a problem.
+;;;    LI   R12,>1300
+
+PWR1SD CI   R12,>1E00         ;nah, don't allow >1E00 or >1F00
+       JL   PWR7
+
+;PWR1SD CI   R12,>2000
+;       JNE  PWR7
+
+       MOV  R11,R9            NO HFDC ON THERE AND NO FLOPPY EMULATE
+       CLR  @PWRENT-2         hfdc mod by tim tesch
+       B    @DSOER2           AT THE END, AND NO HFDC CARD
+
+PWR7   SBO  0                 TURN ON THE CARD
+       CB   @CBHAA,@>8000     IS THIS A VALID CARD?
+       JEQ  PWR2              YES, SO TEST FURTHER
+PWR3   SBZ  0
+       JMP  PWR1
+
+PWR2   MOV  @>8008,R9         IS THERE A DSR LINK VECTOR?
+       JEQ  PWR3              NO, SO TRY NEXT
+       AI   R9,>4004          NOW R9 POINTS TO LENGTH
+       LI   R8,NAMWDS
+PWR4   CB   *R9+,*R8+
+       JNE  PWR3              NO MATCH, SO TRY NEXT
+       CI   R8,NAMWDE
+       JNE  PWR4
+       MOV  @>800A,R8         NAME FOUND, SO SEE IF GPL LINK VECTOR EXISTS
+       JEQ  PWR3              NO, SO MUST BE OLD PERSONALITY CARD
+       SBZ  RSETHD            RESET HARD DISK CONTROLLER CHIP
+       LI   R4,>0800          ZERO OUT ALL RAM
+       SBO  RSETHD            READY TO GO
+       AI   R12,>0012         CLEAR OUT THE RAM
+       MOVB @CBH01,@CMDREG    DESELECT ALL DEVICES
+       MOVB @STSREG,R8        FAKE READ OF STATUS REGISTER TO HELP
+PWRUP2 LI   R5,>400+CRDRAM
+       LDCR R4,5              DO IT 1K AT A TIME AT >5400
+       LI   R6,>200           ZERO OUT 1K AT A TIME
+PWRUP1 CLR  *R5+
+       DEC  R6
+       JNE  PWRUP1
+       AI   R4,>0100
+       CI   R4,>1000
+       JNE  PWRUP2
+       LDCR @CBH09,5          THIS LOADS IN THE NEXT CONTIGUOUS PAGE AT
+       ANDI R12,>FF00         >400+CRDRAM
+HFF00  EQU  $-2
+
+* NOW INIT THE DEFAULT PATHNAME BUFFER
+       LI   R4,5
+       LI   R5,PNLENG
+       MOV  R4,*R5+           >05,W,D,S,1,.  (makes no sense )
+       INCT R5
+       MOV  R4,*R5+
+       INCT R5
+       MOV  R4,*R5+
+
+       MOV  R12,@HFDCRU       ;save to >6016 !
+
+       MOV  R12,@WRKREG+24    SAVE THE CRU ADDRESS IN THESE REGISTERS
+       MOV  R12,@WRKRG2+24
+       MOV  R12,@GTVREG+24
+       MOV  R12,@FAC+24
+       MOV  R12,@GPLWS+24
+* NOW GET DISKETTE PARMS
+       SBO  4
+       STCR R0,8
+       SBZ  4
+       LI   R1,FLPPRM+8       DRIVE 3 FIRST
+       MOV  R11,R9            SAVE R11
+       BL   @SETFLP
+       LI   R1,FLPPRM+12      DRIVE 4 NEXT
+       BL   @SETFLP
+       LI   R1,FLPPRM         DRIVE 1
+       BL   @SETFLP
+       LI   R1,FLPPRM+4
+       BL   @SETFLP
+* NOW SEE IF CRU BASE IS AT >1100, AND IF SO FILL IN VDP HEADER
+
+********************************************************************************
+* (determines if Emulate file is on WDS1)
+*
+*      THIS ROUTINE DETERMINES IF DSK1 IS ON WDS1
+*        AND GETS SECTOR AS DESIRED
+*
+* if we add scsi, then scsi buffers must have emulate room set aside
+********************************************************************************
+       JMP  DSONHD
+       DATA >9876
+DSONHD ABS  @DSONTS           HAVE WE TRIED BEFORE?
+       JEQ  DSO000            NO, SO GIVE IT A TRY
+       ABS  @DSONWD
+       JEQ  DSOER             DOESN'T EXIST
+       JMP  DSO001            YES, SO TELL THEM
+
+DSO000 SETO @DSONTS           WE HAVE NOW
+       CLR  @SCSIAC           MAKE SURE SCSI ACCESS IS TURNED OFF
+       LI   R1,DK1FCB+>0800
+       MOV  @H0800,@IOOSET
+       BL   @SETAX1
+       MOV  @H0001,@VOLUME
+       CLR  @AUNUM
+
+       BLWP @RSECDR           READ SECTOR 0  <----sector IO!
+       JEQ  DSOER             ERROR
+
+       MOV  @PARDIR+DK1FCB,@AUNUM   IS THERE A DK1 ON HD?
+       JEQ  DSOER             NO DK1 ON HD
+
+       CLR  @SCINAU
+       BLWP @RSECTR           GET THE FCB
+       JEQ  DSOER             READ ERROR
+       MOVB @FSTATF+DK1FCB,R1
+       COC  @H2000,R1
+       JNE  DSOER             NOT AN EMULATE FILE
+       SETO @DSONWD           THERE IS ONE
+       LI   R3,EMDKCB+2       NOW SAVE THE PARMS
+       MOV  @AUNUM,*R3
+       MOV  @LEV2RC+DK1FCB,@EMDKSZ  SAVE THE NUMBER OF SECTORS IN THE EM FILE
+DSO001 SETO R1
+       JMP  DSOER1
+
+DSOER  CLR  R1                NO DSK1 FILE ON HD
+DSOER1 SBZ  0
+DSOER2 MOVB R10,@MAP962       RESTORE MEMORY MAP
+       SWPB R10
+       MOVB R10,@MAP968
+       B    *R9               RETURN TO CALLER
+*
+SETFLP LI   R3,40
+       SLA  R0,1              TEST LOW SWITCH
+       JNC  SETFL1            JUMP IF 40 TRACK, 8 MSEC OR 80 TRK, 2MSEC
+* TO BE HERE, EITHER 40 TRK, 16 MSEC, OR 80 TRK 2 MSEC (720 K)
+       LI   R4,>0500          16 MSEC, NO HD
+       SLA  R0,1
+       JOC  SETFL2            IS 40 TRK, 16 MSEC, NO HD
+CYAMP2 LI   R4,>0200          IS 80 TRK, 2 MSEC, NO HD     CYA HEADSTEP 360
+SETFL3 LI   R3,80
+SETFL2 MOV  R3,*R1+
+       MOV  R4,*R1
+       RT
+* TO BE HERE, EITHER 40 TRK, 8 MSEC OR 80 TRK, 2 MSEC, HD
+CYAMP3
+SETFL1 LI   R4,>0400                                       CYA HEADSTEP 720
+       SLA  R0,1
+       JOC  SETFL2
+CYAMP4 LI   R4,>03FF          2 MIL-SEC, HD,               CYA HEADSTEP 1.44
+       JMP  SETFL3
+;eof

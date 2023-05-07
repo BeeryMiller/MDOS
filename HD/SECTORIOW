@@ -1,0 +1,383 @@
+* hd\SECTORIOW
+*
+* - Modified Default Step rate to original speed >00 (see label STR8R1)
+* - Added some documentation
+*
+* RSECTR / WSECTR -
+*      used by SECTORIO8 for Emulation Disk routines
+*      Where the devil is DSK/DSK1 emulation though???
+*
+* SCSIAC    0=HFDC; 1=scsi
+* R6        0=read ; <>0 is write
+* direct    0=direct; 1=not direct access
+* scrampage >1200 (page >12 is where 8k scsi code resides)
+*
+*      1. Branch into read/write routines
+*      2. determine whether hfdc or scsi
+*      3. do the scsi IO or plod through to hfdc io
+*
+*
+* 3.17.2018, fixed scrampage to use P_SCSI equate vs. hardcoded page
+* 6.18.2022, restored from TT220514 after failed testing w/step rate code
+* 7.25.2022, Added CYA label reference, CYAMPC for HFDC step rate
+
+       DEF  CYAMPC       7.25.2022
+
+RESER  LI   R0,>C000          RESTORE ERROR
+;      BLWP @DIGE8       5.5 CYAN FOR RESTORE ERROR
+
+       B    @BADS01           ERROR CODE IN R0 ALREADY
+*
+********************************************************************************
+*
+* SECTOR I/O ROUTINE
+*      FOR EACH HARD DRIVE THE PARAMETERS SAVED ARE:
+*           1) # OF AU'S           BASE 1
+*           2) # OF SECTORS PER TRACK   | # OF AU'S FOR HED ** 64
+*           3) STEP SPEED (0-7)         | RED WRT CUR CYL * 8
+*           4) WINTYP XXXX             # OF SECTORS/AU (BASE 0)
+*                         XXXX         # OF HEADS      (BASE 0)
+*                             X        NOT USED
+*                              XXXXXXX WRITE PRECOMP/16
+*
+********************************************************************************
+*
+*  THE FOLLOWING VECTORS ARE FOR ON THIS PAGE CALLS ONLY
+*
+       REF  SCRDD,SCWTD,SCRDS,SCWTS
+*
+
+RSECTR DATA FAC,READS    used by emulation and HD
+WSECTR DATA FAC,WRITES   used by emulation and HD
+RSECDR DATA FAC,READD    READ DIRECT         (ever used by emulate??)
+WSECDR DATA FAC,WRITED   WRITE DIRECT        (ever used by emulate??)
+
+*
+* Mike really made this logic interesting. Sigh... Will have to talk to him
+*      someday. jumping into a write from a read. blah.
+*
+READD  CLR  R6                read (R6=0)
+       MOV  @SCSIAC,@SCSIAC   scsi?? (0=hfdc)
+       JEQ  SIO000       jump into write routine, but R6 still indicates read
+       BL   @PAGEIN
+       BL   @SCRDD            SCSI READ (sector_s)
+       BL   @PAGEOUT
+       RTWP
+
+*
+WRITED SETO R6
+SIO000 SETO @DIRECT           flag is SET for direct, both from READD & WRITED
+       MOV  @SCSIAC,@SCSIAC   0=hfdc
+       JEQ  SIO001            jump into HFDC direct read OR write
+       BL   @PAGEIN      map our scsi buffers
+       BL   @SCWTD       SCSI WRITE DIRECT
+       BL   @PAGEOUT
+       RTWP
+*
+READS  CLR  R6                R6=0 == READ
+       MOV  @SCSIAC,@SCSIAC   scsi? 0=hfdc
+       JEQ  SIO002       jump into write area; R6 still reset to 0
+       BL   @PAGEIN
+       BL   @SCRDS       SCSI READ SECTOR
+       BL   @PAGEOUT
+       RTWP
+*
+WRITES SETO R6           R6<>0 == WRITE
+SIO002 CLR  @DIRECT      Clear for BOTH READS and WRITES routines
+       MOV  @SCSIAC,@SCSIAC
+       JEQ  SIO001       hfdc io
+       BL   @PAGEIN
+       BL   @SCWTS
+       BL   @PAGEOUT
+       RTWP
+
+* SCRAMPAGE  DATA >1200    MDOS pushes last 8k of system/sys HERE upon startup
+SCRAMPAGE  DATA P_SCSI*256  >12xx; use pagenum equate, not hardcode!!!
+
+*******************************
+* MUST PAGE IN ==== SCSI ==== SECTOR ACCESS ROUTINES NOW!
+*******************************
+PAGEIN  MOVB  @>F110,@SCRAMPAGE+1             *IN THE >C000->DFFF AREA.
+        MOVB  @SCRAMPAGE,@>F110
+        RT
+
+*RESTORE THE DSR PAGE NOW.  WERE DONE WITH THE SCSI TRANSFER.
+
+PAGEOUT  MOVB @SCRAMPAGE+1,@>F110
+         RT
+
+*****************  THE FOLLOWING ROUTINE SETS UP THE FOLLOWING FLAGS  **********
+*     REALFD  FLAGRF  IOTOFH  FPSELC  MTOSTS  IT TURNS THE MOTOR ON            *
+*              IT SETS THE R2 POINTER                                          *
+********************************************************************************
+SIO001
+;      BLWP @DIGE4       SET WHITE ON BLUE TO START
+
+       SZCB @CBH20,R15        RESET EQ BIT
+       LI   R3,RETRY          LOAD RETRY COUNT
+       LI   R1,DATREG                  HARD DISK FILE
+       MOV  @VOLUME,R2
+       SLA  R2,3
+       AI   R2,CYLPLT-8       POINT TO PARMS
+*                             ALL DONE
+SIO410 CLR  @FAKIO0
+       CLR  R8
+       CLR  R9
+       MOV  @AUNUM,R10        IS IT SECTOR 0 I/O?
+       JNE  SIO003            NO
+* IT MAY BE SECTOR 0 I/O
+       MOV  *R2,R7            IT IS WINCHESTER, SO DO WE KNOW ABOUT THE PARMS?
+       JNE  SIO024            YES WE DO, SO DON'T OVER DO IT
+* HAVEN'T HIT THIS DRIVE BEFORE
+       ABS  @DIRECT           IS IT TRUELY SECTOR 0 I/O?
+       JNE  SIO025            YES
+       MOV  @SCINAU,R11
+       JEQ  SIO025            YES
+************ MAY WANT TO DO A DUMMY READ OF SECTOR 0 HERE LATER ****************
+BAD01Z LI   R0,>E000          NOT SECTOR 0 I/O AND NOT ACCESSED BEFORE
+       B    @BAD01A
+*
+SIO300 SETO @FAKIO0           SET FLAG FOR READING OF SECTOR 0
+SIO025 BL   @STR789           SET R7,R8,R9
+* BEFORE WE DO THE RESTORE HERE, WANT TO DO A NORMAL READ SECTOR 0 PERHAPS
+*   IN PARTICULAR IF WINCHESTER WHEN PARMS ARE KNOWN
+       MOV  *R2,R0            HAVE WE READ THIS DRIVE BEFORE?
+       JNE  SI0251            YES
+;;     BL   @RESTRW           RESTORE THE HEAD OF THE DRIVE
+;;     JNC  RESER             RESTORE ERROR
+SI0251 BL   @SETBUF           SET BUFFER ACCORDING TO RAMBUF OR SCOBUF ACCORDINY
+       CLR  *R1               SECTOR
+       CLR  *R1               CYL/HEAD
+       CLR  *R1               CYL
+       BL   @IOSELD           SET
+       JNE  SIO503            BAD READ
+*  GOOD READ SO SET I/O PARMS FOR THIS DRIVE
+SIO441 LI   R7,SC0BUF         ASSUME SECTOR 0 BUF CONTAINS SECTOR
+       ABS  @FAKIO0           IS THAT CORRECT
+       JNE  SIO432            YES
+       MOV  @RAMBUF,R7
+SIO432 AI   R7,TOTAU
+       MOV  *R7+,*R2+         SAVE AU'S
+       MOV  *R7+,*R2+         SEC/TRK, # OF AU'S FOR FILES
+       MOV  *R7+,R0
+       ANDI R0,>07FF          MASK OFF BAD BITS
+       MOV  R0,*R2+           SAVE STEP SPEED AND RED WRT CUR
+       MOV  *R7,*R2
+       AI   R2,-6             ADJUST R2
+
+       ABS  @FAKIO0           WAS IT THE REAL THING?
+       JNE  SIO410            NO, SO GO TO THE REAL I/O
+SIO440 CLR  R0                ALL DONE, NO ERROR
+BADS02 MOVB R0,*R13           ERROR CODE RETURN
+       LI   R0,>0100          DESELECT
+       BL   @WATS00           WAIT IT OUT
+       RTWP                   ALL DONE
+*
+SIO503 DEC  R3                ONE LESS RETRY
+       JEQ  BAD01C            NO MORE TO TRY
+       JMP  SIO300
+
+*
+SIO003 MOV  *R2,R7            HAVE WE HIT THIS DRIVE BEFORE?
+************ MAY WANT TO DO A DUMMY READ OF SECTOR 0 HERE LATER ****************
+       JEQ  BAD01Z            NO
+SIO024 C    R10,R7            ARE WE WITHIN THE LIMITS?
+       JHE  BAD01Z            BAD PARMS
+* NOW CALCULATE WHERE IT IS ON THE WINCHESTER PHYSICALLY
+       ABS  @DIRECT           IS IT ON SECTORS 1 TO 64?
+       JNE  SIO013            YES
+       MOV  @6(R2),R11        GET # OF SECTORS PER AU
+SIO811 SRL  R11,12
+       JEQ  SIO011
+SIO012 SLA  R9,1
+       SLA  R10,1
+       JNC  SIO010
+       INC  R9
+SIO010 SRL  R11,1
+       JNE  SIO012
+SIO011 A    @SCINAU,R10       SHOULD NOT CAUSE A CARRY
+
+       MOVB @2(R2),R0
+       SRL  R0,8
+       DIV  R0,R9
+       MOV  @6(R2),R0         GET # OF HEADS
+       SLA  R0,4
+       SRL  R0,12
+       INC  R0
+       DIV  R0,R8
+       SLA  R9,4
+       MOVB R8,R9
+       SLA  R9,4
+************************  ADDED 10/24/88 ******************************
+       CLR  @CYLDER           yalfu
+       SLA  R8,5
+       MOVB @5(R2),R0
+       JEQ  NOTRWC            NONE
+       CB   R8,R0
+       JL   NOTRWC            NOT YET
+       MOVB @CBH08,@CYLDER    YES, REDUCE THE CURRENT
+NOTRWC SRL  R8,1              NOW FOR WRITE PRECOMP
+       MOVB @7(R2),R0
+       JEQ  NOTWPR
+       CB   R8,R0
+       JL   NOTWPR
+       SOCB @CBH02,@CYLDER
+NOTWPR SLA  R8,4
+********************************************************************************
+
+
+SIO013 SWPB R10
+       CLR  @RTRYIO
+
+;      BLWP @DIGE2       5.5 ENTER THE RETRY PHASE AS WHITE ON BLACK
+
+* NOW PERFORM SECTOR I/O
+RTRY00 BL   @SETBUF           BUFFER ADDRES R0-R2 SET IN 9234
+       MOVB R10,*R1           R3  SECTOR
+       MOVB R9,*R1            R4  MSB CYL/HEAD
+       MOVB R8,*R1            R5  LSB CYL
+       MOVB @CBH01,*R1        R6  SECTOR COUNT
+       BL   @STR789
+       BL   @IOSELL           PERFORM I/O
+       JEQ  SIO440            NO, SO JUST FINISH
+       INV  @RTRYIO           DO WE TRY IT AGAIN
+       JNE  RTRY00
+
+*
+BADS03 DEC  R3                ONE LESS RETRY TO PERFORM
+       JNE  SIO300            TRY IT AGAIN
+
+;      BLWP @DIGE6       5.5 RETRY ERROR = RED
+
+*
+*   WE HAVE ERRORED OUT, SO READ THE ERROR TYPE
+*      CONSIDER COMPARE ERROR, SYNC ERROR TO BE A 1, CRC ERROR A 2
+*
+BAD01C MOVB @CBH48,@CMDREG
+       MOVB @REDREG,R3
+       MOVB R3,@SCNOFF
+       LI   R0,>2200
+       ANDI R3,>2000
+       JNE  BAD01B            IT IS A CRC ERROR
+       LI   R0,>2100
+BAD01B MOV  R6,R6             READ/WRITE?
+       JEQ  BAD01A            READ
+       AI   R0,>1000          WRITE
+BAD01A ABS  @DSECIO           IS IT DIRECT SECTOR I/O (THEN GIVE RAW ERROR)
+       JNE  BADS01
+       LI   R0,>C000          IT IS 60 UNLESS WRITE PROTECT ERROR
+BADS01 SOCB @CBH20,R15        ERROR
+       B    @BADS02
+*
+*      SET R7,R8,AND R9 OF THE 9234
+*
+STR789 MOVB @CBH47,@CMDREG
+       CLR  R0
+       ABS  @FAKIO0           TEST FOR FAKE READ OF SECTOR 0
+       JNE  STR8R1
+       MOV  R6,R6             TEST FOR READ OR WRITE
+       JEQ  STR8R1            IT IS READ
+       ORI  R0,>F000          WRITE, SO NO RETRIES
+STR8R1 MOVB R0,*R1
+*
+* MFM HardDrive Step Rate:  >Ex00 where X=0-7, 7=slow, 0=fast
+* Maksimik modified this to >E000 (FAST)during creation of SCSI MDOS
+*      Nov02 2001 - Modified to original defaults TT  (>E700)
+*
+CYAMPC LI   R0,>E100          7.25.2022 LABEL ADDED FOR CYA MAPPING OF STEP RATE
+       MOV  *R2,*R2           HAVE WE HIT THE HD BEFORE?
+       JEQ  IOFDS4            NO
+       ABS  @ERRSMD           ARE WE IN THE ERROR RESTORE MODE?
+       JNE  IOFDS4            YES, SO GO SLOWLY TO SECTOR 0
+       MOVB @2(R2),R0         GET STEP SPEED IF WINCHESTER
+       ORI  R0,>E0A5
+IOFDS4 MOVB R0,*R1
+       MOVB @CBHA5,*R1
+*      MOVB @CBH02,*R1        SET THE HEAD LOAD DELAY FOR 2 INCREMENTS
+*
+*  SELECT DRIVE
+*
+SETDRV MOVB @VOLUME+1,R0
+       ORI  R0,>2400
+       B    @WATS00
+*
+WRTPER LI   R0,>3420          GPL ERROR CODE AND DSR ERROR CODE
+       ABS  @DSECIO
+       JNE  BADS01
+       SWPB R0
+       JMP  BADS01
+*
+SETBUF LI   R0,SC0BUF->9000+>2000   ASSUME SECTOR 0 I/O BUFFER
+       ABS  @FAKIO0           IS IT FAKE READ OF SECTOR 0?
+       JNE  SETB00            YES
+       MOV  @RAMBUF,R0
+       A    @IOOSET,R0
+       AI   R0,>2000->9800
+SETB00 SWPB R0
+       MOVB @CBH40,@CMDREG    SET CMD POINTER
+       MOVB R0,*R1            SET R0 DMA ADDRESS
+       SWPB R0
+       MOVB R0,*R1                R1
+       CLR  *R1                   R2
+       RT
+*
+RESTRW MOV  R11,@RESRTN       DON'T DO THE WAIT
+       MOV  R8,@SAVSR8        SAVE AND LATER RESTORE R8
+       BL   @READR9           TEST TRACK000
+       JOC  DRVRD3            YES, AT TRACK 000 ALREADY
+       LI   R0,>0300          ISSUE RESTORE COMMAND
+       BL   @WATS00
+
+* NOW FIX THE BUG IN THE 9234 FOR RESTORE
+DRVRD3 BL   @READR9            TEST FOR TRK000 ACTIVE AND WRITE PROTECT
+       MOV  R6,R6             READ OR WRITE?
+       JEQ  DRVRD2
+       SLA  R0,2              IS IT WRITE PROTECTED?
+       JOC  WRTPER            YES, SO ERROR
+DRVRD2 MOV  @RESRTN,R11       NO ERROR IF NON ZERO
+       MOV  @SAVSR8,R8        RESTORE
+*
+READR9 MOVB @CBH49,@CMDREG
+       MOVB @REDREG,R0
+       SLA  R0,4              GET READY WITH TRACK 000 TEST
+       RT
+*
+IOSELD MOVB @CBH01,*R1
+IOSELL LI   R0,>5DB0          ASSUME READ
+       ABS  @FAKIO0           REAL THING?
+       JNE  WATS00            FAKE READ OF 0
+       MOV  R6,R6             READ OR WRITE?
+       JEQ  WATS00            READ IT IS
+       SWPB R0                WRITE COMMAND
+       SOCB @CYLDER,R0        SET RWC AND WPR BITS
+WATS00 MOVB R0,@CMDREG
+WATSO0 TB   0                 SET THE CORRECT CRU BITS IF FLOPPY I/O
+       JNE  WATSO0
+       MOVB @STSREG,R0
+       ANDI R0,>1800
+       RT
+
+; COLOR CHANGES FOR ERROR DETECTION
+;PLOPWS BSS  >20
+;DIGE2  DATA PLOPWS,DIG2
+;DIGE4  DATA PLOPWS,DIG4
+;DIGE6  DATA PLOPWS,DIG6
+;DIGE8  DATA PLOPWS,DIG8
+;
+;DIG2   LI   R0,>87F2
+;      JMP  DIGST
+;DIG4   LI   R0,>87F4
+;      JMP  DIGST
+;DIG6   LI   R0,>87F6
+;      JMP  DIGST
+;DIG8   LI   R0,>87F8
+;      JMP  DIGST
+;
+;
+;
+;DIGST  SWPB R0
+;      MOVB R0,@>F102
+;      SWPB R0
+;      MOVB R0,@>F102
+;      RTWP
+; EOF

@@ -1,0 +1,393 @@
+       REF  FREPTR,CURDRV,MAXDRV,ALIASA
+       REF  PMTSTR,PATH#P,GPLPAR,ALIASP
+       REF  DIRSTR
+       REF  TMPLEN,TMPSTR
+*
+       DEF  CHGDRV,CNVRTF
+       DEF  PROMPT,ASSIGN
+       DEF  GETDIR,GETPTH
+       DEF  GETPMT                     ,GETSPD @@ dead command
+       REF  STRNOD,NODSTR
+       REF  MESG,EMIT1,DDATE,DTIME
+       REF  VERNUM,CRLF
+       REF  TURY,TURYMX,TURX,TURXMN
+*
+************************************************************
+*
+CHGDRV MOV  R1,R0
+       LI   R1,CURDRV
+CHKDRV SETO @CHKFLG
+       ANDI R0,>DF00     convert lower case to upper case
+       CI   R0,'A'*256
+       JL   CHKOUT
+       CB   R0,@MAXDRV
+       JH   CHKOUT
+       AI   R0,->4100
+       SRL  R0,6
+       AI   R0,ALIASA
+       MOV  R0,*R1
+       CLR  @CHKFLG
+CHKOUT ABS  @CHKFLG
+       RT
+CHKFLG DATA 0
+*
+**********************************************************8
+*
+PROMPT MOV  R11,@PROMS2
+*
+       MOV  @TURYMX,@TURY
+       MOV  @TURXMN,@TURX
+*
+       MOVB @MAXLEN,@TMPLEN
+       LI   R1,TMPSTR
+       LI   R0,PMTSTR
+       BL   @NODSTR
+       LI   R4,TMPSTR
+PROM1A MOV  R4,@PROMSA
+PROM1  MOV  @PROMSA,R4
+       CLR  R0
+       MOVB *R4+,R0
+       JEQ  PROMEX
+*
+       CI   R0,'$'*>0100
+       JEQ  PROM2
+       BLWP @EMIT1
+       JMP  PROM1A
+*
+PROM2  MOVB *R4+,R0
+       JEQ  PROMEX
+       MOV  R4,@PROMSA
+*
+PROM3  LI   R1,PROMT1
+       MOV  R1,R2
+PROM3A CB   *R1+,R0
+       JEQ  PROM4
+       CI   R1,PROMT2
+       JEQ  PROM1
+       JMP  PROM3A
+*
+PROM4  DEC  R1
+       S    R2,R1
+       SRL  R1,1
+       SLA  R1,2
+       AI   R1,PROMT2
+       MOV  *R1+,R0
+       MOV  *R1,R1
+       BL   *R0
+       JMP  PROM1
+*
+SDIR   MOVB @MAXLEN,@TMPLEN
+       MOV  @CURDRV,R0
+       INCT R0
+       LI   R1,TMPSTR
+       BL   @NODSTR
+       BL   @MESG
+       MOVB @MAXLEN,@TMPLEN
+       LI   R0,PMTSTR
+       LI   R1,TMPSTR
+       BL   @NODSTR
+       JMP  PROM1
+*
+SDRV   MOV  @CURDRV,R0        CURRENT DRIVE
+       LI   R1,ALIASA
+       S    R1,R0
+       SRL  R0,2
+       AI   R0,'A'
+       SLA  R0,8
+       BLWP @EMIT1
+       JMP  PROM1
+*
+CHR    MOV  R1,R0
+       BLWP @EMIT1
+       JMP  PROM1
+*
+PROMEX MOV  @PROMS2,R11
+       RT
+*
+PROMT1 TEXT 'dDtTpPnNvVgGlLbBqQ$$hH__'
+*
+PROMT2 DATA DDATE,0,DTIME,0,SDIR,0,SDRV,0
+       DATA MESG,VERNUM
+       DATA CHR,'> ',CHR,'< ',CHR,'  '
+       DATA CHR,'= ',CHR,'$ '
+       DATA MESG,BACKSP,MESG,CRLF
+*
+BACKSP BYTE >08,' ',>08,>00
+*
+PROMSA DATA 0
+PROMS2 DATA 0
+*
+***********************************************************************
+*
+* CHANGE STRING, DISLPAY CURRENT VALUE IF ALTER IS NIL
+*
+GETPTH LI   R9,PATH#P
+       MOV  R0,R2
+       CB   *R2,@SEMI
+       JNE  MAKSTR
+       CB   @1(R2),@SPACE
+       JNE  MAKSTR
+       CLR  R1
+       MOV  R11,@MAKSAV
+       JMP  MAKE2
+*
+*GETSPD LI   R9,GPLPAR        @@ dead command
+*      JMP  MAKSTR
+*
+GETPMT LI   R9,PMTSTR
+*
+MAKSTR MOV  R11,@MAKSAV
+       LI   R1,TMPSTR
+       CB   *R0,@SPACE
+       JNE  GETPM1
+       MOVB @MAXLEN,@TMPLEN
+       MOV  R9,R0
+       LI   R1,TMPSTR
+       BL   @NODSTR
+       BL   @MESG
+       LI   R1,CRLF
+       BL   @MESG
+       JMP  PMTRE3
+*
+GETPM1 AI   R1,-126
+       CI   R1,TMPSTR
+       JHE  PMTRE2
+       CB   *R0,@SPACE
+       JEQ  PMTRE2
+       AI   R1,126
+       MOVB *R0+,*R1+
+       JMP  GETPM1
+*
+PMTRE2 AI   R1,126
+       MOVB @H00,*R1
+       LI   R0,TMPSTR
+       S    R0,R1
+*      INC  R1
+       SLA  R1,8
+MAKE2  MOVB R1,@TMPLEN
+       MOV  R9,R0
+       LI   R1,TMPSTR
+       BL   @STRNOD
+       JNE  ERROR1
+PMTRE3 MOV  @MAKSAV,R11
+       RT
+ERROR1 MOV  @MAKSAV,R11
+       B    @ERROR
+*
+MAKSAV DATA 0
+*
+*******************************
+*
+GETDIR MOV  R11,R10
+       MOV  @CURDRV,R12
+       MOV  R0,R9
+       MOVB *R9,R0
+       BL   @TERMIN
+       JEQ  GETD1
+*
+       CB   @1(R9),@COLON
+       JNE  GETD2
+*
+       STWP R1
+       BL   @CHKDRV
+       JNE  CDBAD
+       MOV  R0,R12
+       MOVB @2(R9),R0
+       BL   @TERMIN
+       JNE  GETD2
+*
+* DISPLAY CURRENT DIRECTORY
+*
+GETD1  MOVB @MAXLEN,@TMPLEN
+       MOV  R12,R0
+       INCT R0
+       LI   R1,TMPSTR
+       BL   @NODSTR
+       BL   @MESG
+       LI   R1,CRLF
+       BL   @MESG
+       B    *R10
+*
+GETD2  MOV  R9,R1
+       LI   R2,DIRSTR
+       MOVB @MAXLEN,*R2
+*      CLR  R0
+       SETO R0
+       BLWP @CNVRTF           RETURNED NAME SHOULD BE "dirspec"
+       JNE  CDBAD
+*
+       MOVB *R2+,R1
+       SRL  R1,8
+*      AB   @H01,*R2+
+*      SRL  R1,8
+*      JNE  GETD3
+*      MOVB @NIL,@-1(R2)
+GETD3  A    R2,R1
+       MOVB @NIL,*R1
+       MOV  R2,R1
+       MOV  R12,R0
+       INCT R0
+       BL   @STRNOD
+       JNE  ERROR2
+CDBAD  B    *R10
+ERROR2 MOV  R10,R11
+       B    @ERROR
+*
+*******************************
+*
+ASSIGN MOV  R11,R10
+       LI   R9,ALIASA
+       MOV  R0,R2
+       MOVB *R2+,R0
+       BL   @TERMIN
+       JNE  ASSGN4
+*
+ASSGN1 MOV  R9,R0
+       MOV  *R0,*R0
+       JEQ  ASSGN2
+       LI   R1,TMPSTR
+       MOVB @MAXLEN,@TMPLEN
+       BL   @NODSTR
+       MOV  R9,R0
+       LI   R2,ALIASA
+       S    R2,R0
+       SLA  R0,6
+       AI   R0,'A:'
+       BLWP @EMIT1
+       SWPB R0
+       BLWP @EMIT1
+       LI   R0,'  '
+       BLWP @EMIT1
+       BL   @MESG
+       LI   R1,CRLF
+       BL   @MESG
+ASSGN2 CI   R9,ALIASP
+       JEQ  ASSGN3
+       AI   R9,4
+       JMP  ASSGN1
+*
+ASSGN3 B    *R10
+*
+ASSGN4 STWP R1
+       BL   @CHKDRV
+       JNE  ASSGN5
+       MOV  R0,R12
+       MOVB *R2+,R1
+       JEQ  ASSGN3
+*
+       CB   R1,@EQUALS
+       JNE  ASSGN5
+       MOV  R2,R1
+       LI   R2,DIRSTR
+       MOVB @MAXLEN,*R2
+       CLR  R0
+       BLWP @CNVRTF
+       JNE  ASSGN5
+*
+       MOV  R0,R9
+       MOV  R12,R0
+*
+       MOVB *R2+,R1
+       SRL  R1,8
+*      AB   @H01,*R2+
+*      SRL  R1,8
+*      JNE  ASSN4A
+*      MOVB @NIL,@-1(R2)
+ASSN4A A    R2,R1
+       MOVB @NIL,*R1
+       MOV  R2,R1
+       BL   @STRNOD
+       JNE  ERROR
+       MOV  R9,R2
+       JMP  ASIN10
+*
+* syntax error
+*
+ASSGN5 LI   R1,ERRSYN
+       BL   @MESG
+*
+* SCAN FOR WHITE SPACE
+*
+ASIN10 MOVB *R2+,R0
+       JEQ  ASSGN3
+       BL   @TERMIN
+       JNE  ASIN10
+*
+* SCAN FOR NON-WHITE SPACE
+*
+ASSGN6 MOVB *R2+,R0
+       JEQ  ASSGN3
+       BL   @TERMIN
+       JEQ  ASSGN6
+       JMP  ASSGN4
+*
+* error for full environment
+*
+ERROR  LI   R1,ERRENV
+       B    @MESG
+*
+ERRENV TEXT 'Error: Environment Options Full'
+       BYTE >0D,>0A,0
+ERRSYN TEXT 'Syntax error in command'
+       BYTE >0D,>0A,0
+*
+**************************************************************************
+*      BLWP CALL...
+* CHANGE ABSTRACT FILENAME INTO PHYSICAL FILENAME
+* IN:
+*     R0= FLAG TO CONTROL GENERATION OF ALIAS PREFIX
+*     R1= POINTER TO TEXT OF STRING TO PARSE
+*     R2= ^ TO LENGTH BYTE IN STRING OUT BUFFER
+*         (1st byte is maxlen for the buffer)
+* OUT:
+*     R0= pointer to ending delimiter
+*     R1= 0 is no error, <>0 is error
+*     EQUAL FLAG set by contents of R1
+*
+CNVRTF DATA >F000,FCONV
+*
+FCONV  MOV  *R13,R3
+       MOV  @2(R13),R1
+       MOV  @4(R13),R2
+       LI   R0,8
+       XOP  @NINE,0
+       STST R3
+       ANDI R3,>FFF0
+       ANDI R15,>000F
+       SOC  R3,R15
+*
+       MOV  R0,*R13
+       MOV  R1,@2(R13)
+       MOV  R2,@4(R13)
+       RTWP
+*
+TERMIN CB   R0,@SPACE
+       JEQ  TERMRT
+       CB   R0,@COMMA
+       JEQ  TERMRT
+       CB   R0,@NIL
+       JEQ  TERMRT
+*      CB   R0,@EQUALS
+*      JEQ  TERMRT
+       CB   R0,@SEMI
+TERMRT RT
+*
+*******************************************************************
+*
+NINE   DATA 9
+MAXLEN BYTE 127
+ONE    BYTE '1'
+H20
+SPACE  BYTE ' '
+BSLASH BYTE '\'
+COLON  BYTE ':'
+PERIOD BYTE '.'
+COMMA  BYTE ','
+EQUALS BYTE '='
+H01    BYTE >01
+NIL
+H00    BYTE >00
+SEMI   BYTE ';'
+*
+       END
+*

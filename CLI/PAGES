@@ -1,0 +1,420 @@
+*
+* Last changed 01/03/94 by Timothy Tesch
+*
+*      Added:
+*
+*           1) Scrollback for extra mode (MODE 90)
+*           2) Changed routine to exit back to MDOS with screen intact
+*           3) Only allow TEXT modes to activate SBB
+*           4) Added print-screen option ("P")
+*
+*      uses VDP space between pages 0 and 1 to save the screen. This area
+*      is normally unused and should not adversely affect any other tasks
+*
+*      - found problem with direct vdp reads/writes.  Status register had
+*        to be saved before the operations.  Random values appeared in the
+*        registers, eventually cluttering the screen.  STST / LST fixed the
+*        problem.
+*
+*
+* MDOS.CLI.PAGES
+*
+       DEF  PAGING
+       REF  SCRPAG
+       REF  SCRUB1,SCRUB2,SCRNXT
+       REF  EMIT1
+       REF  EMITF
+       REF  UWIDTH
+*
+CTRLC  EQU  >00FE             LOCATION OF ^C
+PAGING DATA >F020,DOPAGE
+MAPSAV BYTE 0
+H0A    BYTE >0A
+POS#1  DATA 0
+FIVE   DATA 5
+SIX    DATA 6            VIDEO XOP
+ROWS#  DATA 0
+ROW244 DATA 959          24x40
+ROW24  DATA 1919
+ROW26  DATA 2079
+OFFSET DATA 0
+OFF40  DATA >1400        open space in 40 column mode
+OFF80  DATA >1800        open space in 80 column mode
+F1     DATA -24
+F2     DATA -25
+F3     DATA  24
+SAVECC DATA 0            SAVE CTRL-C POINTER
+
+* 01/03/94 TAT
+
+DOPAGE LI   R0,1
+       XOP  @SIX,0            get the video mode.
+       MOV  @ROW244,@ROWS#
+       MOV  @F1,@FIX1         SET UP INITIAL CONDITIONS
+       MOV  @F2,@FIX2
+       MOV  @F3,@FIX3
+       MOV  @OFF40,@OFFSET
+       MOV  R0,R0             40 COLS?
+       JEQ  DOITOK            YES, OK..
+
+CHECKVID1
+       MOV  @OFF80,@OFFSET
+       MOV  @ROW24,@ROWS#     NO, SET FOR 80
+       CI   R0,1              TEXT 2, 24 COLS?
+       JEQ  DOITOK            yes
+       CI   R0,10             no, is it text mode II w/26 rows?
+       JNE  DONT              NOPE
+
+*      CI   R0,1              01.07.94 VID XOP >01 does not return the 'correct'
+*      JNE  DONT              mode # when mode >A is invoked.  The XOP returns
+*      CI   R2,24             a >01 for TEXT MODE II.  Changing the XOP would
+*      JLE  DOITOK            cause problems elsewhere, so the fix stays here...
+
+       DECT @FIX1
+       DECT @FIX2
+       INCT @FIX3
+       MOV  @ROW26,@ROWS#
+       JMP  DOITOK
+
+DONT   SETO R0                no, must be some other mode.  Exit..
+       MOVB R0,*R13           Another troublespot. Without this, the PGUP is
+       RTWP                   returned to the CLI, creating an endless loop!
+
+DOITOK MOV  @CTRLC,@SAVECC    SAVE THE HOTKEY BRANCH
+       CLR  @CTRLC            CLEAR IT - CAN'T LET THEM USE IT IN HERE
+       SETO @EMITF            set EMITF, bypasses redirection/spool of screen
+       MOVB @>F114,@MAPSAV    Save current page,
+       MOVB @SCRPAG,@>F114    use our reserved video buffer page instead
+
+ROWOK1 LI   R0,3              FET CURSOR POSITION
+       XOP  @SIX,0
+
+       MOV  @UWIDTH,R2        GET SCREEN WIDTH
+       INC  R2                AND ADD ONE FOR BASE ONE
+       MOV  R0,@BEG1          PUT COLUMNS INTO BACKWARDS MOVE
+       INC  @BEG1
+       NEG  @BEG1             AND MAKE SURE IT'S NEGATIVE!
+
+       LI   R1,SCRUB1         start pointer
+       LI   R2,SCRUB2         end poinuer
+       MOV  @SCRNXT,R3        current location in the buffer
+*
+* 12/31/83 - TAT
+* More fun....
+*
+       SETO @POS#1            first time through
+       BL   @MOVE             move back 24 'lines'
+FIX1   DATA -24
+       MOV  R3,R6             save this position temporarily
+       MOV  @SCRNXT,R3        now, reset R3 and do it again, this time with the
+       BL   @MOVE             actual screen offset
+BEG1   DATA 0
+       MOV  R6,@POS#1     put the previous value into POS#1
+
+       STST R10
+       LIMI 0
+       CLR  R6                SAVE VDP MEMORY
+       LI   R1,WS#2+8         USE TEH VDP REGS AS A BUFFER
+       LI   R2,10
+SAVEMOREVDP
+       MOV  R6,R0
+       BLWP @VMBR
+*      AI   R0,>1800          AFTER THE 1ST VIDEO PAGE
+       A    @OFFSET,R0
+       BLWP @VMBW
+       AI   R6,10
+       C    R6,@ROWS#
+*      CI   R6,2180
+       JL   SAVEMOREVDP
+SMVSMV DATA >008A        LST
+
+
+BACKUP BL   @MOVE
+FIX2   DATA -25
+       JMP  CLEAR
+*
+GODOWN MOVB *R4,R0
+       JEQ  CLR999
+*
+       BL   @MOVE
+FIX3   DATA 24
+       JMP  CLEAR
+*
+ONEDOW MOVB *R4,R0
+       JEQ  CLR999
+*
+       BL   @MOVE
+       DATA 1
+       JMP  CLEAR
+*
+ONEUP  BL   @MOVE
+       DATA -2
+       JMP  CLEAR
+
+SCRDUMP
+       LI   R0,>2B       PERFORM SCREEN DUMP!
+       CLR  R1
+       CLR  R2
+       XOP  @SIX,0
+
+*
+* clear screen and write 24/26 lines or to end of buffer
+*
+CLEAR  BL   @CLRVDY           9.7.93  TT    (screen cldar / bypass EMIT1)
+       CLR  R6                cursor position
+       CLR  R7                column
+       STST R10
+       LIMI 0
+*
+       BL   @CLRRST           07.10.93  ONLY LOCATION CALLING THIS ROUTINE!!!!
+CLR999 DATA >008A             LST  R10
+
+       LI   R0,4              get a keypress
+       CLR  R1
+       XOP  @FIVE,0
+       JNE  CLR999
+*
+       CI   R1,>8200
+       JEQ  GODOWN
+       CI   R1,>8C00
+       JEQ  BACKUP
+       CI   R1,>8B00
+       JEQ  ONEUP
+       CI   R1,>8A00
+       JEQ  ONEDOW
+       CI   R1,'P'*256        PRINTSCREEN?
+       JEQ  SCRDUMP
+       CI   R1,'p'*256
+       JEQ  SCRDUMP
+*
+* 12/30/93  RETURN A >FF TO THE CLI FOR PROPER RETURN / NO CURSO MOVEMENT
+*
+* RETURN TO MDOS AFTER RESTORING SCREEN:
+*
+       LI   R1,>FF00
+       MOVB R1,*R13
+
+       STST R10
+       LIMI 0
+
+       CLR  R6
+       LI   R1,WS#2+8    USE VDP UTIL WS FOR A SMALL, BUT TIME-SAVING, BUFFER
+       LI   R2,10
+RESTOREMORE
+       MOV  R6,R0
+       A    @OFFSET,R0        move from VDP save area to the screen
+       BLWP @VMBR
+       S    @OFFSET,R0        buffer
+       BLWP @VMBW
+       AI   R6,10
+       C    R6,@ROWS#
+       JL   RESTOREMORE
+
+RST999 DATA >008A
+       MOVB @MAPSAV,@>F114    restore original page
+       CLR  @EMITF            clear flag, allow redirection/spooling to happen
+       MOV  @SAVECC,@CTRLC    restore the hotkey exit point
+       RTWP                   return
+*
+* The MOVE code moves forward/backward through the screen buffer 'x' number
+*      of lines
+*
+MOVE   LI   R9,-1             backwards
+       MOV  *R11+,R10         get parameter
+       JLT  MOVE00            if negative, R9 will be a ',1'
+       NEG  R9                otherwise, negate to make it a positive 1
+*
+MOVE00 A    R9,R3             offset R3 by R9 (either +1 or -1)
+       CI   R3,SCRUB1         above lower boundary?
+       JHE  MOVE01            yes
+       LI   R3,SCRUB2         no, must be going backwards.  set R3 to EOB
+       DEC  R3
+       JMP  MOVE10
+*
+MOVE01 CI   R3,SCRUB2         at EOB?
+       JL   MOVE10            no
+       LI   R3,SCRUB1         yes, must be going forward.  set to SOB
+*
+MOVE10 CLR  R5                clear word
+       MOVB *R3,R5            put byte into R5
+       JEQ  MOVERT            if null, exit
+*
+       CI   R9,1              moving down?
+       JNE  MOVE11            NO
+
+       C    R3,@POS#1         yes, is R3 here ?
+       JNE  MOVE11            no, keep checking
+       DEC  R3                YES, get ready to exit
+       CI   R3,SCRUB1         above lower boundary?
+       JHE  MOVERT            yes
+       LI   R3,SCRUB2         no, put at EOB
+       JMP  MOVERT
+*
+MOVE11 CI   R5,>0A00          linefeed (signals next line)
+       JNE  MOVE00            no
+*
+       S    R9,R10            yes, get rid of a line
+       JNE  MOVE00            if not zero, gotta do another line
+*
+MOVERT INC  R3
+       CI   R3,SCRUB2         below upper bounds?
+       JL   MOVE99            yes
+       LI   R3,SCRUB1         no, reset.
+MOVE99 RT
+*
+**********************
+* CLRVDY - Screen Clear   09.07.93  TT
+*
+* By-passes the TTYOUT XOP (called from EMIT1)
+*
+* Purpose: TTYOUT 'CLS' changes system pointers causing problems upon return
+*          to the CLI after a review buffer - at least it looks that way :)
+*
+* Destroys: R0,R5,R6,R7
+*
+CLRVDY LI   R0,>0040          set up for a direct VDP write
+       MOVB R0,@>F102
+       SWPB R0
+       MOVB R0,@>F102
+
+       LI   R5,27             26.5 lines possible
+       CLR  R7                set up for MPY
+       MOV  @UWIDTH,R6        width in R6
+       INC  R6                adjust from 79 to 80 (39 to 40)
+       MPY  R5,R6             Product in R7
+       LI   R5,>2000          space char to
+CLVIDY MOVB R5,@>F100         write to VDP
+       NOP                    delay - just in case
+       DEC  R7                any more left?
+       JNE  CLVIDY            yes
+       RT                     no, exit
+*
+* Similar code - combined.  Display 24 lines of text from scroll-back
+*      buffer.  R11 not maintained.
+*
+* 07.10.93 TT
+*
+* rewritten (again) 12/31/93 by TAT - fixed the problems with buffer over-run
+
+CLRRST LI   R0,>0040
+       MOVB R0,@>F102
+       SWPB R0
+       MOVB R0,@>F102
+
+       MOV  R3,R4             POINT TO BUFFER LOCATION VIA R4
+RST000 CLR  R0
+       MOVB *R4,R0
+       JEQ  RSTRT             ah hah!!  FINALLY!  This line of code (or lack
+***                           thereof) has caused about 6 hours of grief...
+
+WITHIN C    R6,@ROWS#         2079
+       JH   RSTRT
+
+* 12/31/93  TAT
+*
+* The BACKSPACE routine in GETSTRS for the CLI routine is a bit 'strange'.
+*      The routine is EMIT'ing a 08h, a space, then a second 08h to perform
+*      the backspace.  The TTYOUT handles this properly, but since we are
+*      using direct video writes, this causes a problem.
+*
+
+BACKSP CI   R0,>0800          So.. trap the backspace.
+       JNE  WITHOT
+       DEC  R6
+       DEC  R7
+       JMP  VDP100
+
+WITHOT CI   R0,>0A00          LF?
+       JNE  CHECKCR           NO
+
+       S    R7,R6
+       CLR  R7
+       A    @UWIDTH,R6
+       INC  R6
+       JMP  VDP100
+
+CHECKCR
+       CI   R0,>0D00     cr?
+       JNE  RST200       no
+       S    R7,R6        point to start of line in buffer
+       CLR  R7           clear column counter
+VDP100 MOV  R6,R0
+       SWPB R0
+       MOVB R0,@>F102         reset VDP address
+       SWPB R0
+       ORI  R0,>4000
+       MOVB R0,@>F102
+       JMP  RST900            go point to next character
+
+RST200 C    R7,@UWIDTH
+       JH   RST210
+       CI   R0,>2000
+       JL   RST210
+RSTPRN MOVB R0,@>F100         display the character
+
+RST210 INC  R6
+       INC  R7
+
+RST900 INC  R4
+       CI   R4,SCRUB2
+       JL   RST000
+       LI   R4,SCRUB1
+       JMP  RST000
+
+RSTRT  RT
+*
+*
+* VDP UTILITIES
+VDPRD  EQU  >F100     >8800
+VDPWD  EQU  >F100      >8C00
+VDPWA  EQU  >F102      >8C02
+       EVEN
+WS#2   BSS  >20
+WRTMSK DATA >4000
+       EVEN
+*VSBW   DATA WS#2,$+2
+*      BL   @VDP#          Setup VDP write address
+*      MOVB @2(R13),@VDPWD    Write the character
+*      RTWP
+
+VDP#   MOV  *R13,R0
+       SOC  @WRTMSK,R0
+VDP#2  SWPB R0
+       MOVB R0,@VDPWA     Send LOW BYTE
+       SWPB R0
+       MOVB R0,@VDPWA     Send HIGH BYTE
+       RT
+
+VMBW   DATA WS#2,$+2
+       BL   @VDP#
+       MOV  @2(R13),R1    Bring in CPU String Address
+       MOV  @4(R13),R2    Bring in # of Bytes to write
+       LI   R3,VDPWD
+VMBW20 MOVB *R1+,*R3       Write character
+       NOP
+       DEC  R2            Finished?
+       JNE  VMBW20        No
+       RTWP
+
+* VSBR   DATA WS#2,$+2
+*      BL   @VDP#3        Go setup VDP Address
+*      MOVB @VDPRD,@2(R13)    Put character in R1 MSBYTE
+*      RTWP               of calling workspace (WS#1)
+
+VMBR   DATA WS#2,$+2
+       BL   @VDP#3        Go setup VDP Address
+       MOV  @2(R13),R1    Get CPU Buffer address
+       MOV  @4(R13),R2    Get # of Bytes to read
+       LI   R3,VDPRD
+VMBR20 MOVB *R3,*R1+   Move first byte
+       NOP
+       DEC  R2            Finished?
+       JNE  VMBR20        No
+       RTWP
+
+VDP#3  MOV  *R13,R0       Get VDP Address for read
+       ANDI R0,>3FFF      Reset BITS 0 & 1
+       JMP  VDP#2         Go finish up write address
+
+       END
+

@@ -1,0 +1,406 @@
+*  mdos.cli.types
+*
+*      Last modified 01/02/94 by Timothy A Tesch
+*
+*      - TYPE command now displays IBM (cr/lf) files properly
+*      - MORE works with the DF128 (cr/lf IBM) files
+*      - MORE updated to use the (A)bort, Continue, or (N)onstop
+*           when viewing text files.
+*
+*      UNL
+*
+* 06.29.2021  Added support for TYPE /G (ansi-graphics and TYPE /T (ansi-text80)
+* 07.16.2022  Added response if no ANSI driver loaded
+
+       REF  TMPSTR            6.29.2021 MOVING STRING AROUND FOR ANSI DISPLAY
+       REF  EMIT1
+       REF  UWIDTH            user window width
+*      REF  ULINES            user screen line count
+       REF  BREAK
+       DEF  TYPE
+
+ANSI      DATA >000D             6.29.2021 ANSI XOP
+ANSIFLAG  DATA 0                 6.29.2021 ANSIFLAG VIEWING FOR FILE
+*
+TYPE   MOV  R11,@TYPRET
+       CLR  @ANSIFLAG            6.29.2021 CLEAR FLAG IF REENTRY
+       MOV  @BREAK,@BRKSAV
+       MOV  @EXITAD,@BREAK
+       MOV  R0,R11            save string pointer
+       LI   R0,1
+       MOV  R0,R1             set count
+       LI   R2,8              64K boundary
+       CLR  R3
+       XOP  @SEVEN,0
+       MOV  R0,R0
+       JNE  ERRM
+*
+       LI   R0,3              map page into our address space
+       LI   R1,8              local page #
+       LI   R2,6              put it at >c000
+       XOP  @SEVEN,0
+       MOV  R0,R0
+       JNE  ERRM
+
+       LI   R0,1
+       XOP  @SIX,0
+       MOV  R2,@ULINES        SHOULD BE 24 OR 26, DEPENDING ON VIDEO MODE
+
+*
+       MOV  R11,R1            get pointer to option buffer
+       LI   R2,TYPLEN
+       MOVB @MAXLEN,*R2       to point to string rather than length byte @@
+       LI   R0,8              parse opcode
+       CLR  R3
+       XOP  @NINE,0
+       JNE  ERRD              invalid directory name
+*
+       MOVB @TYPLEN,R4
+       JEQ  ERRD              null file name
+       SRL  R4,8
+       AI   R4,PAB+15
+       CB   *R4,@PERIOD
+       JEQ  ERRD              null file name
+*
+       MOV  R0,R4             pointer to option strings
+       CLR  @MOREOP           /M option not on yet.
+       CLR  R3
+PCL1   MOVB *R4+,R3
+       JEQ  OPDONE
+       CI   R3,'/'*256
+       JNE  PCL1
+       MOVB *R4+,R3
+       JEQ  OPDONE
+       ANDI R3,>DF00
+       CI   R3,'G'*256       6.29.2021 CHECK FOR ANSI GRAPHICS MODE
+       JEQ  ANSIGRAPHICS     6.29.2021 CHECK FOR ANSI GRAPHICS MODE
+       CI   R3,'T'*256       6.29.2021 CHECK FOR ANSI TEXT MODE
+       JEQ  ANSITEXT
+       CI   R3,'M'*256
+       JNE  PCL1
+       SETO @MOREOP
+       JMP  OPDONE
+*
+ERRM   B    @MEMERR
+ERRD   B    @DEVERR
+ERRE   LI   R1,ANSIMSG      7.16.2022
+       B    @DEVER3         7.16.2022
+*
+ANSIGRAPHICS
+       LI   R0,>0002       TEST FOR ANSI DRIVER LOADED
+       XOP  @ANSI,0
+       SETO R2
+       C    R0,R2
+       JNE  ERRE           DRIVER NOT LOADED
+
+       SETO R1             ANSI GRAPHICS MODE
+       JMP  ANSITEXT1
+ANSITEXT
+
+       LI   R0,>0002       TEST FOR ANSI DRIVER LOADED
+       XOP  @ANSI,0
+       CI   R0,>FFFF
+       JNE  ERRE           DRIVER NOT LOADED
+
+       CLR  R1             ANSI TEXT MODE
+ANSITEXT1
+       SETO @ANSIFLAG      SET ANSI VIEWING FLAG
+
+       LI   R0,0           SET ANSI VIEWER IN COLOR GRAPHICS MODE
+       XOP  @ANSI,0
+
+OPDONE
+       MOV  @ANSIFLAG,@ANSIFLAG
+       JNE  OPDONE1
+       LI   R1,CRLF
+       BL   @MESG
+*
+OPDONE1
+       LI   R3,PAB
+       MOVB @STATOP,*R3
+       MOVB @H00,@2(R3)
+       MOVB @H00,@10(R3)
+       MOV  R3,R0
+       XOP  @EIGHT,0          get file flags, check existence
+*
+       MOVB @2(R3),R0
+       JNE  ERRD
+*
+       MOVB @14(R3),R0
+       JLT  ERRD              file does not exist
+*
+       MOV  R0,R1
+       MOV  R1,R2
+       ANDI R2,>0800
+       JNE  ERRD              program image file
+*
+       ANDI R1,>1000          d/i flag
+       ANDI R0,>0400          v/f flag
+       SLA  R0,2              correct for PAB
+       SRL  R1,1              correct for PAB
+       SOC  R1,R0             --OR-- the two
+       ORI  R0,>0400          make it INPUT
+       MOVB R0,@1(R3)         place into PAB
+*
+       MOVB @OPENOP,*R3
+       CLR  @8(R3)
+       MOVB @H00,@10(R3)
+       MOV  R3,R0
+       XOP  @EIGHT,0          open the file, get default record length
+       MOVB @2(R3),R0
+       JEQ  DEVOK9            some device error
+       B    @DEVERR
+*
+DEVOK9 CLR  @FIXFLG           0=DVxxx
+       CLR  R0
+       MOVB @1(R3),R0
+       ANDI R0,>1000
+       MOV  R0,R0
+       JNE  VARREC
+       MOV  @8(R3),R0
+       CI   R0,128            REC LEN OF 128?
+       JNE  VARREC            NO..
+       CLR  R0                YES, NOW CHECK THE PAB MODE FLAG
+       MOVB @1(R3),R0
+       CI   R0,>0400          IS IT DF?
+       JNE  VARREC            NO
+       SETO @FIXFLG           YES, SET THE FLAG...>FFFF=DF128
+
+VARREC MOV  @8(R3),R0
+       CI   R0,8190           max record length to allow
+*      JHE  DEVER2
+       JL   VARRK        sigh, jump out of range. 10.03.2009
+       B    @DEVER2
+*
+VARRK  CLR  @LINCNT
+       INC  @LINCNT
+       MOVB @READOP,*R3
+*
+TYPE00 MOVB @H00,@10(R3)      read into cpu ram
+       MOV  R3,R0
+       XOP  @EIGHT,0          read a record
+       MOVB @2(R3),R0
+       JNE  LSTRECBYPASS
+*
+       CLR  @CHRCNT           none output from this record yet
+       CLR  @WRAP             flag used to see if auto-wrap occured
+       CLR  R0
+       LI   R4,>C000          record buffer  7/31/88
+       MOV  @12(R3),R5        chars in this record
+*
+TYPE01
+       MOV  @ANSIFLAG,@ANSIFLAG              7.2.2021
+       JNE  EMITME3                          7.2.2021
+
+       DEC  R5
+       JLT  LSTCHR            IF END, CHECK IF WE NEED TO WRAP
+*
+       MOVB *R4+,R0
+       ABS  @FIXFLG
+       JEQ  HOHUM
+
+       ANDI R0,>FF00     TT 11-11-93
+       CI   R0,>0D00     * 111193
+       JEQ  EMITME
+       CI   R0,>0A00
+       JNE  HOHUM
+       BLWP @EMIT1            SEND OUT A LF
+       JMP  LFWRAP
+LSTRECBYPASS
+
+       LI   R0,>0D00     7.10.2021
+       BLWP @EMIT1       7.10.2021
+
+       LI   R0,>0A00     7.10.2021
+       BLWP @EMIT1       7.10.2021
+
+       B    @LSTREC      6.29.2021
+
+HOHUM  CI   R0,>2000
+       JL   TYPE01            non-display character
+*
+EMITME1
+       MOV  @ANSIFLAG,@ANSIFLAG    6.29.2021 ANSI DISPLAY ROUTINES
+       JEQ  EMITME                 6.29.2021
+
+EMITME3
+       LI   R0,1                   6.29.2021
+       MOV  R5,R2                  7.02.2021
+       LI   R1,>C000               6.29.2021
+       XOP  @ANSI,0                6.29.2021
+
+       JMP  TYPE00                 6.29.2021
+
+EMITME BLWP @EMIT1            * tt 111193 show it to the user
+       INC  @CHRCNT
+       CLR  @WRAP
+*
+       ABS  @FIXFLG           MAKE SURE THAT "MORE" IS ONLY PERFORMED
+       JNE  TYPE01            WHEN NO TEXT IS ON THE LINE (FOR DF128)
+
+       C    @CHRCNT,@UWIDTH   did we just auto-CRLF?
+       JLE  TYPE01            nope...
+*
+       CLR  @CHRCNT           start of next screen line
+       SETO @WRAP             we wrapped
+
+       LI   R1,BKSPA
+       BL   @MESG        10.03  reclen>UWidth, fix?
+       LI   R1,CRLF
+       BL   @MESG        10.03
+*
+LFWRAP MOV  @MOREOP,R0        /More option?
+       JEQ  TYPE01            no, no further checking
+       INC  @LINCNT
+       C    @LINCNT,@ULINES   enough lines displayed?
+       JL   TYPE01            not yet
+*
+       CLR  @LINCNT
+       INC  @LINCNT
+       BL   @MORE
+       JMP  TYPE01
+*
+* end of record...advance one screen line and loop
+*
+LSTCHR ABS  @FIXFLG           FIXED 128?
+       JNE  TYPE00            YUP, GET OUTA HERE
+
+       MOV  @CHRCNT,R0        NOPE, are we at line start?
+       JNE  LC00              nope
+* only time we are here is if a char was displayed at max column width, forcing
+* the cursor to the next line.  When not on the bottom line, creates a condition
+* where TTYOUT simulates a CRLF.  Need to back it up somehow.
+
+       MOV  @WRAP,R0 10.03.09 if so, did we just start a fresh line?
+       JNE  CMORE1       yes,same as CRLF. Otherwise, reclen>UWidth, CRLF needed
+
+***    JNE  TYPE00            yes, it's start of next record [skips /M!! Naughty
+*      JEQ  LC00         10.03, no backspace just continue
+*      LI   R1,BKSPA     Back up to previous line
+*      BL   @MESG        To allow CRLF to function  ;)-
+
+LC00
+       LI   R1,CR
+       BL   @MESG
+LFMORE LI   R1,LF
+       BL   @MESG
+*
+CMORE1 MOV  @MOREOP,R0        /More?
+       JEQ  TYPE00            nope, just show more lines...
+       INC  @LINCNT
+       C    @LINCNT,@ULINES   at end of screen?
+       JL   TYPE00A           nope, just go show more lines
+CMOR22 CLR  @LINCNT
+       INC  @LINCNT
+       BL   @MORE             ! display message, wait for keypress
+       B    @TYPE00          6.29.2021 MODIFIED FROM JUMP TO BRANCH
+TYPE00A
+       B    @TYPE00          6.29.2021 MODIFIED AS RANGE TO FAR
+*
+* end of file...either error or real end.
+*
+BROKEN MOV  @BRKSAV,@TYPRET
+       LI   R3,PAB
+LSTREC MOVB @CLOSOP,*R3
+       MOVB @H00,@10(R3)
+       MOV  R3,R0
+       XOP  @EIGHT,0
+       JMP  ERRORX
+*
+MEMERR LI   R1,MEMMSG
+       JMP  DEVER3
+*
+DEVER2 LI   R1,RECMSG
+       JMP  DEVER3
+*
+DEVERR LI   R1,DEVMSG
+DEVER3 BL   @MESG
+*
+ERRORX LI   R0,2
+       LI   R1,1
+       LI   R2,8
+       XOP  @SEVEN,0     return the page
+       MOV  @TYPRET,R11
+       MOV  @BRKSAV,@BREAK
+       RT
+*
+MESG   MOVB *R1+,R0
+       JEQ  MESRET
+       BLWP @EMIT1
+       JMP  MESG
+MESRET RT
+*
+MORE   MOV  R11,R12
+       LI   R1,MORE1
+       BL   @MESG
+*
+MORT   LI   R0,4
+       XOP  @FIVE,0
+       JNE  MORT              no key pressed.. yet
+       ANDI R1,>5F00          mask to all uppercase
+       CI   R1,'A'*256        abort?
+       JEQ  BROKEN            yup
+       CI   R1,'N'*256        no, nonstop operation?
+       JNE  MORNOR            no
+       CLR  @MOREOP           yes, clear the flag
+
+MORNOR LI   R1,MORE2          continue
+       BL   @MESG
+       B    *R12
+*
+FIVE   DATA 5
+SEVEN  DATA 7
+SIX    DATA 6
+EIGHT  DATA 8
+NINE   DATA 9
+EXITAD DATA BROKEN
+*
+ULINES DATA 0
+FIXFLG DATA 0            0-VARIABLE, 1=DF128
+BRKSAV DATA 0
+TYPRET DATA 0
+MOREOP DATA 0
+LINCNT DATA 0
+CHRCNT DATA 0
+WRAP   DATA 0
+*
+MAXLEN BYTE 40
+OPENOP BYTE 0
+READOP BYTE 2
+STATOP BYTE 9
+PERIOD TEXT '.'
+H00    BYTE 0
+CLOSOP BYTE 1
+*
+PAB    DATA >0014,>0001,>0000,>0000
+       DATA >0000,>0000,>0000
+       BYTE >00
+TYPLEN BYTE >00
+       TEXT '                                        '
+*
+BKSPA  BYTE >08,0
+CRLF   BYTE >0D,>0A,0
+CR     BYTE >0D,0
+LF     BYTE >0A,0
+MEMMSG TEXT 'Insufficient memory'
+       BYTE >0D,>0A,0
+RECMSG TEXT 'Records too long for TYPE'
+       BYTE >0D,>0A,0
+DEVMSG TEXT 'Invalid filename or File not found'
+       BYTE >0D,>0A,0
+ANSIMSG
+       TEXT 'No ANSI driver loaded'
+       BYTE >0D,>0A,0
+
+MORE1  BYTE 13
+       TEXT 'Press any key, (A)bort, or (N)onstop...'
+       BYTE 0
+MORE2  BYTE >0D
+       TEXT '                                       '
+       BYTE >0D,0
+       BYTE 0
+       EVEN
+*
+       LIST
+       END
+*

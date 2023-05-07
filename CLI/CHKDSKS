@@ -1,0 +1,438 @@
+       UNL
+*
+*  Modification History: Modified by JHW and DHE - 05.27.96 to fix size
+*                        reporting for hard drives >90 Meg. Also improved
+*                        comments in that section.
+*
+* 07/07/96  TAT, Corrected routine, now writes sector zero back to disk
+*           if errors are encountered.  Also informs user if the sector
+*           could not be written back for reasons such as the disk is write
+*           protected or removed.
+*
+       REF  EMIT1
+       REF  GETCAT,VOLON
+       REF  SETCAT,RELCAT
+       REF  CISNIL,CISSPC
+*
+       DEF  BIGNUM,BIGNIL
+       DEF  CHKDSK
+*
+CHKDSK MOV  R11,@CHKRET
+       MOV  R0,R12            save string pointer
+       BL   @SETCAT
+       JNE  MEMERR
+*
+       MOV  R12,R1            get pointer to option buffer
+       LI   R2,DIRLEN
+       MOVB @MAXLEN,*R2       to point to string rather than length byte @@
+       LI   R0,8              parse opcode
+       XOP  @NINE,0
+       JEQ  GETIT             valid directory name
+       JMP  BADDIR
+*
+MEMERR LI   R1,ERRM0
+       JMP  SHOMSG
+DEVERR LI   R1,ERRM1
+       JMP  SHOMSG
+BADDIR LI   R1,ERRM2
+SHOMSG BL   @MESG2
+       B    @ERRORX
+*
+ERRM0  TEXT 'Insufficient Memory'
+       BYTE >0D,>0A,0
+ERRM1  TEXT 'Device error'
+       BYTE >0D,>0A,0
+ERRM2  TEXT 'Bad directory name'
+       BYTE >0D,>0A,0
+*
+GETIT  CLR  @VERFLG
+*
+       CB   *R0+,@SLASH
+       JNE  GETIT0
+       MOVB *R0,R0
+       ANDI R0,>5F00
+       CI   R0,'F'*256   ""/F", fix disk?
+       JNE  GETIT0
+*
+       SETO @VERFLG
+*
+GETIT0 CLR  @TOTFLG
+       MOVB @PAB+15,R1
+       SRL  R1,8
+       AI   R1,PAB+15
+       CB   *R1,@PERIOD
+       JNE  GETIT2
+       SETO @TOTFLG
+GETIT2 LI   R0,PAB
+       CLR  @VOLON
+       BL   @GETCAT      get catalog of files
+       JEQ  GOTCAT       no error
+       JMP  DEVERR       error - tell user
+*
+GOTCAT CLR  @FILCNT
+       CLR  @SECCNT
+       CLR  @SECCN2
+*
+       MOV  @TOTFLG,R1        Hmm... CHKDSK *?
+       JNE  SHOW00            no, skip down past this part
+*----------------------------------------*
+* Check for fragmented files - Disk only *
+*----------------------------------------*
+SCAN00 LI   R2,NAMES-32
+       CLR  @ALLOK
+*
+SCAN01 AI   R2,32
+SCAN02 CB   *R2,@NIL     null?
+       JEQ  SCAN01       yes, get next
+       CB   *R2,@H20     Spaces for filename?
+       JEQ  SCAN99       yes, all done
+*
+       INC  @FILCNT
+       A    @14(R2),@SECCNT
+       JNC  ADD000
+       INC  @SECCN2
+ADD000 AB   @28(R2),@SECCN2+1
+       JNC  ADD001
+       AB   @H01,@SECCN2
+*
+ADD001 MOVB @31(R2),R1        how does this correlat to fragmented file?
+       JEQ  SCAN01            file not fragmented
+*
+       MOV  @ALLOK,R1
+       JNE  SCAN03            header message already given
+*
+       SETO @ALLOK
+       BL   @MESG
+       DATA FRAG1
+*
+SCAN03 MOV  R2,R3
+       LI   R4,10
+SCAN04 MOVB *R3+,R0           output name of fragmented file
+       BLWP @EMIT1
+       DEC  R4
+       JNE  SCAN04
+*
+       BL   @MESG
+       DATA CRLF
+*
+       JMP  SCAN01
+*
+SCAN99 MOV  @ALLOK,R1
+       JNE  SHOW00
+       BL   @MESG
+       DATA FRAG2
+*
+* 1) total bytes = totsec  * 256
+* 2) directory bytes used  = dirs * 2 * 256
+* 3) file bytes  = used sectors * 256
+* 4) available = secfre * 256
+* 5) total memory bytes
+* 6) memory bytes free
+*
+SHOW00 BL   @MESG
+       DATA CRLF
+*
+       MOV  @TOTSEC,R14       Low 16 bits of total sectors.
+       MOV  R14,R15           Copies R14 to R15
+       SRL  R14,8             Eliminate lower 8 bits (24bits marks a sector)
+       MOVB @TOTSE2+1,R14     Get high 8 bits of the 24....
+       SLA  R15,8             Multiple by 256 to get total # of Bytes.
+       BL   @BIGNUM
+       DATA SIZ10
+*
+       CLR  R13               dir cnt
+       CLR  R14               sectors used in cataloged dirs
+       CLR  R15
+       LI   R2,DIRS-16
+SHOW01 AI   R2,16
+SHOW02 CB   *R2,@H20
+       JEQ  SHOW03
+       CB   *R2,@NIL
+       JEQ  SHOW01
+       INC  R13
+       AB   @15(R2),R15
+       JMP  SHOW01
+*
+SHOW03 MOV  R13,R13
+       JEQ  SHOW04
+*
+       BL   @BIGNUM
+       DATA SIZ20
+*
+       MOV  R13,R8
+       BL   @CISNIL
+*
+       BL   @MESG
+       DATA SIZ21
+*
+SHOW04 MOV  @FILCNT,R1
+       JEQ  SHOW05
+       MOV  @SECCNT,R14
+       MOV  R14,R15
+       SRL  R14,8
+       MOVB @SECCN2+1,R14
+       SLA  R15,8
+       BL   @BIGNUM
+       DATA SIZ30
+*
+       MOV  @FILCNT,R8
+       BL   @CISNIL
+       BL   @MESG
+       DATA SIZ31
+*
+SHOW05 MOV  @SECFRE,R14
+       MOV  R14,R15
+       SRL  R14,8
+       MOVB @SECFR2+1,R14
+       SLA  R15,8
+       BL   @BIGNUM
+       DATA SIZ40
+*
+       CLR  R0                get memory info
+       XOP  @SEVEN,0
+       MOV  R0,R0
+       JEQ  SHOW06
+       B    @ERRORX
+*
+SHOW06 INC  R1
+       MOV  R1,R13            free count
+*
+       MOV  R3,R14            total count
+       MOV  R14,R15
+       SRL  R14,3
+       SLA  R15,13
+       BL   @BIGNUM
+       DATA SIZ50
+*
+       MOV  R13,R14
+       MOV  R14,R15
+       SRL  R14,3
+       SLA  R15,13
+       BL   @BIGNUM
+       DATA SIZ60
+       MOV  @VERFLG,R0
+*      JEQ  ERRORX
+       JNE  TATFI1
+       B    @ERRORX
+*
+* verify goes here...read sector zero, read all others & fix bitmap
+* double numbad for 1600+
+*
+TATFI1 BL   @MESG             "Verifying..."
+       DATA MVER00
+*
+       MOVB @REDSEC,@PAB
+       LI   R0,PAB
+       CLR  @PAB+2
+       MOV  @SECADR,@PAB+4
+       CLR  @PAB+10
+       CLR  @PAB+6
+       MOV  @ONE,@PAB+12      count of sectors to read
+*
+       XOP  @EIGHT,0          read sector zero
+       MOVB @PAB+2,R1
+       JNE  ERRORV            @@
+*
+       CLR  @NUMBAD
+       CLR  @PAB+6            start sector number
+       MOV  @SECTOR+10,@PAB+12      number of sectors on disk is count
+*
+VERX02 CLR  @PAB+2
+       MOVB @H01,@PAB+3       undefined address to verify into
+       CLR  @PAB+4
+       CLR  @PAB+10
+*
+       LI   R0,PAB
+       XOP  @EIGHT,0          read all sectors
+       MOVB @PAB+2,R1
+       JEQ  GOODER            @@
+*
+       BL   @MESG
+       DATA MVER01            "Error, Sector #"
+       MOV  @PAB+6,R8
+       BL   @CISNIL
+       BL   @MESG
+       DATA CRLF
+*
+       INC  @NUMBAD           bad sector, handle it
+       MOV  @SECTOR+10,R0
+       MOV  @PAB+6,R1         sector number of bad sector
+       CI   R0,1600
+       JLE  VERX00
+       INC  @NUMBAD
+       SRL  R1,1              two sectors/bit
+       CI   R0,3200                                    *CHANGED, MJM FOR
+       JL   VERX00                                     *LARGE DISKS.
+       INCT @NUMBAD           4 SECTORS BAD!
+       SRL  R1,1              FOUR SECTORS/BIT
+*
+VERX00 MOV  R1,R0
+       LI   R2,>0100          bit to shift for mask
+       ANDI R0,>0007          get bit number to set
+       JEQ  VERX01
+       SLA  R2,0
+VERX01 SRL  R1,3
+       SOCB R2,@SECTOR+>38(R1)               mark it bad
+       INC  @PAB+6            point to next sector to read
+       C    @PAB+6,@SECTOR+10
+       JL   VERX02            more sectors to check
+*
+GOODER MOV  @NUMBAD,R0
+       JEQ  GOOD00
+*
+       LI   R0,PAB
+       MOVB @WRTSEC,*R0
+       CLR  @PAB+2
+       MOV  @SECADR,@PAB+4
+       CLR  @PAB+10
+       CLR  @PAB+6
+       MOV  @ONE,@PAB+12
+*
+* 7-7-96, why was this removed???????? Perhaps for hard drives?
+*
+       XOP  @EIGHT,0          write sector zero
+       MOVB @PAB+2,R1
+*      JNE  ERRORV            @@
+       JEQ  GOOD00
+       BL   @MESG
+       DATA SECTWR
+*
+GOOD00 MOV  @NUMBAD,R8
+       BL   @CISNIL
+       BL   @MESG
+       DATA MVER02            " bad sectors, verify complete"
+*
+ERRORV BL   @MESG
+       DATA CRLF
+*
+ERRORX MOV  @CHKRET,R11
+       B    @RELCAT           release memory from cat
+*
+       DATA >1234
+BIGNIL LI   R1,>00-'0'         =-32 Decimal
+       JMP  BIG000
+*
+BIGNUM LI   R1,' '-'0'         =-16 Decimal
+*
+BIG000 MOV  R1,@ZEROES         Place -16 or -32 @Zeroes
+*
+       MOV  R11,R12            Save Return Address
+       DIV  @D10000,R14        Divide Total # of Bytes by 10000
+*                              R14 contains Quo. R15 Contains Remander
+       MOV  R15,R10            Store Remander in R10
+       CLR  R9
+       CLR  R8
+       CLR  R7
+       MOV  R14,R6             Store Quotent in R6
+       CLR  R5
+       CLR  R4
+       CLR  R3
+       DIV  @D10,R9
+       DIV  @D10,R8
+       DIV  @D10,R7
+*
+       DIV  @D10,R5
+       DIV  @D10,R4
+       DIV  @D10,R3
+*
+       STWP R1                Storing Address of R0 in R1
+       AI   R1,3*2            Make R1 point to R3
+       CLR  R14               state flag for leading zeros
+       CLR  R2                Fix for drives over 100 million bytes
+       DIV  @D10,R2           R2 has 100 millions, R3 has 10 millions
+       MOV  R2,R0
+BIGNFF STWP R2                Storing Address of R0 in R2
+       AI   R2,10*2           Make R2 point to R10
+       MOV  R0,R0
+       JMP  BIGNFE
+BIGN00 MOV  *R1+,R0           Move Contents of R3..Rx to R0
+BIGNFE JNE  BIGN01            If Rx not equal to zero go to BigNo01
+       MOV  @ZEROES,R0
+       MOV  R14,R14
+       JEQ  BIGN02            no leading zeros...
+       CLR  R0
+*
+BIGN01 SETO R14               Change state of flag - Flag is No leading 0
+BIGN02 AI   R0,'0'
+       SLA  R0,8
+       BLWP @EMIT1
+       C    R1,R2
+       JL   BIGN00
+       JH   BIGN99
+       SETO R14
+       JMP  BIGN00
+*
+BIGN99 MOV  R12,R11
+*
+MESG   MOV  *R11+,R1
+MESG2  MOVB *R1+,R0
+       JEQ  MESGE
+       BLWP @EMIT1
+       JMP  MESG2
+MESGE  RT
+*
+CHKRET DATA 0
+ONE    DATA 1
+SEVEN  DATA 7
+EIGHT  DATA 8
+NINE   DATA 9
+FILCNT DATA 0
+SECCNT DATA 0
+SECCN2 DATA 0
+ALLOK  DATA 0
+VERFLG DATA 0
+TOTFLG DATA 0
+ZEROES DATA 0
+SECADR DATA SECTOR
+SECTOR EQU  >7F00
+REDSEC BYTE 10
+WRTSEC BYTE 11
+NUMBAD DATA 0
+D10000 DATA 10000
+D10    DATA 10
+SLASH  BYTE '/'
+*
+H20    BYTE ' '
+CRLF   BYTE >0D,>0A,0
+NIL
+H00    BYTE >00
+H01    BYTE >0A
+PERIOD TEXT '.'
+MAXLEN BYTE 40
+*
+SECTWR TEXT 'Could not write sector 0...Errors not fixed'
+       BYTE 13,10,0
+MVER00 TEXT 'Verifying...'
+       BYTE >0D,>0A,0
+MVER01 TEXT 'Error, Sector #'
+       BYTE 0
+MVER02 TEXT ' bad sectors, Verify complete'
+       BYTE >0D,>0A,0
+*
+FRAG1  TEXT 'The following file(s) are fragmented:'
+       BYTE >0D,>0A,0
+FRAG2  TEXT 'All specified file(s) are contiguous'
+       BYTE >0D,>0A,0
+SIZ10  TEXT ' bytes total disk space'
+       BYTE >0D,>0A,0
+SIZ20  TEXT ' bytes in '
+       BYTE 0
+SIZ21  TEXT 'directories'
+       BYTE >0D,>0A,0
+SIZ30  TEXT ' bytes in '
+       BYTE 0
+SIZ31  TEXT 'files'
+       BYTE >0D,>0A,0
+SIZ40  TEXT ' bytes available on disk'
+       BYTE >0D,>0A,>0A,0
+SIZ50  TEXT ' bytes of total memory'
+       BYTE >0D,>0A,0
+SIZ60  TEXT ' bytes free'
+       BYTE >0D,>0A,0
+*
+       COPY "\MDOS\CLI\CATMAPS"
+*
+       LIST
+*
+       END
+*
