@@ -1,0 +1,106 @@
+*-------------------------------------------------------------------------
+*
+*      WRITTEN: 12/27/84
+*
+*      FILE:    WDS1.136.CFI
+*
+*      NAME:    CONVERT FLOATING TO INTEGER
+*               DOES NOT DESTROY INCOMING NUMBER
+*               USES R0-R9
+*
+*     INPUT WORKSPACE
+*            R0-POINTS TO FLOATING POINT NUMBER
+*
+*     OUTPUT WORKSPACE
+*            R0-CONTAINS ERROR CODE
+*            R1-CONATINS INTEGER
+*
+*
+*       CCCCC    FFFFFFF     III
+*      C     C   F            I
+*      C         F            I
+*      C         FFFFF        I
+*      C         F            I
+*      C     C   F            I
+*       CCCCC    F           III
+*
+*
+*
+*-------------------------------------------------------------------------
+*
+CFI$$  BL   @CFI
+       MOV  R0,@2(R13)        store integer back to caller
+       SRL  R7,8
+       MOV  R7,*R13           move error code back to caller
+       STST R15               return error status as a flag
+       RTWP
+*
+CFI    LI   R2,FAC            GET POINTER TO NUMBER
+       CLR  R7                ASSUME NO ERROR
+       MOV  *R2,R5            IS NUMBER ZERO
+       MOV  R5,R0
+       JEQ  CFI11             ALL DONE
+       CLR  R0                ZERO RESULT IN CASE FAC=0
+       MOV  R2,R8
+       AI   R8,8              STOPPING CRITERION
+       CLR  R3                CLEAR FRACTION
+       ABS  *R2               MAKE SURE FIRST DIGIT IS POSITIVE
+       CLR  R4                CLEAR OUT UNUSED PART OF REGISTER
+       MOVB *R2+,R4           GET EXPONENT
+       STWP R6                USE R6 FOR INDEXING INTO WORKSPACE
+       LI   R9,100            CONSTANT
+       CI   R4,>3F00          IS NUMBER LESS THAN ONE
+       JLT  CFI11             YES NUMBER < .01      - RESULT = 0
+       JEQ  CFI03             NUMBER > .01 AND < 1  - RESULT = 1
+       CI   R4,>4100          IS NUMBER LESS THAN 100,000
+       JLT  CFI02             IT IS BETWEEN 1 AND 100
+       JEQ  CFI01             IT IS BETWEEN 100 AND 10,000
+       CI   R4,>4200          IS NUMBER TO BIG TO CONVERT
+       JH   CFI08             YES IT IS
+       MOVB *R2+,@1(R6)       GET DIGIT
+       MPY  R9,R0             RADIX TO BINARY
+       MOV  R1,R0             GET RESULT FOR NEXT DIGIT
+CFI01  MOVB *R2+,@7(R6)       GET NEXT DIGIT
+       A    R3,R0             ADD TO PREVIOUS RESULT
+       MPY  R9,R0             RADIX TO BINARY
+       MOV  R0,R0             TEST FOR OVERFLOW
+       JNE  CFI08             YES ERROR
+       MOV  R1,R0             GET RESULT FOR LAST DIGIT
+       JLT  CFI08             OVERFLOW
+CFI02  MOVB *R2+,R3           GOT LAST DIGIT TO LEFT OF DECIMAL
+       SRL  R3,8
+       A    R3,R0             ADD TO RESULT
+CFI03  CB   *R2+,@CBD50       IS ROUNDING NECESSARY
+       JLT  CFI06             NO PUT ON PROPER SIGN
+       JGT  CFI05             YES ADD A 1 TO IT
+       MOV  R5,R5
+       JGT  CFI05             NUMBER IS POSITIVE ROUND UP
+CFI04  MOVB *R2+,R3
+       JNE  CFI05             NONZERO ROUND UP
+       C    R2,R8             LOOK AT REST OF DIGITS
+       JL   CFI04             NO LOOK AT NEXT ONE
+       JMP  CFI06             ROUND DOWN
+*
+*
+*
+CFI05  INC  R0                ROUND UP
+CFI06  CI   R0,SGNBIT         IS RESULT 32768
+       JL   CFI09
+       JH   CFI08
+       MOV  R5,R5             IS NUMBER NEGATIVE 32768?
+       JLT  CFI11             YES
+CFI08  LI   R7,ERROV*256      ERROR CODE
+       LI   R0,>7FFF          NOW JUST FINISH UP
+       INV  R5                IS NUMBER NEGATIVE
+       JLT  CFI11
+       INC  R0
+       JMP  CFI11
+*
+*
+*
+CFI09  INV  R5                IS NUMBER NEGATIVE
+       JLT  CFI11             NO RETURN POSITIVE
+CFI10  NEG  R0
+CFI11  MOV  R0,@FAC           RETURN NUMBER IN CALLERS R1
+CFI12  MOV  R7,@FAC+10        RETURN ERROR CODE IN CALLERS R0
+       RT

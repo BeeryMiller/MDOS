@@ -1,0 +1,554 @@
+* FILENAME: VX1D23S
+*
+* 3.5.2023 Fixed X922D5; unsigned test required TT
+*
+
+
+* SpriteMotion
+*
+* R1x = Pointer to motion data
+* R2x = # of sprites to put in motion
+*
+X91DVC
+X91DL1  MOV     @2(R13),R2
+        CI      R2,>A000
+        JHE     X91DLZ
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@2(R13)
+X91DLZ  MOV     @VIDMOD,R1
+        CI      R1,2
+        JHE     X91DL2
+        RT
+X91DL2  MOV     @4(R13),R10
+        MOV     @2(R13),R1
+X91DS1  MOV     *R1+,R2
+        SLA     R2,2
+        MOV     *R1+,R3
+        SLA     R3,8
+        MOVB    R3,@SPRMTB(R2)
+        MOV     *R1+,R3
+        SLA     R3,8
+        MOVB    R3,@SPRMTB+1(R2)
+        CLR     @SPRMTB+2(R2)
+        SRL     R2,2
+        C       R2,@SPRACT
+        JL      X91DL4
+        MOV     R2,@SPRACT
+        INC     @SPRACT
+        MOV     R2,R4
+        SLA     R4,2
+X91DL3  MOVB    @SPRMTB(R4),@SPRMTB(R4)
+        JNE     X91DL4
+        MOVB    @SPRMTB+1(R4),@SPRMTB+1(R4)
+        JNE     X91DL4
+        DEC     @SPRACT
+        CI      R4,0
+        JEQ     X91DL4
+        AI      R4,-4
+        JMP     X91DL3
+X91DL4  DEC     R10
+        JNE     X91DS1
+        RT
+
+* SpriteColor
+*
+* R1x = Pointer to color data
+* R2x = # of sprites to color
+*
+X91EVC
+X91EL1  MOV     @2(R13),R2
+        CI      R2,>A000
+        JHE     X91ELZ
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@2(R13)
+X91ELZ  MOV     @VIDMOD,R1
+        CI      R1,2
+        JHE     X91EL2
+        RT
+X91EL2  MOV     @4(R13),R10
+        MOV     @2(R13),R1
+X91ES1  MOV     @VIDMOD,R2
+        CI      R2,4
+        JH      X91ES2
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        MOV     @SPRATT,R0
+        MOV     *R1+,R2
+        SLA     R2,2
+        A       R2,R0
+        AI      R0,3
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        JMP     X91EL4
+X91ES2  SWPB    @SPRCOL+2
+        MOVB    @SPRCOL+2,@VDPWA
+        SWPB    @SPRCOL+2
+        MOVB    @SPRCOL+2,@VDPWA
+        MOV     @SPRCOL,R0
+        MOV     *R1+,R2
+        SLA     R2,4
+        A       R2,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        LI      R5,16
+X91EL3  MOV     *R1+,R2
+        SLA     R2,8
+        MOVB    R2,@VDPWD               * Multiple color bytes
+        DEC     R5
+        JNE     X91EL3
+        JMP     X91EL5
+X91EL4  MOV     *R1+,R2
+        SLA     R2,8
+        MOVB    R2,@VDPWD               * Color information
+X91EL5  DEC     R10
+        JNE     X91ES1
+        RT
+
+* SpritePattern
+*
+* R1x = Pointer to pattern # data
+* R2x = # of sprites to pattern
+*
+X91FVC
+X91FL1  MOV     @2(R13),R2
+        CI      R2,>A000
+        JHE     X91FLZ
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@2(R13)
+X91FLZ  MOV     @VIDMOD,R1
+        CI      R1,2
+        JHE     X91FL2
+        RT
+X91FL2  MOV     @4(R13),R10
+        MOV     @2(R13),R1
+X91FS1  SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        MOV     @SPRATT,R0
+        MOV     *R1+,R2
+        SLA     R2,2
+        A       R2,R0
+        AI      R0,2                    *
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        MOV     *R1+,R2
+        SLA     R2,8
+        MOVB    R2,@VDPWD               * New pattern
+        DEC     R10
+        JNE     X91FS1
+        RT
+
+* SpriteMagnify
+*
+* R1x = MagFac (1-4, just like XB)
+*
+X920SM  BYTE    >00,>01,>02,>03
+*
+X920VC
+X920L1  MOVB    @VIDREG+1,R0
+        ANDI    R0,>F800
+        MOV     @2(R13),R1
+        DEC     R1
+        SOCB    @X920SM(R1),R0
+        SRL     R0,8
+        ORI     R0,>0100
+        BLWP    @VWTR
+        RT
+
+* SpritePosition / SpriteDistance
+*
+* R1x = # of sprite to get position of
+* R2x = Type of Distance, 0 for none, 1 for Sprite, 2 for Location
+* R3x = # of second sprite (type 1), or Pixel row (type 2)
+* R4x = Pixel column (type 2)
+* -----
+* R0x = Returned Row of sprite
+* R1x = Returned Column of sprite
+* R2x = Distance (if second sprite # was given)
+* R3x = Squared Distance (for XB)
+*
+X921VC
+X921L1  MOV     @VIDMOD,R1
+        CI      R1,2
+        JHE     X921L2
+        RT
+X921L2  MOV     R11,@X900ST+4
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        MOV     @SPRATT,R0
+        MOV     @2(R13),R2
+        SLA     R2,2
+        A       R2,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        MOVB    @VDPRD,R0               * Read row 1
+        SRL     R0,8
+        INC     R0
+        MOVB    @VDPRD,R1               * Read column 1
+        SRL     R1,8
+        C       @VIDMOD,@DATA7
+        JEQ     $+12
+        C       @VIDMOD,@DATA8
+        JEQ     $+4
+        JMP     $+4
+        SLA     R1,1
+        MOV     R0,*R13
+        MOV     R1,@2(R13)
+        MOV     @4(R13),R4
+        CI      R4,0
+        JEQ     X921L3
+        MOV     @6(R13),R2
+        MOV     @8(R13),R3
+        CI      R4,2
+        JEQ     X921S1
+        MOV     @6(R13),R2
+        MOV     @SPRATT,R4
+        SLA     R2,2
+        A       R2,R4
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        MOVB    @VDPRD,R2               * Read row 2
+        SRL     R2,8
+        INC     R2
+        MOVB    @VDPRD,R3               * Read column 2
+        SRL     R3,8
+        C       @VIDMOD,@DATA7
+        JEQ     $+12
+        C       @VIDMOD,@DATA8
+        JEQ     $+4
+        JMP     $+4
+        SLA     R3,1
+X921S1  BL      @X922D1                 * Get distance
+        MOV     @X900ST,@4(R13)           actual distance
+        MOV     @X900ST+8,@6(R13)         squared distance (XB)
+X921L3  MOV     @X900ST+4,R11
+        RT
+
+* SpriteCoinc
+*
+* R1x = Type (0=sprites, 1=locations, 2=any two sprites)
+* R2x = # of coincidence checks
+* R3x = Pointer to test field
+* R4x = Pointer to result field
+* -----
+* R0x = # of coincidences detected
+*
+X922LS  DATA    X922T0,X922T1,X922T2
+X922TS  DATA    0,0,0
+*
+X922VC
+X922L1  MOV     @6(R13),R2
+        CI      R2,>A000
+        JHE     X922LY
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@6(R13)
+X922LY  MOV     @8(R13),R2
+        CI      R2,>A000
+        JHE     X922LZ
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@8(R13)
+X922LZ  MOV     @VIDMOD,R1
+        CI      R1,2
+        JHE     X922L2
+        RT
+X922L2  CLR     *R13
+        MOV     @2(R13),R1
+        SLA     R1,1
+        MOV     @X922LS(R1),R9
+        MOV     R11,@X900ST+6
+        BL      *R9
+        MOV     @X900ST+6,R11
+        RT
+*
+X922T0  MOV     R11,@X900ST+4
+        MOV     @4(R13),R12
+        MOV     @6(R13),R9
+        MOV     @8(R13),R10
+X922U0  SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        MOV     @SPRATT,R4
+        MOV     *R9+,R2
+        SLA     R2,2
+        A       R2,R4
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        MOVB    @VDPRD,R0               * Read row 1
+        SRL     R0,8
+        INC     R0
+        MOVB    @VDPRD,R1               * Read column 1
+        SRL     R1,8
+        C       @VIDMOD,@DATA7
+        JEQ     $+12
+        C       @VIDMOD,@DATA8
+        JEQ     $+4
+        JMP     $+4
+        SLA     R1,1
+        MOV     @SPRATT,R4
+        MOV     *R9+,R2
+        SLA     R2,2
+        A       R2,R4
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        MOVB    @VDPRD,R2               * Read row 2
+        SRL     R2,8
+        INC     R2
+        MOVB    @VDPRD,R3               * Read column 2
+        SRL     R3,8
+        C       @VIDMOD,@DATA7
+        JEQ     $+12
+        C       @VIDMOD,@DATA8
+        JEQ     $+4
+        JMP     $+4
+        SLA     R3,1
+        BL      @X922D1                 * Get distance
+        C       @X900ST,*R9
+        JH      X922V0
+        AI      R9,-4
+        MOV     *R9+,*R10+
+        MOV     *R9+,*R10+
+        INC     *R13
+X922V0  INCT    R9
+        DEC     R12                     *
+        JNE     X922U0
+        MOV     @X900ST+4,R11
+        RT
+*
+X922T1  MOV     R11,@X900ST+4
+        MOV     @4(R13),R12
+        MOV     @6(R13),R9
+        MOV     @8(R13),R10
+X922U1  SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        MOV     @SPRATT,R4
+        MOV     *R9+,R2
+        SLA     R2,2
+        A       R2,R4
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        MOVB    @VDPRD,R0               * Read row 1
+        SRL     R0,8
+        INC     R0
+        MOVB    @VDPRD,R1               * Read column 1
+        SRL     R1,8
+        C       @VIDMOD,@DATA7
+        JEQ     $+12
+        C       @VIDMOD,@DATA8
+        JEQ     $+4
+        JMP     $+4
+        SLA     R1,1
+        MOV     *R9+,R2                 * Read row 2
+        MOV     *R9+,R3                 * Read column 2
+        BL      @X922D1                 * Get distance
+        C       @X900ST,*R9
+        JH      X922V1
+        AI      R9,-6
+        MOV     *R9+,*R10+
+        MOV     *R9+,*R10+
+        MOV     *R9+,*R10+
+        INC     *R13
+X922V1  INCT    R9
+        DEC     R12                     *
+        JNE     X922U1
+        MOV     @X900ST+4,R11
+        RT
+*
+X922T2  MOV     R11,@X900ST+4
+        MOV     @8(R13),R10
+        LI      R8,>8F00                * Read status register #0
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        MOVB    @VDPSTA,R8
+        ANDI    R8,>2000
+        JNE     X922U2
+        B       @X922W2
+X922U2  MOVB    @MSEFLG,@MSEFLG
+        JNE     X922V2
+        LI      R8,>8F03                * Read status register #3
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        MOVB    @VDPSTA,R1
+        SRL     R1,8
+        LI      R8,>8F04                * Read status register #4
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        MOVB    @VDPSTA,R1
+        LI      R8,>8F05                * Read status register #5
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        MOVB    @VDPSTA,R0
+        SRL     R0,8
+        LI      R8,>8F06                * Read status register #6
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        MOVB    @VDPSTA,R0
+        ANDI    R0,>01FF
+        INC     R0
+        ANDI    R1,>01FF
+        C       @VIDMOD,@DATA7
+        JEQ     $+12
+        C       @VIDMOD,@DATA8
+        JEQ     $+4
+        JMP     $+4
+        SLA     R1,1
+        MOV     R0,*R10+
+        MOV     R1,*R10
+X922V2  INC     *R13
+X922W2
+        MOV     @X900ST+4,R11
+        RT
+*
+X922D1  S       R0,R2
+        ABS     R2
+        MOV     R2,R6                   * R6 ROW DIFF.
+        S       R1,R3
+        ABS     R3
+        MOV     R3,R7                   * R7 COL DIFF.
+        MOV     R2,R1
+        MOV     R3,R2
+        MPY     R2,R2
+        MPY     R1,R1
+        MOV     R6,R5
+        C       R6,R7
+        JGT     X922D2
+        MOV     R7,R5
+X922D2  A       R3,R2                   * R2 BASE
+        JNC     X922D3
+        LI      R8,1                    * MSB
+        JMP     X922D4
+X922D3  CLR     R8
+X922D4  MOV     R2,R6
+        CI      R6,32767
+        JLE     X922D6
+        LI      R6,32767
+X922D6  MOV     R6,@X900ST+8
+        MOV     R5,@X900ST+2
+X922D5  MOV     @X900ST+2,R5
+        MOV     R5,@X900ST
+        INC     R5
+        MOV     R5,@X900ST+2
+        MPY     R5,R5
+
+        C       R5,R8
+        JLT     X922D5
+        C       R6,R2
+;       JLT     X922D5
+        JL  X922D5       3.5.23, this value must be unsigned!
+        RT
+
+* SpritePatDefGet
+*
+* R1x = CPU address of sprite pattern definitions
+* R2x = # of sprite patterns to define or get
+* R3x = Starting pattern #
+* R4x = 0 if Def, >FFFF if Get
+*
+X923VC
+X923L1  MOV     @2(R13),R2
+        CI      R2,>A000
+        JHE     X923LZ
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@2(R13)
+X923LZ  SWPB    @SPRPAT+2
+        MOVB    @SPRPAT+2,@VDPWA
+        SWPB    @SPRPAT+2
+        MOVB    @SPRPAT+2,@VDPWA
+        MOV     @4(R13),R10
+        MOV     @2(R13),R9
+        MOV     @6(R13),R1
+X923L2  MOV     R1,R0
+        SLA     R0,3
+        A       @SPRPAT,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        LI      R2,8
+        MOV     @8(R13),@8(R13)
+        JNE     X923L4
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+X923L3  MOVB    *R9+,@VDPWD
+        DEC     R2
+        JNE     X923L3
+        JMP     X923L6
+X923L4  MOVB    R0,@VDPWA
+X923L5  MOVB    @VDPRD,*R9+
+        DEC     R2
+        JNE     X923L5
+X923L6  INC     R1
+        DEC     R10
+        JNE     X923L2
+        RT

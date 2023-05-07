@@ -1,0 +1,131 @@
+* FILENAME: VX353AS
+*
+* VWTR - write to video registers, with register save
+*
+* R1x = VDP register # (0-46)                        ** 920906 hcp
+* R2l = Value to put into VDP register
+*
+X935VC
+X935L1  MOV     @4(R13),R0
+        MOV     @2(R13),R1
+        CI      R1,46                                ** 920906 hcp
+        JH      X935RT      IF REGISTER OUT OF RANGE ** 920906 hcp
+        SLA     R1,8        REG # TO HIGH BYTE
+        MOVB    R1,R0       VALUE IN LOW BYTE
+        BLWP    @VWTR
+X935RT  RT                                           ** 920906 hcp
+
+* VRFR - read from video registers, actually, a read from stored values
+*
+* R1x = VDP register #
+* -----
+* R0l = Value read from VDP register
+*
+X936VC
+X936L1  MOV     @2(R13),R1
+        MOVB    @VIDREG(R1),R0
+        SRL     R0,8
+        MOV     R0,*R13
+        RT
+
+* GetTables
+*
+* R1x = Pointer in user data, to put copy of tables (24 bytes)
+* -----
+* Copies of this data are put into user data:
+*
+* CTABLE  DATA    0,0
+* PTABLE  DATA    0,0
+* SCRIMG  DATA    0,0
+* SPRATT  DATA    0,0
+* SPRPAT  DATA    0,0
+* SPRCOL  DATA    0,0
+*
+X937VC
+X937L1  MOV     @2(R13),R2
+        CI      R2,>A000
+        JHE     X937L2
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@2(R13)
+X937L2  MOV     @2(R13),R1
+        LI      R0,CTABLE
+        LI      R2,24
+X937L3  MOV     *R0+,*R1+
+        DECT    R2
+        JNE     X937L3
+        RT
+
+* GetPalRegs - Squashed
+*
+* R1x = Pointer in user data, to put copy of Palette Registers (32 bytes)
+*
+X938VC
+X938L1  MOV     @2(R13),R2
+        CI      R2,>A000
+        JHE     X938L2
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@2(R13)
+X938L2  MOV     @2(R13),R1
+        LI      R0,PALSQS
+X938S1  LI      R2,32
+X938L3  MOV     *R0+,*R1+
+        DECT    R2
+        JNE     X938L3
+        RT
+
+* GetPalRegs - Expanded, by the book
+*
+* R1x = Pointer in user data, to put copy of Palette Registers (32 bytes)
+*
+X939VC
+X939L1  MOV     @2(R13),R2
+        CI      R2,>A000
+        JHE     X939L2
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@2(R13)
+X939L2  MOV     @2(R13),R1
+        LI      R0,PALEXP
+X939S1  LI      R2,32
+X939L3  MOV     *R0+,*R1+
+        DECT    R2
+        JNE     X939L3
+        RT
+
+* ChangeEdgeColor
+*
+* R1l = New color for edge (Modes 6+)
+*
+X93AVC
+X93AL1  MOV     @VIDMOD,R1
+        CI      R1,6
+        JL      X93ART
+        CLR     R0
+        CLR     R1
+        MOV     @GRPHLF,R2
+        MOV     @GXROWS,R3
+        MOV     @2(R13),R4
+        ANDI    R4,>FF
+        LI      R5,>80
+        BLWP    @VDCMD1
+        MOV     @GXCOLS,R0
+        S       @GRPHLF,R0
+        BLWP    @VDCMD1
+X93ART  RT

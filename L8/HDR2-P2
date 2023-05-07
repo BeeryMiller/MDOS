@@ -1,0 +1,1162 @@
+; File: HDR2-P2
+;       >4200 start
+* REVISED 11.23.93 BY TAT - MDOS HFDCC POWERUP ROUTINE ONCE AGAIN ENABLED.
+*         11.24.93 powerup again revised per Beery Miller for >1200 address
+*
+* 01.30.94  Before label DSKTRY, added code to toggle HDS1.DSK1. emulation
+*           of physical drive #1.
+*
+*           Discovered pass-through of WDSx devices was causing lockups, went
+*           to DSRPASS-S for solution
+*
+* CALL DIR() starts around line 464
+*
+* 12.31.97  Winchester power-up/passthrough removed.  No more support for this
+*           unused peripheral.  Anyone using WDS in MDOS with TI ON will either
+*           need to "upgrade" to the standard or stay with the old MDOS,
+*           assuming this still worked in the previous SCSI versions.
+* 09.09.09  SETMO9 - CLR @HFDFLG, fixes SCSI/DSK file access problem
+*
+* 2-25-18   File contains mostly 994A mode powerup/int/dsr handlers
+*          *Add SCSI interrupt handler here
+*          *inspect SETMOD for level 2 handling like BBS xop code
+*          *inspect powerup mess
+* 3.17.2018 Fixed CALDRS hardcoded SCSI Page number
+* 3.25.2018 Cleaned up HFDC powerup ~300.  duplicate lines/bad logic
+*           HFDC powerup vector in winds1-s(6002) points to FLPPRM:PRWIN0
+*           Note: DSRPASS-S contains 9640 mode powerup, which handles
+*                 floppy and scsi as well.
+*           Added SCSI interrupt handler (not active for now)
+*
+;01.18.2021 Incorporated 6.60 TIPI routines into 7.x codebase
+;           Added TI,UR,OO (PI) device text
+;           Added Device name tests and PI/PIO disambiguation
+;           Added CALTIP routine to execute TIPI DSR
+;         $$/4a scsi int handler is not enabled
+;         $$PWRUP0 code moves 10 bytes (not 5) into VDP for floppy header!
+;           (header is defined as 5 bytes!)
+;
+;           Added TIPI well-known-address routine (WKA0-WKA6)
+;
+;01.23.2021 Added routine in CALDR1/NUM$OK for TIPI DSK0 and DSK1-4 remaps
+;           R10 will be passed to TIPI DSR with the drive #, base 0, to
+;           modify TIPI pab for correct DSKx device (based on remap)
+;       >>> Code only applies to level 3 at this time
+;           Must update DSRPASS-S (remap table) and CLI.NEWCMDS (remam cmd)
+;
+;1.31.2021  TIPI level2 pushed WS4000 beyond >5FFF.
+;           REMOVED WKA table/code to free space
+;           (Consolidated SECT2-P transfer loops for hfdc/pfm/ramdisk)
+;
+;2.5.2021   Review moving TPTEST remap checks into TIPI DSR, leverage OPCODE
+;
+; 2.6.2021  Added REF to FDC-SRC-P for level2/level3 direct entry
+;           Added tipi powerup flag TIPPWR reset at :NOHFDC
+;
+; 2.8.2021 -Fixed old bug: nonexistent device calls from the 9640 DSR were
+; [PRIN02]  routed to the wrong BADOP7 (L8.SYSRTN vs. HD.WINDS3-S).  Added
+;           proper error routine & branch to SYSRT1 for 9640 mode return
+;
+;          $CALDRV might need a boundary check for ill-formed PABs
+;          $SETG00 is copying 60 bytes. PABs are 16+40. Inspect.
+;
+; 2.28.2021 Added PWRUP3 (link in HDR1-P2) for GPL/EXEC reset of NUMFIL
+;
+       EVEN
+H0800  DATA >0800
+H0A    BYTE >0A
+H0B    BYTE >0B
+H0C    BYTE >0C
+H0D    BYTE >0D
+*
+* NOW FOR VARIOUS CONSTANTS USED FOR CALCULATION
+*
+CHR1   BYTE '1'
+SLASH  BYTE '/'
+D60    DATA 60
+H0400  DATA >0400
+H17    BYTE >17
+PERIOD TEXT '.'
+HBA    BYTE >BA
+ERR06  BYTE >C0               io error 6 . . in high 3 bits
+REDCOD BYTE 2,0
+*
+* HEADER CODE FOR VPD RAM BUFFERS, USED BY COPY-PROTECTION IDIOTS...SO LETS
+* PUT IT IN FOR THE UNSUSPECTING...
+*
+*      HEADER VERIFY,$OLD TOP OF MEM,CRU BASE,# OF BUFFERS...
+*
+HAA    BYTE >AA,>3F,>FF,>11,>03   VDP RAM HEADER FOR FLOPPY
+*
+       EVEN
+       DEF  HF1
+HF1    DATA 0                 HFDC CRU ADDRESS FOR >4000 DSR PAGE
+D40    DATA 40
+OPCDAT DATA OPCODE
+DSKCHK TEXT 'DS'         text for 9640 mode device checks (2021-huh?)
+PIOCHK TEXT 'PI'         ;disambiguate PI. and PIO.
+RS2CHK TEXT 'RS'
+WDS1TX TEXT 'WD'         ;$old, remove later
+SAVGRM DATA 0
+SCSIDT TEXT 'SC'              SCSI device check!
+TIPIDT TEXT 'TI'         ;TIP1
+URIDT  TEXT 'UR'         ;URIx
+OODT   TEXT 'OO'         ;pi helper
+       EVEN
+
+;
+; 1.18.2021 tt
+; TIPI Well-known address entry points
+;    We aren't saving mappers/registers/cart space via SETMOD since thi
+;    is a simple routine
+;
+;WKATBL EQU  >6010        ;first routine (how can we remove hardcode)
+;WKA0   LI   R0,WKATBL+0     ;6010
+;       JMP  WKAENT
+;WKA2   LI   R0,WKATBL+2     ;6012
+;       JMP  WKAENT
+;WKA4   LI   R0,WKATBL+4     ;6014
+;      JMP  WKAENT
+;WKA6   LI   R0,WKATBL+6     ;6016
+;WKAENT MOVB @MAP96+3,R3       save mapper to >6000 spage
+;      MOVB @MAP96+6,R4
+;      MOVB @PAGD7,@MAP96+3   and page in our TIPI DSR
+;      MOVB @HBA,@MAP96+6     tipi ports at >c000-dfff
+;      STWP R1                need workspace to return later
+;      MOV  R1,@WKAWS         so modify the LWPI below ;)
+;      MOV  *R0,@DSRWS    ;Pass link address to DSRWS (R0) for the branch
+;                        (6010 is address; *R0==@>6010)
+; Now, we call the routine and fake a few things
+; R12 isn't being changed by us, so no need to save, just turn off card
+;      SBZ  0            ;turn off whatever card was on/called
+;
+;      LWPI DSRWS        borrow WS used in DSRET1
+;      LI   R12,>1800    turn on TIPI card
+;      SBO  0
+;      LI   R11,WKART    fake return to our routine
+;?     LI   R15,>8C02    is this needed for the VDP routines?
+;      BL   *R0          execute; TIPI will return via the fake R11
+;WKART  SBZ  0            force TIPI offline
+;
+;      LWPI 0            restore caller WP
+;WKAWS  EQU  $-2
+;      MOVB R3,@MAP96+3
+;      MOVB R4,@MAP96+6
+;      RT                use callers R11 to return
+
+*
+********************************************************************************
+*
+* entry point for /4a mode interrupt
+*
+INTENT SBZ  0                 turn the fargin card off . . .
+       LI   R3,BITTAB
+NXTBIT MOV  *R3+,R12
+       TB   0
+       JEQ  GOINT
+       CI   R3,LSTBIT
+       JLE  NXTBIT
+*
+*------------------------
+* 3.25.2018
+* SCSI Interrupt handler; mirrors l8.dsrpass-s. Not enabled for now.
+*      li   r12,>1200
+*      sbo  0
+*      tb   0
+*      jne  notsin
+*      movb @>f112,@hbaxx+1
+*      mov  @>4fee,r3
+*      movb @hbaxx+1,@>f112
+*notsin sbz 0
+*--------------
+       LI   R12,>1F00         fake it out, and return
+       RT                     call was a garbage interrupt
+*
+BITTAB DATA 17*2+>1340        rs232/1 out
+       DATA 16*2+>1340                in
+       DATA 17*2+>1380        rs232/2 out
+       DATA 16*2+>1380                in
+       DATA 19*2+>1340        PIO
+       DATA 19*2+>1340        PIO
+*
+       DATA 17*2+>1540        rs232/3 out
+       DATA 16*2+>1540                in
+       DATA 17*2+>1580        rs232/4 out
+       DATA 16*2+>1580                in
+LSTBIT DATA 19*2+>1540        PIO/2
+*
+*******************************************
+*
+GOINT  ANDI R12,>1FC0         fix CRU base for bit tested
+       AI   R3,-BITTAB-2
+       SRL  R3,1
+*
+       STWP R4                save calling WS
+       MOV  R4,@INTWSR        and save it .
+       MOV  R3,@CDTYPE
+       MOV  R12,@CRUSA1
+*
+       MOV  @MAP4A+0,@ISAMAP+0  save the map
+       MOV  @MAP4A+2,@ISAMAP+2
+       MOV  @MAP4A+4,@ISAMAP+4
+       MOV  @MAP4A+6,@ISAMAP+6
+*
+       MOV  @>7000,@IS7000    save word at >7000
+*
+       MOVB @PAGD1,@MAP4A+5   bring in the other pages
+       MOVB @PAGD3,@MAP4A+1
+       MOVB @PAGD0,@MAP4A+3
+*
+       MOVB @H00,@MODE4A      indicate entry from /4a mode
+*
+       MOVB @GRMRA,@IGROM
+       MOVB @GRMRA,@IGROM+1   save the GROM read address
+       DEC  @IGROM            and down it by one . . .
+*
+       LWPI INTWS               bring in the good ws
+       LI   R3,0
+CDTYPE EQU  $-2
+       MOV  @INTWSR,R4
+*
+       LI   R12,>1EF4
+       SBO  0                 9640 mode
+*
+       LI   R12,0             cru base
+CRUSA1 EQU  $-2
+*
+       MOV  @RSCODE+2,R5      get interrupt link
+       BL   *R5               go to it . . .
+
+       LI   R12,>1EF4
+       SBZ  0                 back to bein' a /4a
+
+       LWPI >83E0             return to calling WS
+INTWSR EQU  $-2               place to stick actual calling WS
+       MOV  @ISAMAP+0,@MAP4A+0
+       MOV  @ISAMAP+2,@MAP4A+2               restore the map
+       MOV  @ISAMAP+4,@MAP4A+4
+       MOV  @ISAMAP+6,@MAP4A+6
+*
+* routine to insure proper page mapped in at >6000
+*
+       LI   R4,>7000
+       LI   R5,0
+IS7000 EQU  $-2               what was at >7000 when we were called
+       C    *R4,R5            changed?
+       JEQ  IS7001            nope . . .
+       MOVB *R4,*R4           flip page?
+       C    *R4+,R5           correct now?
+       JEQ  IS7001            yup
+       MOVB *R4,*R4           other page, has to be right
+*
+IS7001 LI   R12,>1F00         quick way to kill rest of search
+       MOVB @IGROM,@GRMWA     restore GROM address
+       MOVB @IGROM+1,@GRMWA
+       RT                     should work. . . .
+*
+IGROM  DATA 0
+ISAMAP DATA 0,0,0,0
+
+********************************************************************************
+*  ROUTINE FOR ENTRY INTO DSR FROM 9640 MODE
+*   R0 of caller points to PAB in execution space
+*
+SEVEN  DATA 7
+WDS2TX DATA 'HD'         flag/cru for hfdc access is @>6000
+*
+SET964 MOV  @MAP96+0,@SAVMAP+0             123097
+       MOV  @MAP96+2,@SAVMAP+2
+       MOV  @MAP96+4,@SAVMAP+4
+       MOV  @MAP96+6,@SAVMAP+6
+
+       STWP R0
+       C    R0,@>0040         called from system?
+       JNE  SET965
+       MOV  @>1FFE,R0
+       JMP  SET966
+
+SET965 LI   R0,14      123097 get page list to >1F00
+       XOP  @SEVEN,0          call memory management routine
+
+SET966 CI   R0,PAGES
+        JLE  PAGDL0
+       LI   R0,PAGES
+PAGDL0 MOV  R0,@PAGCNT
+
+       MOV  R13,@13*2+WS4000
+       MOV  R14,@14*2+WS4000
+       MOV  R15,@15*2+WS4000
+       LWPI WS4000               ok! have it your way...
+
+       LI   R1,>1F00     RESERVED FOR PAGE LIST IN OS HEADER
+       LI   R2,PAGLST
+       MOV  @PAGCNT,R0
+PAGDL1 MOVB *R1+,*R2+
+       DEC  R0
+       JNE  PAGDL1
+
+       MOV  R15,R5            save to return to user program sometime
+       MOV  R14,R4
+       MOV  R13,R3
+
+       LI   R14,CALDRV        FAKE A RETURN TO COMMON DSR ROUTINE
+*
+* time to get the 9640 PAB
+*
+       MOV  *R13,R7           get address of PAB
+       MOV  R7,R6
+       SRL  R6,13
+       MOVB @TSKMAP(R6),@MAP96+5
+       MOVB @TSKMAP+1(R6),@MAP96+6
+       MOVB @PAGD1,@MAP96+4
+       ANDI R7,>1FFF
+       ORI  R7,>A000
+       LI   R0,OPCODE->2000
+       LI   R6,60
+
+SETG00 MOVB *R7+,*R0+
+       DEC  R6
+       JNE  SETG00
+
+       MOVB @PAGD1,@MAP96+5
+       MOVB @H00,@PABERR      no errors yet
+
+SETMO9 MOVB @HFF,@MODE4A      9640 mode entry
+       CLR  @HFDFLG           9.9.09-fixed 2004; SCSI VIEW/dsk access bug
+       MOV  *R13,@DSRWS+2     pab address
+       JMP  SETMO0
+*
+********************************************************************************
+*
+*      99/4a mode setup entry point
+*
+*      PAB is forced to VDP.  :(...  Guess CPU was unfinished?
+*
+SETMOD DATA WS4000,SETMO1     entry vector
+*
+SETMO1 MOV  @MAP4A+0,@SAVMAP+0
+       MOV  @MAP4A+2,@SAVMAP+2
+       MOV  @MAP4A+4,@SAVMAP+4
+       MOV  @MAP4A+6,@SAVMAP+6
+       MOV  @MAP4A+0,@PAGLST+0
+       MOV  @MAP4A+2,@PAGLST+2
+       MOV  @MAP4A+4,@PAGLST+4
+       MOV  @MAP4A+6,@PAGLST+6
+       MOVB @GRMRA,@SAVGRM
+       MOVB @GRMRA,@SAVGRM+1
+       DEC  @SAVGRM
+       MOV  @>7000,@S7000
+*
+       MOV  @24(R13),R12      GET THE CURRENT BASE ADDRESS
+       SBZ  0                 turn card off
+*
+       MOV  @22(R13),@SAVJPH  SAVE RETURN ADDRESS IN >4000 SPACE
+       MOV  R13,@SAVWS        SAVE CALLING WORKSPACE TOO
+       MOVB @PAGD1,@MAP4A+5   MY DATA PAGE 1 (>A000)
+       MOVB @PAGD3,@MAP4A+1   MY DATA PAGE 2 (>2000)
+       MOVB @PAGD0,@MAP4A+3
+       MOVB @HFF,@CPUFLG      pab is in VDP ram  [why no cpu ram support?]
+*
+       LI   R12,>1EF4         flip to 9640 architecture
+       SBO  0                 ...
+       LI   R1,>834A
+       LI   R2,MYPAD+>4A
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       CLR  @TENBYT
+       MOVB @H00,@MODE4A      /4a mode entry
+*
+* common code for both entries...
+*
+SETMO0 LI   R13,DSRWS         UPON RETURN USE MY WS
+       MOV  R13,@8(R13)       STORE WORKSPACE POINTER IN R4 OF MAIN WS
+       LI   R12,>1100         PRETEND WE ARE A DISK CONTROLLER
+       MOV  R12,@24(R13)      MAKE R12 IN REGULAR WS THE SAME
+       RTWP
+
+**************************************************************************
+* PWRUP - primary 4A mode powerup
+*      -RS232
+*      -clears data pages
+*      -sets VDP header
+*      -powerup HFDC
+*   DOES NOT Powerup SCSI or FDC or remaps; see DSRPASS-S for 9640 powerup
+*
+* PWRUP2 - 4a mode powerup for GPL 1.1H. Need to determine if this is still
+*          used by GPL. Its sole purpose is to powerup the HFDC, probably
+*          after a ROMPAGE. Might have been for Winchester.
+**************************************************************************
+
+;Special powerup for GPL/EXEC to reset numfile from 3 to 10 upon exit
+;Must be sure the calling WS is NOT in >A000 space (like GPL!)
+PWRUP3 MOVB @MAP4A+5,R1
+       MOVB @PAGD1,@MAP4A+5   now for second data page
+       MOVB @H0A,@NUMFIL     **** THIS MUST BE EXECUTED WITH PAGE
+       MOVB R1,@MAP4A+5
+       RT
+
+PWRUP  MOV  R11,@PWREXT+2
+       CI   R12,>1100
+       JEQ  PWRUPP            only power up once!
+       B    @PWREXT
+SCSET  DATA 0
+*
+* reset the rs232 card
+*
+* powerup routine from the CorCrap RS232 for the PIO port
+*
+PWRUPP LDCR @H00,8            clear the CRU output bits
+       MOVB @MAP4A+1,R0
+       MOVB @PAGD3,@MAP4A+1
+       SETO @LSTDRV
+       MOVB R0,@MAP4A+1
+       MOVB @MAP4A+5,R0       save page
+       MOVB @PAGD0,@MAP4A+5   put DSR 6000 page in >A000
+       LI   R1,PIOTYP
+       MOV  @>4000(R1),R1     in >a000 space . . .
+       CI   R1,2              CorCrap?
+       JNE  PWRUP4            nope . ..
+       LI   R12,>1300
+       SBO  2
+       SBZ  1
+*
+PWRUP4 LI   R1,PIOTY2
+       MOV  @>4000(R1),R1     in >a000 space . . .
+       CI   R1,2              CorCrap?
+       JNE  PWRUP5            nope . ..
+       LI   R12,>1500
+       SBO  2
+       SBZ  1
+*
+PWRUP5 LI   R12,>1340
+       SBO  31                reset it ,. ,
+       LI   R5,STATAB         port table
+       MOV  @>4000(R5),R5     get pointer
+       AI   R5,12+>4000       point to current port data
+       LDCR *R5,8             load control register
+       INCT R5
+       LDCR @ITIM,8           interval timer
+       LDCR *R5,12            load baud rate
+       SBO  19                transmit interrupt on
+       SBO  20                timer interrupt on . .
+*
+       LI   R12,>1380
+       SBO  31
+       AI   R5,22             point to next port data
+       LDCR *R5,8
+       INCT R5
+       SBZ  13
+       LDCR *R5,12
+       SBO  19                transmit interrupt on
+*
+       LI   R12,>1540
+       SBO  31                reset it ,. ,
+       AI   R5,22             point to next port
+       LDCR *R5,8             load control register
+       INCT R5
+       LDCR @ITIM,8           interval timer
+       LDCR *R5,12            load baud rate
+       SBO  19                transmit interrupt on
+       SBO  20                timer interrupt on . .
+*
+       LI   R12,>1580
+       SBO  31
+       AI   R5,22             point to next port data
+       LDCR *R5,8
+       INCT R5
+       SBZ  13
+       LDCR *R5,12
+       SBO  19                transmit interrupt on
+*
+       LI   R4,>A000          zero out our data pages...
+       MOVB @PAGD2,@MAP4A+5
+PWRUP1 CLR  *R4+
+       CI   R4,>C000
+       JL   PWRUP1
+*
+       MOVB @PAGD1,@MAP4A+5   now for second data page
+       LI   R4,>A000
+PWRUP0 CLR  *R4+
+       CI   R4,>C000
+       JNE  PWRUP0
+       MOVB @H03,@NUMFIL     **** THIS MUST BE EXECUTED WITH PAGE
+*                            ****  "PAGD1" MAPPED AT >A000!!!!
+       LI   R1,>37D7     THIS WILL HAVE TO BE PATCHED TO CHECK FOR /4A MODE
+       MOV  R1,@>8370
+       INC  R1
+       LI   R7,HAA       R7 POINTS TO GROM HEADER
+       ORI  R1,>4000
+       SWPB R1
+       MOVB R1,@>8C02
+       SWPB R1
+       MOVB R1,@>8C02
+       LI   R1,10
+PISS1  MOVB *R7+,@>8C00  3.25.18 - why are we writing 10 bytes not 5????
+       DEC  R1
+       JNE  PISS1
+
+*      MOVB @HBA,@MAP4A+5     commented out 4.23.93
+*      LI   R12,>1000
+*
+NOWIN  SBZ  0
+*
+       MOVB R0,@MAP4A+5       RESTORE THE USERS PAGE 5
+*
+       MOVB @GRMRA,@SAVGRM
+       MOVB @GRMRA,@SAVGRM+1
+       DEC  @SAVGRM
+       MOV  @>7000,@S7000
+*
+       LI   R12,>1EF4         to 9640 architecture
+       SBO  0
+*
+       MOVB @MAP96+1,@PWRPAG
+       MOVB @MAP96+3,@PWRPAG+1
+       MOVB @PAGD5,@MAP96+1   >2000 page
+       MOVB @PAGD6,@MAP96+3   >6000 page
+
+       CLR  @>601E            Clear SCSI ACCESS FLAG.
+       MOV  @>6016,@HF1       MOV HFDC CRU ADDRESS TO >4000 DSR AREA
+
+       C    @>6000,@WDS2TX    "HD" flag for hfdc installed ?
+       JNE  NOHFDC            no, skip powerup
+
+       C    @HF1,@CRU1100     hfdc at 1100?
+       JEQ  NOHFDC1           yes, ok
+       C    @HF1,@CRU1000     at 1000?
+       JNE  NOHFDC            no, don't powerup.[should we disable?
+
+NOHFDC1 MOV  @>6002,R1   hfdc powerup [wins1-s -> FLPPRM:PRWIN0
+        BL   *R1         So why don't we ever powerup/check the FDC?
+*
+
+NOHFDC
+       MOVB @PAGD7,@MAP96+3   ;2.6, prime TIPI DSR for powerup
+       CLR  @TIPPWR
+
+       MOVB @PWRPAG,@MAP96+1
+       MOVB @PWRPAG+1,@MAP96+3
+       LI   R12,>1EF4
+       SBZ  0                 to 99/4a architecture
+
+       MOVB @SAVGRM,@GRMWA
+       MOVB @SAVGRM+1,@GRMWA
+       BL   @FIX700           make sure 6000 page is correct
+
+       LI   R12,>1100
+PWREXT B    @0
+*
+TESTAD DATA 0
+TESTPG DATA >BA00
+PWRPAG DATA 0
+P0     DATA 0
+ITIM   BYTE 78,0              5ms for interval timer for PIO
+*
+PWRTN  DATA 0
+PWRUP2 MOV  R11,@PWRTN
+*      B    *R11
+
+       LI   R12,>1EF4
+       SBO  0
+
+       MOVB @PAGD5,@MAP96+1   >2000 page
+       MOVB @PAGD6,@MAP96+3   >6000 page
+
+       CLR  @>601E            CLEAR SCSI ACCESS FLAG,JUST IN CASE!
+       C    @>6000,@WDS2TX
+       JNE  NAHFDC
+
+       MOV  @>6002,R1         get power-up vector
+       BL   *R1
+       NOP
+
+NAHFDC MOV  @PWRTN,R11
+       LI   R12,>1EF4
+       SBZ  0
+       B    *R11
+
+********************************************************************************
+* START CALL DIR(X) HERE
+* GET VECTOR TO NEXT PAGE TO SET UP DRIVE IN VOLUME
+* AND VALIDATE DRIVE NUMBER
+*      - uses L8.RW-P2 for the dir loop
+*      - see  L8.CFILES-P3 for basic entry and text
+*      - HD.GPLSUBS /winds6-s is hard drive version (unused...no linkage?)
+*
+CDIRL  BLWP @SETMOD
+       CLR  R5                vector for call DIR
+       MOVB @H17,@OPCODE      opcode for call DIR
+       LI   R10,SYSRT4        error return address
+       BL   @PG2LN2           (this file) parse basic line for drive number
+       MOV  R12,@MYR12
+       BL   @COMGPL           get a buffer in SRAM
+*
+       MOV  R3,R3             test if one is available
+       JNE  CBAVL
+       B    @BADO33
+*
+CBAVL  BL   @GETVIB           get VIB
+       DATA SYSRT4
+*
+       BL   @GETPNT           get pointers
+       B    @FIXDIR           go to the code...(RW-P2, line 26)
+*
+*
+* call files
+*
+CFILES BLWP @SETMOD      CALL 'files'
+       LI   R5,4         routine INDEX
+       JMP  PG2LN4
+*
+CFILEG BLWP @SETMOD      GPL routine >16
+       LI   R5,6         routine index
+       JMP  PG2LN4
+*
+*
+* GPL FORMAT ROUTINE
+*      - see l8.format / fmttbl for remap/table for allowable formats
+*
+GP11   BLWP @SETMOD
+       BL   @UNTEST      CHECK FOR CORRECT UNIT NUMBER ETC. (DON'T ERROR OUT!)
+*
+       MOVB @>834D,@BUFADH    tracks/side
+       MOVB @>8350,@RECNUM    density flag
+       MOVB @>8351,@RECNUM+1  number of sides to format
+       MOVB @H00,@BUFADR      skew between adjacent tracks
+       MOVB @H05,@BUFADR+1    interlace for double density
+       CB   @>8350,@H02
+       JEQ  GP1100
+       MOVB @H04,@BUFADR+1    interlace for single density
+GP1100 LI   R5,12             branch vector /routine index
+       BL   @PG2LN2
+       MOV  @LRECLN,@MYPAD+>4A               number of sectors/disk
+       MOVB @CHRCNH,@MYPAD+>51               number of sides formatted
+       MOVB @CHRCNT,@MYPAD+>4D               sectors/track
+       B    @SYSRTN
+*
+FORM96 LI   R5,12             routine index
+       MOVB @VOLUME,R0
+       JEQ  PG2LN4            call format routine on other page
+*
+       B    @BOGP17
+*
+COMGPL MOVB @H05,@OPTLEN      @@ this needs to be fixed sometime!
+       CLR  @PATHNM+3         @@ to see if file really already open
+COMPAT LI   R5,16        routine index
+       JMP  PG2LN3
+*
+PG2LN4 LI   R11,SYSRTN-2
+PG2LNK INCT R11
+PG2LN2 STWP R4
+PG2LN3
+       MOV  R11,@RETPA0
+       MOV  @PG2VEC(R5),R5
+       B    *R5               GO TO THE ROUTINE. ROUND ABOUT WAY.
+*
+H0002  DATA >0002
+H02    EQU  H0002+1
+H0004  EQU  CFILES+2+4   REMEBER ABOUT THE BLWP
+H04    EQU  H0004+1
+H0006  EQU  CFILEG+2+4   BLWP THERE TOO NOW
+H06    EQU  H0006+1
+SAVCOD EQU  H06
+H0008  DATA >0008
+H08    EQU  H0008+1
+*
+**************************************************************************
+* NOW DSR ENTRY
+*1.18.2021  See HDR1-P2 for the branch links into rs232,pio,dsret1,etc
+**************************************************************************
+*
+* entry point for assorted (sordid?) RS232/PIO stuff
+*
+* Set R3 for branch and to distinguish between drive(flop/hard/etc)
+*
+RS232  CLR  R3                rs232/1
+       JMP  RSCOM
+RS2322 LI   R3,2              rs232/2
+       JMP  RSCOM
+PIO    LI   R3,4              pio
+       JMP  RSCOM
+RS2323 LI   R3,6
+       JMP  RSCOM
+RS2324 LI   R3,8
+       JMP  RSCOM
+PIO2   LI   R3,10
+*
+RSCOM  BLWP @SETMOD
+       MOV  @3*2+>83E0,R3     get offset
+       JMP  RSENT             map out /4a stuff . . . .
+*
+TIMTSAVE    DATA 0            PAGE SAVE FOR DSK1 EMULATION CHECK
+HFDFLG DATA 0
+*
+*  2 entry points for real floppy/ram disk access . .  . . .
+*
+PASHFD SETO @HFDFLG      Allow potential DSK1 Emulation first time through
+       JMP  HFDENT       HFDC only
+
+DSRET1 EQU  $            9.11.09  common entry; don't remove!
+       CLR  @HFDFLG           no special subdir access now
+*
+HFDENT BLWP @SETMOD           SET UP FOR 9640 MODE
+       SETO R3                indicate that this is a DRIVE call (not rs232)
+;  1.18.21  Why set R3? Because rs232/pio above set R3 for dev. Spaghetti
+;
+*
+* NOW MOVE PAB AND PATHNAME TO CPU RAM
+* GET POINTER TO PAB IN R1
+*
+RSENT  MOV  @PABVDP(R4),R1
+       S    @DEVLEN(R4),R1
+       MOV  R1,R15            SAVE THIS ADDRESS FOR LATER
+*
+* USE PASDAT TO GET PATHNAME . . .WHERE-EVER IT IS
+*
+       SETO @PASRW       INDICATE TO BRING DATA INTO DSR SPACE
+       SETO @PASVDP      INDICATE TO BRING FROM VDP MEMORY
+       LI   R6,PATHNM
+       MOV  R6,@PASDSR   WHERE TO PUT DATA IN DSR SPACE
+       CLR  @PASADH
+       MOV  R1,@PASADL   WHERE PAB IS IN VDP
+       MOV  @D40,@PASCNT STANDARD PATHNAME
+       BLWP @PASDAT      GET THE DATA
+*
+       AI   R1,-10       NOW WE POINT TO THE /4A MODE PAB ITSELF
+       MOV  R1,@PABLOC        save address of PAB
+*
+       SETO @PASRW
+       SETO @PASVDP
+       LI   R6,OPCOD4
+       MOV  R6,@PASDSR   WHERE IT GOES IN DSR SPACE
+       CLR  @PASADH
+       MOV  R1,@PASADL   WHERE IT IS IN USER PROGRAM
+       LI   R6,10
+       MOV  R6,@PASCNT   NUMBER OF BYTES TO MOVE
+       BLWP @PASDAT      GET /4A MODE PAB
+*
+* convert from /4a pab to 9640 pab
+*
+       MOVB @PAGD4,@MAP96
+       BL   @MAP426
+       MOVB @SAVMAP,@MAP96
+*
+       MOVB @H00,@PABERR
+       MOVB @H00,@BUFADH
+       MOV  @BUFAD4,@BUFADR
+*
+       MOV  R3,R3             test routine code...disks are -1
+       JLT  CALDRV
+*
+RSCALL MOV  @RSCODE,R5        get entry point of RS232 code
+       B    *R5               go to it
+*
+;2.8.2021, we probably need a boundary check here...
+CALDRV SETO @DEVLEN(R4)       START COUNTING AT -1 TO AVOID COUNTING '.'
+       MOVB @OPTLEN,R6        get length of actual name . . .
+       SRL  R6,8              make it a word
+       MOVB @PERIOD,@PATHNM(R6)              stick a period at the end . . .
+       LI   R6,PATHNM         POINT TO ACTUAL FILENAME
+CALDR0 INC  @DEVLEN(R4)
+       CB   *R6+,@PERIOD      AT END OF NAME YET?
+       JNE  CALDR0            NOPE
+*
+
+       C    @PATHNM,@WDS2TX   "HD" hard drive attempt?
+       JEQ  CALDR3
+*
+       C    @PATHNM,@SCSIDT   "SC" SCSI hard disk attempt?
+       JEQ  CALDRS
+*
+; TIPI routines 1.18.2021
+       C    @PATHNM,@TIPIDT   tipi
+       JEQ  CALTIP
+       C    @PATHNM,@URIDT    urix
+       JEQ  CALTIP
+       C    @PATHNM,@PIOCHK   pi.
+       JNE  SKIPPI
+       CB   @PATHNM+2,@PERIOD pi.
+       JEQ  CALTIP
+
+SKIPPI MOV  @HFDFLG,R6        special subdir access (DSK,DSK1) ?
+       JEQ  DSKTRY            no.., skip next check and go check for floppy only
+*      JNE  CALDR3            yes
+
+       MOVB @MAP96+3,@TIMTSAVE               01.30.94 TAT
+       MOVB @PAGD6,@MAP96+3                  @>6000         TAT
+       MOV  @>6020,R0                        DSK1 EMULATION?     TAT
+       MOVB @TIMTSAVE,@MAP96+3               RESTORE PAGE
+
+       ABS  R0           TAT  emulation allowed?
+       JEQ  CALDR3       TAT  Yes, go to HDS1.DSK1. or WDS1.DSK1. for file
+       JMP  HFDER7       TAT  2.8.94 mod
+
+*
+DSKTRY C    @PATHNM,@DSKCHK   floppy attempt?
+       JEQ  CALDR1            both /4a and 9640 modes
+*
+* now to scan off rs232, pio attempts
+*
+       C    @PATHNM,@RS2CHK
+       JNE  PRIN00            not rs232
+       CLR  R3
+       CB   @PATHNM+5,@SLASH
+       JNE  RSCALL            must be rs232/1 (no slash)
+       MOVB @PATHNM+6,R3
+       SRL  R3,8
+       CI   R3,'1'
+       JL   PRIN00            bad number
+       CI   R3,'4'
+       JH   PRIN00
+       ANDI R3,>0003
+       SLA  R3,1
+       MOV  @RSNUM(R3),R3
+       JMP  RSCALL
+*
+RSNUM  DATA 8,0,2,6
+*
+PRIN00 C    @PATHNM,@PIOCHK   pio attempt?
+       JNE  PRIN02            not pio, error...
+;      CB   @PATHNM+2,@OODT   12.19
+;      JNE  PRIN02            1.18.2021,not needed; tested earlier CALDR0
+
+       LI   R3,4
+       CB   @PATHNM+3,@SLASH
+       JNE  RSCALL            must be pio/1
+       CB   @PATHNM+4,@CHR1
+       JEQ  RSCALL
+       LI   R3,10
+       JMP  RSCALL
+*
+HFDER7 MOVB @PAGD0,@MAP96+3
+       CLR  @HFDFLG
+       JMP  DSKTRY
+
+;2-8-2021
+; This incorrect branch to SYSRTN:BADOP7 caused GenASM to crash. Not only
+;      was it wrong, it changed /4a level2 MYPAD and bounced into floppy
+;      flush/close routines.  WINDS3-S:BADOP7 is the proper return however,
+;      we just pulled in the 3 lines of code and branch to common SYSRT1
+;      to restore the environment. GenASM now functions properly.
+
+*PRIN02 B    @BADOP7           error out . . . .
+
+PRIN02 LI   R0,>E000     ;nasty old error
+       SOCB R0,@PABERR   ;found 2-8-21
+       SBZ  0            ;.HD has a BADOP; this code is going to L8 version
+       B   @SYSRT1       ;which deals with level2/floppy
+
+*
+* 10/16/88 fixed disk entry point for HFDC
+* 10/18/94 And SCSI host adaptor
+*
+SCSIFLG  DATA 0
+
+; TIPI added 1.18.2021
+; R10 contains base 0 DSKx for TIPI DSR usage
+;     Cleared in CALDR1/set in NUM$OK
+;
+CALTIP MOVB @PAGSC2,@MAP96+4  scsi buffer >E8; relies on equates
+       MOVB @PAGD7,@MAP96+3   TIPI page at >6000
+       MOVB @PAGD5,@MAP96+1   l8 routines >2000 /return
+;;     MOV  @>6020,R1         branch into TIPI ; return via SYSRTN
+;;     B    *R1               [$fix hardcode later]
+       B    @TIPLV3      direct branch via REF
+
+CALDRS
+*      LI   R1,>E800          SCSI BUFFER PAGE, INSTEAD OF HFDC onboard ram
+*      MOVB R1,@MAP96+4
+
+       MOVB @PAGSC2,@MAP96+4  3-17-2018, fix hardcode to proper pagenum
+       MOVB @PAGD6,@MAP96+3
+       SETO @>601E            SET TO ONE SCSIAC.  A SCSI CARD ACCESS.
+       JMP  CLE2A             LET'S NOT CHECK FOR A HARD DRIVE VALIDATION CODE!
+
+CALDR3 MOVB @PAGD6,@MAP96+3   @>6000
+       C    @>6000,@WDS2TX
+       JNE  HFDER7            error #7, device not installed
+       CLR  @>601E            CLEAR SCSIAC.  NO SCSI ACCESS.
+*
+CLE2A  CLR  @HFDFLG
+       MOVB @PAGD5,@MAP96+1   @>2000
+       MOV  @>6004,R1         get DSR entry vector
+       B    *R1
+
+*
+FLPRT1 SBZ  0                 yalfu
+       SETO @HFDFLG           file not found on this device...
+       MOVB @PAGD3,@MAP96+1   try real floppy, DSK,DSK1 bombed...
+       MOVB @PAGD0,@MAP96+3
+       B    @BADOP7
+*
+CALDR1 EQU  $
+*
+* CALCULATE DRIVE #
+*
+       CLR  R10          ;clear for possible DSK0/TIPI entry
+       MOVB @PATHNM+3,R6 'CALCULATE DRIVE #
+       SRL  R6,8
+       AI   R6,-'0'
+       JEQ  CALTIP       DSK0? TIPI only.  1.23.2021
+
+       JGT  NUM$OK       >0, other floppy; ok
+       LI   R6,>FF00     bad device
+       JMP  NUM$K2       and not 0, passthrough to opcode/error
+*
+
+; 1.23.2021, first attempt at TIPI floppy redirection
+;           Remaps 22,23,24,25,26 are defined for TIPI DSK0-4
+NUM$OK MOVB @DRVMAP(R6),R10  ;remap for TIPI only
+       SRL  R10,8
+       CI   R10,22
+       JL   NUM$K2       not tipi
+       CI   R10,26
+       JH   NUM$K2       not tipi, preserve future range
+       AI   R10,-22      0,1,2,3,4
+       JMP  CALTIP       within tipi remap range
+;-end tipi dsk check
+
+NUM$K2 MOV  R6,@VOLUME
+*
+       MOV  @OPCODE,R0        GET OPCODE
+       CLR  R10          NOW LSB=0...COUNTER METHOD CHANGED.
+       MOVB R0,R10            R10 LSB=0 ALREADY FROM COUNTER
+       CB   R10,@H09          TEST FOR OPCODE LESS THAN OR = 9
+       JLE  OPOKAY            BRANCH IF OP OKAY
+*
+       MOVB @MODE4A,R5        9640 MODE?
+       JEQ  BADO33            no, bad opcode
+*
+       CI   R10,>0E00         valid 9640 opcode?
+       JLE  OPOKAY
+*
+BADO33 B    @BADOP3           ELSE TRYING TO PERFORM BAD OPCODE
+*
+OPOKAY MOV  R12,@MYR12        SAVE R12 IN WORKSPACE FOR FUTURE USE
+       BL   @COMPAT
+       MOV  R1,@PABLOC        SAVE ADDRESS OF PAB IN VDP RAM
+       SRL  R10,7
+       MOV  @OPTBL(R10),R5
+       CLR  R10               CLEAR OUT ERROR CODE
+       CLR  @CLOSEF           close file flag for sector zero flush...6/18/89
+       B    *R5               BRANCH TO OPERATION
+*
+* OPCODE TABLE (Opcodes 0-9)
+*
+OPTBL  DATA OPEN
+       DATA CLOSE
+       DATA READ
+       DATA WRITE
+       DATA RESTOR
+       DATA LOAD
+       DATA SAVE
+       DATA DELETE
+       DATA BADOP3
+       DATA STATUS
+       DATA BINRED            9640 opcodes...
+       DATA BINWRT            \
+       DATA PROT96             \
+       DATA RENA96              \
+       DATA FORM96
+*
+       PAGE
+;
+; Reminder: SETMOD (/4a) mode changes ws from GPLWS to DSRWS!
+;
+; 1.23.2021 Common unit test; check remap table and clear/set tipi flag
+;           Also save the remapped TIPI unit# for later reference
+;           Unit0 not fully implemented
+;
+; 2.5.2021  Working. Pushed unit save/restore into TIPI\LEVEL2
+;           May still be able to force the return in that code
+;
+;TIPI DSKx Level2 routine
+;     -Leverage master DSR existing routines
+;     -Not called from unsupported vectors e.g., sector IO >10
+;     -Before dropping into sector-based routines, we test the remap
+;      table for TIPI mapped drives.  If 22-26, we pass the map number
+;      to the TIPI low level routines (R10).  SETMOD and UNTEST set up the fake
+;      MYPAD (8300) gpl environment for us; we use that in the TIPI DSR
+;      along with the 9640 mode VDP ports to mimic level 2.  UNIT is
+;      preserved so that we aren't changing the caller's level2 info
+
+;;TPUNIT DATA 0            save unit number
+
+;;level2   TPTEST MOV  @UNIT,@TPUNIT
+
+TPTEST MOV  @VOLUME,R5     ;if not TIPI, we must check for 0 (if untest mod)
+       MOVB @DRVMAP(R5),R10 ;get remap value for this drive
+       SRL  R10,8
+       CI   R10,22        W (tipi dsk1)?
+       JL   TPTSTR       not tipi, continue w/floppy
+       CI   R10,26        Z (tipi dsk4)?
+       JH   TPTSTR       not tipi, continue w/floppy
+;;level2     AI   R10,-22      set unit based on remap (0,1,2,3,4)
+;;level2     SWPB R10
+;;level2     MOVB R10,@UNIT    Force physical unit into mypad
+;
+; >A000-mypad, set by SETMOD
+TPZERO MOVB @PAGSC2,@MAP96+4  scsi buffer >E8; >8000 relies on equates
+       MOVB @PAGD7,@MAP96+3   TIPI page at >6000
+       MOVB @PAGD5,@MAP96+1   l8 routines >2000 /return
+;;;Inspect, PAGD5 might not be right; SETMOD uses PAGD3
+
+; Let's try to shift the return to TIPI\LEVEL2 later 2.5.2021
+;;     MOV  @>600A,R1  $$$$$  bl into TIPI ; return via SYSRT1
+;;     BL   *R1               [$fix hardcode later]
+       BL   @TIPLV2      ;2.6, direct via REF
+       NOP                    don't allow TIPI to inct r11 ;)
+;;level2       MOVB @TPUNIT,@UNIT     restore unit number
+       B    @SYSRT1           restore >6000, test for gpl io pabbck
+;
+TPTSTR MOV  R5,R5        Catch volume=0 error on return for non-TIPI
+       RT
+; end tipi review
+
+
+*-------Called from each level2 routine----
+* ROUTINE TO SET UP FOR GPL ROUTINES
+* FIRST TEST IF UNIT# WITHIN RANGE
+*
+; Assumes SETMOD called to copy PAD->MYPAD
+;   OPCODE - contains the lvl2 routine
+;   VOLUME - Contains the device number (LSbyte)
+;   R4     - contains stored WP at exit
+;   R5     - unit#0-9
+; MYR12    - saves R12 (does TIPI DSR preserve R12?)
+;
+; Note: Unit 0 is not allowed here
+;       Break apart later once TIPI 1-4 is working
+UNTEST MOVB @UNIT,R5
+       ANDI R5,>0F00
+       JEQ  BOGP17            OK TO ERROR OUT...DRIVE #0
+       CI   R5,>0A00          TEST FOR FLOPPY DRIVE, 1-9
+       JHE  PASSON            this is the last drive...Geneve RAM
+       SRL  R5,8
+*
+       MOV  R5,@VOLUME
+       MOV  @MYPAD+>56,R1
+       DEC  R1
+       MOV  R11,R10
+       BL   @VDPRAD           get the opcode
+       MOVB @VDP0,@OPCODE
+*
+       MOVB @H00,@BUFADH
+       MOV  @MYPAD+>50,R1     SAVE OFFSET IN PAD FOR LATER USE
+       MOV  R1,@BUFADR        SAVE FOR LATER USE
+       SRL  R1,8
+       AI   R1,MYPAD+>02      POINT TO SECOND WORD IN LIST
+       MOV  R1,@RECNUM        SAVE OFFSET IN SCNOFF
+*
+       MOV  R12,@MYR12
+       STWP R4
+       MOVB @HFF,@CPUFLG      FORCE vdp for all GPL opcodes
+       B    *R10
+*
+* ERROR IF DRIVE NUMBER > 9
+*
+PASSON
+*
+BOGP17 MOVB @H07,@MYPAD+>50
+BOGP   B    @SYSRT4
+       PAGE
+*
+* ROUTINE TO MOVE FILE NAME POINTED TO IN VDP RAM BY R1
+* TO COMBUF
+*
+MOVEFN MOV  R11,R10           SAVE RETURN
+       BL   @VDPRAD
+       LI   R11,COMBUF
+MOVFN1 MOVB @VDP0,*R11+       GET DATA FROM VDP IN 9640 MODE
+       CI   R11,COMBUF+10
+       JNE  MOVFN1
+       B    *R10
+       PAGE
+*
+* DIRECT SECTOR I/O ROUTINE
+* FIRST TEST IF VALID UNIT
+*
+SP20
+GP10   BLWP @SETMOD           SET UP 9640 ENVIRONMENT
+*
+       BL   @UNTEST           SET UP PARMS
+       MOVB @H10,@OPCODE      FOR PEOPLE WHO DON'T USE DSRLNK.
+       MOV  @MYPAD+>50,@MYPAD+>4A     RETURN READ SECTOR
+*
+       SETO @PASVDP           vdp memory
+       MOVB @H00,@PASADH
+       MOV  @GPLBA,@PASADL    TELL WHERE DATA GOES . ..
+       MOV  @GBGSEC,@PASDSR    WHERE IT IS LOCATED IN DSR SPACE
+       MOV  @D256,@PASCNT     256 BYTES TO A SECTOR . . .
+*
+       MOVB @REDWRT,R11       READ OR WRITE?
+       JNE  GP10C             READ.
+*
+       SETO @PASRW            MOVING DATA TO DSR SPACE FROM PROGRAM
+       BLWP @PASDAT           GET SECTOR TO WRITE
+*
+GP10C  BLWP @SECIO
+       DATA SYSRTN
+*
+       MOV  @MYPAD+>4A,R11
+       JNE  GP10B
+*
+       BL   @GETVIB
+       DATA SYSRTN
+*
+GP10B  MOVB @REDWRT,R11       READ OR WRITE?
+       JEQ  GP10A             WRITE.
+*
+       CLR  @PASRW            MOVE DATA FROM DSR TO PROGRAM SPACE
+       BLWP @PASDAT           MOVE THE DATA
+GP10A  B    @SYSRTN
+*
+       PAGE
+*
+SP24
+SP25
+GP14
+GP15   BLWP @SETMOD
+       MOVB @>8350,R1
+       SRL  R1,8
+       MOV  R1,R2
+       AI   R1,>8300
+       AI   R2,MYPAD
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       SETO @TENBYT
+       JMP  GPSPC
+
+; In theory, TIPI >17,>18,>19,>1A can route here as well
+;    but we'd have to kill the call if not TIPI
+GP12
+GP13
+       BLWP @SETMOD           GET INTO 9640 ENVIRONMENT
+GPSPC  BL   @UNTEST           TEST IF GOOD UNIT NUMBER,ETC
+*
+;--- 1.31.2021-----
+;
+       BL   @TPTEST           Now check for TIPI
+       JEQ  BOGP17            catch unit 0 for non-TIPI
+
+; 1.31.2021-> TIPI cannot proceed past this point! Direct sector IO ahead!
+;---
+       BL   @GETVIB
+       DATA BADOP
+       BL   @COMGPL           GET BUFFER ADDRESS
+       MOV  @MYPAD+>4E,R1     GET ADDRESS OF FILE NAME
+       CLR  @LRECLN           USE AS FLAG FOR RENAME
+       BL   @MOVEFN
+       B    @FILEOP
+
+*
+GPRTN  B    @SYSRTN
+*

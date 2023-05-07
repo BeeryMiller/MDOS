@@ -1,0 +1,480 @@
+* FILENAME: VX0F15S
+*
+*10.19.2022 Fixed BCMFIL for scroll opcode >12. May need to revisit. BM/TT
+*           (TT: I am not convinced the fix works in all directions)
+
+
+* GetPixelColor
+*
+* R1x = X coordinate of pixel
+* R2x = Y coordinate of pixel
+* -----
+* R0h = Returned foreground color of pixel
+* R0l = Returned background color of pixel in graphics 2-3
+*
+X90FLS  DATA    X90FM0,X90FM0,X90FM0,X90FM0
+        DATA    X90FM4,X90FM4,X90FM6,X90FM6
+        DATA    X90FM6,X90FM6
+*
+X90FVC
+X90FL1  MOV     @VIDMOD,R1
+        SLA     R1,1
+        MOV     @X90FLS(R1),R9
+        MOV     R11,R12
+        BL      *R9
+        MOV     R12,R11
+        RT
+*
+X90FM0  RT
+*
+X90FM4  MOV     @2(R13),R1
+        MOV     @4(R13),R2
+        MOV     R2,R4                   *
+        SLA     R4,5                    *
+        SOC     R2,R4                   * This code assumes that:
+        ANDI    R4,>FF07                * R1x = X offset from u/l of screen
+        MOV     R1,R5                   * R2x = Y offset from u/l of screen
+        ANDI    R5,7                    *
+        A       R1,R4                   *
+        S       R5,R4                   *
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        A       @CTABLE,R4
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        MOVB    @VDPRD,R1
+        MOVB    R1,R2
+        SRL     R1,4
+        ANDI    R1,>0F00
+        SRL     R2,8
+        ANDI    R2,>F
+        SOC     R2,R1
+        MOV     R1,*R13
+        RT
+*
+X90FM6  MOV     @2(R13),R0
+        MOV     @4(R13),R1
+        A       @PAGEPX,R1
+        CLR     R6
+        LI      R7,>40
+        BLWP    @VDCMD2
+X90FN6  LI      R8,>8F02                * Read status register #2
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        MOVB    @VDPSTA,R8
+        ANDI    R8,>0100
+        JNE     X90FN6
+        LI      R8,>8F07                * Read status register #7
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        MOVB    @VDPSTA,*R13
+        RT
+
+* SetVectorColor
+*
+* R1x = X coordinate of first pixel
+* R2x = Y coordinate of first pixel
+* R3x = X coordinate of second pixel
+* R4x = Y coordinate of second pixel
+* R5h = Foreground color to render vector
+* R5l = Background color to render vector in graphics 2-3
+* R6h = Logic operation to be performed
+*
+X910LS  DATA    X910M0,X910M0,X910M0,X910M0
+        DATA    X910M4,X910M4,X910M6,X910M6
+        DATA    X910M6,X910M6
+SAVRTN  DATA    0
+*
+X910VC
+X910L1  MOV     @VIDMOD,R1
+        SLA     R1,1
+        MOV     @X910LS(R1),R9
+        MOV     R11,R12
+        BL      *R9
+        MOV     R12,R11
+        RT
+*
+X910M0  RT                    stub returns
+*
+X910M4  MOV     @2(R13),R3
+        MOV     @4(R13),R4
+        MOV     @6(R13),R5
+        MOV     @8(R13),R6
+PLOTLN MOV  R11,@SAVRTN
+       C    R5,R3        ENDX>=STARTX
+       JHE  LDMAIN
+
+*--MIRRORS QUADRANTS 2,3 TO 1,4--*
+
+       MOV  R3,R7        SWAP STARTX/ENDX
+       MOV  R5,R3        SWAP ENDX/STARTX
+       MOV  R7,R5        MOV TEMP TO ENDX
+       MOV  R4,R7        MOV STARTY TO TEMP
+       MOV  R6,R4        SWAP ENDY/STARTY
+       MOV  R7,R6        TEMP TO ENDY
+LDMAIN MOV  R5,R8        SET UP DX
+       S    R3,R8        ENDX-STARTX=DX
+       MOV  R6,R10       SET UP DY
+       S    R4,R10       ENDY-STARTY=DY
+       CI   R10,0        DY<0?
+       JLT  LD1
+       C    R10,R8       DY>DX?
+       JGT  OCT2
+       B    @OCT1
+LD1    MOV  R10,R7       SET UP FOR NEG DY
+       NEG  R7           -(R7)
+       C    R7,R8        -DY>DX?
+       JGT  OCT7
+       B    @OCT8
+*--------OCT 1 LINE GENERATOR---------*
+OCT1   MOV  R8,R6        DX TO COUNTDOWN
+       INC  R6           DX+1
+       MOV  R8,R5        DX TO ERROR
+       SRA  R5,1         -DX/2
+       NEG  R5           -(R5)
+       JNE  OCT1A        TEMP FIX
+       SETO R5           TEMP FIX
+OCT1A  BL   @CLIP        PLOT THE POINT
+       DEC  R6           CNTDWN-1
+       JEQ  RTN          CNTDWN<0?
+       INC  R3           STRATX+1
+       A    R10,R5       ERR=ERR+DY
+       JLT  OCT1A        ERR<0?
+       INC  R4           STARTY+1
+       S    R8,R5        ERR=ERR-DX
+       JMP  OCT1A
+*--------OCT 2 LINE GENERATOR---------*
+OCT2   MOV  R10,R6       DY TO COUNTDOWN
+       INC  R6           CNTDWN+1
+       MOV  R10,R5       DY TO ERR
+       SRA  R5,1         ERR=-DY/2
+       NEG  R5           -DY
+       JNE  OCT2A        TEMP FIX
+       SETO R5           TEMP FIX
+OCT2A  BL   @CLIP        PLOT THE POINT
+       DEC  R6           CNTDWN-1
+       JEQ  RTN          CNTDWN<0?
+       INC  R4           STARTY+1
+       A    R8,R5        ERR=ERR+DX
+       JLT  OCT2A        ERR<0?
+       INC  R3           STARTX+1
+       S    R10,R5       ERR=ERR-DY
+       JMP  OCT2A
+*--------OCT 7 LINE GENERATOR---------*
+OCT7   MOV  R10,R6       DY TO CNTDWN
+       NEG  R6          -DY
+       INC  R6           CNTDWN=-DY+1
+       MOV  R10,R5       DY TO ERR
+       SRA  R5,1         ERR=DY/2
+OCT7A  BL   @CLIP        PLOT THE POINT
+       DEC  R6           CNTDWN-1
+       JEQ  RTN          CNTDWN<0?
+       DEC  R4           STARTY-1
+       A    R8,R5        ERR=ERR+DX
+       JLT  OCT7A        ERR<0?
+       INC  R3           STARTX+1
+       A    R10,R5       ERR=ERR+DY
+       JMP  OCT7A
+*--------OCT 8 LINE GENERATOR---------*
+OCT8   MOV  R8,R6        DX TO CNTDWN
+       INC  R6           CNTDWN=DX+1
+       MOV  R8,R5        DX TO ERR
+       SRA  R5,1         ERR=-DX/2
+       NEG  R5           -DX
+OCT8A  BL   @CLIP        PLOT THE POINT
+       DEC  R6           CNTDWN-1
+       JEQ  RTN          CNTDWN<0?
+       INC  R3           STARTX+1
+       S    R10,R5       ERR=ERR-DY
+       JLT  OCT8A        ERR<0?
+       DEC  R4           STARTY-1
+       S    R8,R5        ERR=ERR-DX
+       JMP  OCT8A
+
+RTN    MOV  @SAVRTN,R11
+       RT
+
+CLIP    MOV     R1,@X900ST
+        MOV     R2,@X900ST+2
+        MOV     R3,@X900ST+4
+        MOV     R4,@X900ST+6
+        MOV     R3,R1
+        MOV     R4,R2
+        MOV     @10(R13),R3
+        MOV     @12(R13),R4
+        LWPI    LOWWP3
+        MOV     @CURWS,R13
+        LI      R0,LOWWP3
+        MOV     R0,@CURWS
+        BL      @X90EL1
+        MOV     R13,@CURWS
+        DATA    >009D
+        MOV     @X900ST,R1
+        MOV     @X900ST+2,R2
+        MOV     @X900ST+4,R3
+        MOV     @X900ST+6,R4
+        RT
+*
+X910M6  MOV     @2(R13),R0
+        MOV     @4(R13),R1
+        A       @PAGEPX,R1
+        MOV     @6(R13),R2
+        MOV     @8(R13),R3
+        A       @PAGEPX,R3
+        S       R0,R2
+        S       R1,R3
+        MOVB    @10(R13),R4
+        SRL     R4,8
+        ORI     R4,>0400
+        MOV     R2,R2
+        JLT     X910N6
+        ANDI    R4,>FBFF
+X910N6  ORI     R4,>0800
+        MOV     R3,R3
+        JLT     X910O6
+        ANDI    R4,>F7FF
+X910O6  ABS     R2
+        ABS     R3
+        C       R2,R3
+        JH      X910P6
+        ORI     R4,>0100
+        MOV     R2,R6
+        MOV     R3,R2
+        MOV     R6,R3
+X910P6  MOV     @12(R13),R5
+        ORI     R5,>70
+        BLWP    @VDCMD1
+        RT
+
+* ColorSRCH                             mod 92/09/12 hcp
+*
+* R1x = X coordinate of source point
+* R2x = Y coordinate of source point
+* R3l = Color for search
+* R3h = Direction for search (>00=LEFT, >FF=RIGHT)
+* -----
+* ST  = if EQUAL, color found
+* R0x = X coordinate of location where color was found
+* R1x = Y coordinate of location where color was found
+*
+X911VC
+X911L1  MOV     @VIDMOD,R1
+        CI      R1,6
+        JHE     X911L2      IF BITMAP VIDEO MODE
+        RT
+X911L2  MOV     @2(R13),R0  X (COL) SOURCE CO-ORD
+        MOV     @4(R13),R1  Y (ROW) SOURCE CO-ORD
+        A       @PAGEPX,R1  ADD PAGE BASE
+        MOV     @6(R13),R6  COLOR/DIRECTION
+        MOVB    R6,R8
+        ANDI    R6,>FF      MASK DIRECTION
+        ORI     R6,>0400    SET DIRECTION (LEFT), CLEAR SEARCH MODE (EQ) FLAGS
+        MOVB    R8,R8           MANUAL IS WRONG RE EQ BIT IN SRCH COMMAND
+        JEQ     X911L3      IF LEFT SEARCH
+        ANDI    R6,>02FF    CLEAR DIRECTION FLAG (RIGHT)
+X911L3  LI      R7,>60      SRCH OPCODE
+        BLWP    @VDCMD2     EXECUTE
+        LI      R12,VDPWA
+X911L4  LI      R8,>028F    Read status register #2
+        MOVB    R8,*R12
+        SWPB    R8
+        MOVB    R8,*R12
+        MOVB    @VDPSTA,R7  GET STATUS
+        MOVB    R7,R8
+        ANDI    R8,>0100    TEST COMPLETION FLAG
+        JNE     X911L4      IF NOT DONE
+        CLR     R9          CLEAR EQ STATUS
+        ANDI    R7,>1000    TEST COLOR FOUND FLAG
+        JEQ     X911L5      IF NOT FOUND
+        LI      R8,>088F    Read status register #8
+        MOVB    R8,*R12
+        SWPB    R8
+        MOVB    R8,*R12
+        MOVB    @VDPSTA,R0  LSB X CO-ORD OF COLOR LOC
+        SRL     R0,8
+        LI      R8,>098F    Read status register #9
+        MOVB    R8,*R12
+        SWPB    R8
+        MOVB    R8,*R12
+        MOVB    @VDPSTA,R0  MSB X CO-ORD
+        MOV     R0,*R13     TO CALLER'S R0
+        MOV     @4(R13),@2(R13) Y-COORD TO CALLER'S R1
+        LI      R9,>2000    SET EQ STATUS
+X911L5  SOC     R9,R15
+        RT
+
+* HBlockMove                                   mod 920903 hcp
+*
+* R1x = Row number of upper left corner of source
+* R2x = Column number of upper left corner of source
+* R3x = Row number of upper left corner of destination
+* R4x = Column number of upper left corner of destination
+* R5x = Number of rows
+* R6x = Number of columns
+* R7l = Pixel color for blank pixels
+*
+X912VC
+X912L1
+        MOV     @VIDMOD,R8  TEST CURRENT VIDEO MODE
+        CI      R8,6
+        JHE     X912L2      ONLY VALID FOR BITMAP VIDEO MODES
+X912RT  RT
+X912L2  MOV     R11,R12     SAVE RETURN ADDRESS
+        BL      @BMCSET     SETUP REGISTERS FOR MOVE
+X912L4  LI      R7,>D0      MOVE OPCODE
+        BLWP    @VDCMD2     EXECUTE MOVE
+        BL      @BMCFIL     SETUP REGISTERS FOR RECTANGLE FILL
+        LI      R5,>C0      FILL OPCODE
+        BLWP    @VDCMD1     EXECUTE FILL
+        B       *R12
+
+* HBlockCopy                                   mod 920903 hcp
+*
+* R1x = Row number of upper left corner of source
+* R2x = Column number of upper left corner of source
+* R3x = Row number of upper left corner of destination
+* R4x = Column number of upper left corner of destination
+* R5x = Number of rows
+* R6x = Number of columns
+*
+X913VC
+X913L1
+        MOV     @VIDMOD,R8  TEST CURRENT VIDEO MODE
+        CI      R8,6
+        JHE     X913L2      ONLY VALID FOR BITMAP VIDEO MODES
+X913RT  RT
+X913L2  MOV     R11,R12     SAVE RETURN ADDRESS
+        BL      @BMCSET     SETUP REGISTERS FOR MOVE
+X913L4  LI      R7,>D0      MOVE OPCODE
+        BLWP    @VDCMD2     EXECUTE COPY
+        B       *R12
+
+* LBlockMove                                   mod 920903 hcp
+*
+* R1x = Row number of upper left corner of source
+* R2x = Column number of upper left corner of source
+* R3x = Row number of upper left corner of destination
+* R4x = Column number of upper left corner of destination
+* R5x = Number of rows
+* R6x = Number of columns
+* R7l = Pixel color for blank pixels
+* R7h = Logic operation to be performed on destination
+*
+X914VC
+X914L1
+        MOV     @VIDMOD,R8  TEST CURRENT VIDEO MODE
+        CI      R8,6
+        JHE     X914L2      ONLY VALID FOR BITMAP MODES
+X914RT  RT
+X914L2  MOV     R11,R12     SAVE RETURN ADDRESS
+        BL      @BMCSET     SETUP REGISTERS FOR MOVE
+        LI      R7,>9000    LOGICAL MOVE OPCODE
+        SOCB    @14(R13),R7 LOGICAL OPERATION
+        SRL     R7,8
+        BLWP    @VDCMD2     EXECUTE LOGICAL MOVE
+        BL      @BMCFIL     SETUP REGISTERS FOR FILL
+        LI      R5,>8000    LOGICAL FILL OPCODE
+*
+       SOCB @14(R13),R5     LOGICAL OPERATION
+       SRL  R5,8
+*
+        BLWP    @VDCMD1     EXECUTE LOGICAL FILL
+        B       *R12
+
+* LBlockCopy                                   mod 920903 hcp
+*
+* R1x = Row number of upper left corner of source
+* R2x = Column number of upper left corner of source
+* R3x = Row number of upper left corner of destination
+* R4x = Column number of upper left corner of destination
+* R5x = Number of rows
+* R6x = Number of columns
+* R7h = Logic operation to be performed on destination
+*
+X915VC
+X915L1
+        MOV     @VIDMOD,R8  TEST CURRENT VIDEO MODE
+        CI      R8,6
+        JHE     X915L2      ONLY VALID FOR BITMAP MODES
+X915RT  RT
+X915L2  MOV     R11,R12     SAVE RETURN ADDRESS
+        BL      @BMCSET     SETUP REGISTERS FOR COPY
+        LI      R7,>9000    LOGICAL FILL OPCODE
+        SOCB    @14(R13),R7 LOGICAL OPERATION
+        SRL     R7,8
+        BLWP    @VDCMD2     EXECUTE LOGICAL COPY
+        B       *R12
+*
+* SET UP REGISTERS FOR MOVE/COPY OPERATION     mod 920904 hcp
+*
+BMCSET  MOV     @2(R13),R1  UPPER LEFT ROW - SOURCE
+        A       @PAGEPX,R1  ADD PAGE BASE
+        MOV     @4(R13),R0  UPPER LEFT COL - SOURCE
+        MOV     @6(R13),R3  UPPER LEFT ROW - DEST
+        A       @PAGEPX,R3  ADD PAGE BASE
+        MOV     @8(R13),R2  UPPER LEFT COL - DEST
+        MOV     @10(R13),R5 ROW COUNT
+        MOV     @12(R13),R4 COLUMN COUNT
+        CLR     R6          CLEAR DIRECTION BITS
+        C       R1,R3       TEST ROW MOVE DIRECTION
+        JGT     BMCS1       IF -VE
+        ORI     R6,>0800    SET -VE ROW MOVE BIT
+        A       R5,R1       CHANGE TO LOWER ROW VALUES
+        A       R5,R3
+        DEC     R1
+        DEC     R3
+BMCS1   C       R0,R2       TEST COL MOVE DIRECTION
+        JGT     BMCSX       IF -VE
+        ORI     R6,>0400    SET -VE COL MOVE BIT
+        A       R4,R0       CHANGE TO RIGHTMOST ROW VALUES
+        A       R4,R2
+        DEC     R0
+        DEC     R2
+BMCSX   RT
+*
+* SET UP REGISTERS FOR FILL OPERATION          mod 920903 hcp
+*
+
+;Original two lines as of 10.18.2022
+;BMCFIL  MOV     R4,R2       PUT ROW & COL COUNTS IN CORRECT
+;        MOV     R5,R3       REGISTERS FOR FILL OPERATION
+
+BMCFIL
+;        MOV     R4,R2       PUT ROW & COL COUNTS IN CORRECT  BM/TT 10.18.2022
+;        MOV     R5,R3       REGISTERS FOR FILL OPERATION     BM/TT 10.18.2022
+
+        S       R5,R3    ;corrected code 10.18.2022
+        S       R6,R2    ;    "              "
+;---------------
+        CI      R8,6        R8 CONTAINS VIDMOD
+        JEQ     BMCF68      IF MODE = 6
+        CI      R8,8
+        JEQ     BMCF68      IF MODE = 8
+        CI      R8,7
+        JEQ     BMCF7       IF MODE = 7
+        MOV     @14(R13),R4 MODE = 9 (GRF7), USE COLOR BYTE AS IS
+        JMP     BMCFX
+BMCF68  MOV     @14(R13),R5 MODE = 6/8 (GRF4/6) GET COLOR BYTE
+        ANDI    R5,>0F
+        MOV     R5,R4       Calculate color for
+        SLA     R5,4        blank pixels
+        SOC     R5,R4       REPLICATE 4 BIT COLOR NYBBLE TWICE
+        JMP     BMCFX
+BMCF7   MOV     @14(R13),R5 MODE = 7 (GRF5) GET COLOR BYTE
+        ANDI    R5,>3       MASK TO LOWER 2 BITS
+        MOV     R5,R4
+        SLA     R5,2
+        SOC     R5,R4       REPLICATE 2 BIT COLOR NYBBLE 4 TIMES
+        MOV     R4,R5
+        SLA     R5,4
+        SOC     R5,R4
+BMCFX   MOVB    R6,R4       GET MOVE DIRECTION FLAGS
+        RT

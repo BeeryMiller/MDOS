@@ -1,0 +1,163 @@
+*
+* interrupt handler . . .more fun than a pig in shit
+*
+* table of routine handlers
+*
+INTTAB DATA RSOUT,RSIN,RSOUT,RSIN,PIOUT,PIOUT
+       DATA RSOUT,RSIN,RSOUT,RSIN,PIOUT2
+*
+LITCR0 DATA 0
+LITCR1 DATA 0
+LITIND DATA 0
+*
+LITON  SBZ  3                 myarc
+       SBO  7                 ti
+       SBO  7                 corcrap
+*
+LITOFF SBO  3
+       SBZ  7
+       SBZ  7
+*
+INTSAV DATA 0                 return address
+ISBUFN DATA 0                 yajphfu!
+*
+INTROU MOV  R11,@INTSAV       save return address
+       MOV  @BUFNUM,@ISBUFN   yajphfu!
+       MOV  R3,@BUFNUM        save buffer number
+       MOV  R12,@LITCR0
+*
+       LI   R4,PIOTYP
+       LI   R12,>1300
+       CI   R3,6
+       JL   LIT01
+*
+       LI   R4,PIOTY2
+       LI   R12,>1500
+*
+LIT01  MOV  R12,@LITCR1       cru base for led bit
+       MOV  *R4,R4            get card type
+       SLA  R4,1              make it an index
+       MOV  R4,@LITIND
+       X    @LITON(R4)
+       MOV  @LITCR0,R12
+*
+       SLA  R3,1              make it an index
+       MOV  @INTTAB(R3),R3    get routine to do
+       B    *R3               do it up
+*
+RSIN   MOVB @MODE4A,R0        entry from /4a mode?
+       JNE  RSIN1
+*
+*----------------------->
+* interrupt routine for /4A mode input
+*----------------------->
+*
+       MOVB @CBUFOF,R1   buffer offset
+       AB   @H01,R1      add one and see if too large
+       CB   R1,@CBUFLN
+       JLE  INTLN        jmp not too large
+       CLR  R1           too large make offset zero
+INTLN  CB   R1,@CBUFRO   is it an overrun err?
+       JEQ  OVERUN       jmp overrun err
+       STCR R7,8         get char
+       TB   RCVERR       input err?
+       JNE  INTOK        jmp no
+HFF    EQU  $+2
+       LI   R7,>FF00     return char code >FF
+       JMP  INTOK
+*
+OVERUN LI   R7,>FE00     overrun err code
+       MOVB @CBUFOF,R1   overwrite last value
+INTOK  MOVB R1,@CBUFOF   store the write offset
+       SRL  R1,8         put into position
+       A    @CBUFST,R1   add in base addr
+       ANDI R1,>3FFF     make sure safe addr
+       BL   @VDPWAD      output the addr
+H40    DATA >4000
+       MOVB R7,@VDP0     write the data out
+INTEXT SBO  RIENB        enable interrupts
+       JMP  INTRT
+*
+RSIN1  STCR R6,8              grab the character
+       TB   ROVER             over run error?
+       JEQ  RSINX
+       TB   RFER              framing error?
+       JEQ  RSINX
+* f--k the parity test for now . . ..
+       MOV  @BUFNUM,R15       pass buffer number to PUTBUF routine
+       BL   @PUTBUF           stick character in buffer
+RSINX
+       SBO  RIENB             Char recieved/continue to interrupt if needed
+INTRT  MOV  @INTSAV,R11
+       MOV  @ISBUFN,@BUFNUM   yajphfu!!!
+*
+       MOV  @LITCR1,R12       led OFF
+       MOV  @LITIND,R4
+       X    @LITOFF(R4)
+       MOV  @LITCR0,R12
+*
+       RT                     get out
+*
+* rs232 transmitter interrupt. Get character from the buffer and
+*  stuff it out the RS232 port
+*
+RSOUT  TB   XBRE              is port _really_ empty?
+       JNE  RSOUTE            no, don't waste time
+*
+       MOV  @BUFNUM,R15
+       BL   @GETBUF           get character from the buffer
+       MOV  R15,R15
+       JNE  RSOUTX            error, buffer empty
+*
+       SBO  RTSON             request to send
+       LDCR R6,8              shove the character out
+       SBZ  RTSON             done
+*
+RSOUTE MOV  @BUFNUM,R15
+       BL   @BUFEMP           is buffer empty?
+       JEQ  RSOUTX            if so, no interrupt needed
+*
+       SBO  XBIENB            interrupts on
+       JMP  INTRT
+*
+RSOUTX SBZ  XBIENB            interrupts off
+       JMP  INTRT
+*
+********************************************************************************
+*
+PIOUT2 MOV  @PIOTY2,R1
+       LI   R12,>1540
+       JMP  PIOUT3
+*
+PIOUT  MOV  @PIOTYP,R1
+       LI   R12,>1340
+PIOUT3 LI   R8,81             try to do 80 characters
+       SLA  R1,1
+       MOV  @TABPIO(R1),R14   get pio table address
+       MOV  R12,@ISCRU
+       ANDI R12,>1F00
+*
+PIONXT DEC  R8                down counter
+       JEQ  PIOEX             done
+*
+       BL   @PUTPIO           stick it out the PIO port
+       ABS  R15
+       JNE  PIOUE             port busy, leave this routine
+       JMP  PIONXT            try again
+*
+PIOUE  MOV  R12,R12           buffer empty?
+       JEQ  PIOOUF            yes . . . .
+       MOV  @BUFNUM,R15
+       BL   @BUFEMP           buffer empty?
+       JEQ  PIOOUF            yes, so turn interrupts off.
+*
+PIOEX  MOV  @ISCRU,R12        be careful with CRU base
+       SBO  TIMENB            reset timer interrupt, kill timer error
+       JMP  INTRT             and return
+*
+PIOOUF MOV  @ISCRU,R12        make sure correct CRU base
+       SBZ  TIMENB            turn off timer interrupt
+       JMP  INTRT
+*
+ISCRU  DATA 0
+*

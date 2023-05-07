@@ -1,0 +1,643 @@
+* File: PARSEFS
+*
+* 5.14.2022 Begin documenting parse routine
+*           Considerations:
+*            - what is volume search?
+*            - why is WDS referenced in vol search
+*            - why is CASE flag not functional for DEVx.path.file
+*
+       UNL
+*
+* modified 16 Feb 93, jj, to mask all strings going thru
+* the parser to uppercase.  User can still access lowercase
+* filenames by enclosing the name inside quotes, or using the
+* hardware (TI) device name, i.e., DSK1.filename instead of A:filename
+*
+* 7.25.2022 Added DEF for CYA Case Mapping, label CYAMP5
+*
+
+       DEF  PARSEF
+       DEF  CSFLG,CYAMP5        flag for case 0=ignore case
+       RORG >0000
+       LIST
+*
+**************************************************************************
+*      BL   CALL, internal to OS
+* CHANGE ABSTRACT FILENAME INTO PHYSICAL FILENAME
+* IN:
+*     R1= POINTER TO TEXT OF STRING TO PARSE               caller address
+*     R2= ^ TO LENGTH BYTE IN STRING OUT BUFFER            caller address
+*         (1st byte is maxlen for the buffer)
+*     R3= FLAG TO CONTROL GENERATION OF ALIAS PREFIX
+*           5.14.2022, wth is the alias prefix? This is asked in other code
+*                      referenced by @6(R13)
+*
+* OUT:
+*     R0= pointer to ending delimiter
+*     R1= 0 is no error, <>0 is error
+*     EQUAL FLAG set by contents of R1
+*
+* MAPS SOURCE AT >4000,>6000
+*      DEST   AT >A000,>C000
+*
+USEDRV DATA 0
+H8000  DATA >8000
+PARSEX DATA 0
+SRCADD DATA 0
+DSTADD DATA 0
+ADDPAG DATA 0
+CYAMP5
+CSFLG  DATA 0               flag for case 0=caseblind, <>0=case recognized
+*                           added by jj, 22 Feb 93
+VOLSRC TEXT 'WDS.'
+VOLLEN EQU  $-VOLSRC
+*
+PARSEF MOV  R11,@PARSEX
+       MOV  @2(R13),R1       ; R1: pointer to user text string to parse (R1)
+       MOV  R1,R2
+       ANDI R1,>1FFF
+       AI   R1,>4000
+       MOV  R1,@SRCADD
+       ANDI R2,>E000
+       MOV  R2,@ADDPAG
+       SRL  R2,13
+       MOVB @TSKMAP(R2),@MAPPER+2
+       INC  R2
+       ANDI R2,>0007
+       MOVB @TSKMAP(R2),@MAPPER+3
+*
+       MOV  @4(R13),R1       ; R2: pointer to len byte in OUTPUT buffer
+       MOV  R1,R2
+       ANDI R1,>1FFF
+       AI   R1,>A000
+       MOV  R1,@DSTADD
+       SRL  R2,13
+       MOVB @TSKMAP(R2),@MAPPER+5
+       INC  R2
+       ANDI R2,>0007
+       MOVB @TSKMAP(R2),@MAPPER+6
+*
+       MOV  @SRCADD,R9
+       LI   R10,NAMBUF
+       LI   R12,50            max 50 ? interesting
+       MOV  @CURDRV,@USEDRV
+       A    @H8000,@USEDRV    index into user page
+       MOVB *R9,R0
+*
+       BL   @TERMIN
+       JEQ  ENDA              no input...assume current drive
+*
+* check for reserved device names
+*
+* prn,aux,pio,rs232...etc
+*
+* If found, copy "corrected" name for caller task, then exit
+*
+       LI   R2,NTABLE         table of reserved names.
+NC00   MOV  @SRCADD,R1
+       MOV  R2,R3
+       AI   R3,4
+       MOVB *R3+,R4
+       SRL  R4,8              number of chars in this entry
+NC01   MOVB *R1+,R11
+       ANDI R11,>7F00
+       CI   R11,'a'*256
+       JL   NC01A
+       CI   R11,'z'*256
+       JHE  NC01A
+*
+       ANDI R11,>5F00
+NC01A  CB   *R3+,R11
+       JNE  NC02              compare fail
+       DEC  R4                one less to compare
+       JNE  NC01              more to compare
+*
+       MOVB *R1,R0            they match so far, test for delimiter
+       BL   @TERMIN
+       JEQ  NC10              they match!
+       CB   R0,@EQUALS
+       JEQ  NC10              match
+       CB   R0,@COLON
+       JNE  NC02              go to next entry to try it out (fail)
+NC10   MOV  @2(R2),R2         pointer to corrected name
+       MOV  @DSTADD,R3
+       CB   *R3,*R2           length ok?
+       JL   ERRSYN            nope, not enough room
+       MOVB *R2,R4
+       SRL  R4,8
+       INC  R4
+NC11   MOVB *R2+,*R3+
+       DEC  R4
+       JNE  NC11
+       B    @ENDPAR           Done. Exit parse.
+*
+* fail, go to try next node
+*
+NC02   MOV  *R2,R2            end of table?
+       JNE  NC00              no, more to test against
+
+*-------------------------------------------------------
+* There were no reserved names...
+*
+* PHASE I, determine alias string ... can be nil
+*      alias = WDS.volume. if we have "volume:" + any non-termination char
+*            = volume      if we have "volume:" + termination delimiter
+* mebbe not  = alias       if we have "n:" followed by termination delim
+*            = alias.      if we have "n:" followed by char or "\" or "."
+*            = alias.      of current drive if 1st delim is not "." + non-delim
+*            = nil         if first delim is a period followed by non-delim
+*            = nil         if R0=FLAG is non-zero
+*
+FLP1   CB   *R9,@COLON
+       JEQ  FCOLN1
+       CB   *R9,@PERIOD    this special case just copies until termination delim
+       JEQ  FPERD1
+       CB   *R9,@BSLASH    all of the following use alias of current drive + "."
+       JEQ  ENDA
+       MOVB *R9,R0
+       BL   @TERMIN
+       JEQ  ENDA
+*
+       INC  R9
+       JMP  FLP1
+*
+ENDA   MOV  @SRCADD,R9
+       JMP  ENDA2
+*
+* check to see if this is a directory reference
+*
+FPERD1 MOV  @6(R13),R0        ALIAS PREFIX?
+       JNE  ENDA              Yes.
+*
+       C    R9,@SRCADD        dir ref, period is 1st char of string
+       JEQ  ENDA              use alias of current drive   ".file"
+*                             (so technically, still an alias)
+*
+* 5.14.2022, ALIAS PREFIX=0 [off]. This seems pretty useless unless used
+*            internally by the OS?
+*
+*      just copy a name over until first ending delimiter
+*      "PIO." will access PIO port
+*
+FPERD2 MOV  @SRCADD,R1        ok, we're just copying what the user task
+FPERD3 MOV  @DSTADD,R2        supplied.
+       MOV  R2,R6
+       MOVB *R2+,R3
+       SRL  R3,8
+       MOV  R3,R5
+*
+FPLP1  MOVB *R1,R0       copy until termination found
+       BL   @TERMIN      space/comma/nil/slash/semi
+       JEQ  ENDP         [RS232/1 would copy as RS232]
+       MOVB *R1+,*R2+
+       DEC  R3
+       JNE  FPLP1
+*
+* STRING TOO LONG
+*
+ERRSYN SETO R4
+       MOV  R9,R1
+       MOV  @4(R9),R2
+       MOVB @NIL,*R2
+       JMP  ENDP2
+*
+* STRING OK, COPY LENGTH INTO BUFFER
+*
+ENDP   S    R3,R5
+       SLA  R5,8
+       MOVB R5,*R6
+       CLR  R4
+ENDP2  B    @ENDPAR           Done. Exit parse.
+*
+********************************************************************************
+* colon is first delimiter found...are we doing an alias, or a volume search?
+* if prefix to colon is an invalid alias, assume volume search
+*
+; 1) If first char is colon ":", error
+; 2) IF x: (single char) before ":", test for and compute Alias to drive leter
+;      Example: A: would set up pointer to "DSK1" alias
+; 3) If xxx: (multi char before colon) assume volume search
+;
+;
+FCOLN1 MOV  R9,R1
+       INC  R9
+       S    @SRCADD,R1   number of chars before colon was found
+       JEQ  ERRSYN       no chars before colon, syntax error
+
+       CI   R1,1         is it a single alias character?
+       JNE  FCOLN2       no, must be volume search...
+       MOVB @-2(R9),R0
+       STWP R1           ;get WS so we can return value via *R1 (which is R0
+       BL   @CHKDRV      ;get alias and return in R0 via *R1
+       JNE  FCOLN2       ;EQ=found alias; <>EQ invalid alias
+*
+       MOV  R0,@USEDRV   save the alias
+*
+ENDA2  MOV  @6(R13),R0   ALIAS PREFIX?
+       JEQ  ENDA3
+FDIRSP B    @FDIR        ;phase II, find directory (~line 300)
+*
+ENDA3  MOV  @USEDRV,R0
+       LI   R1,TMPSTR
+       MOVB @MAXLEN,@TMPLEN
+       BL   @NODSTR      ;get alias from page 0/task 0
+*
+       MOVB @TMPLEN,R1
+       SRL  R1,8
+       JEQ  ERRSYN       no alias assigned
+*      DEC  R1
+       C    R1,R12
+       JH   ERRSYN       name too long
+       LI   R0,TMPSTR
+*
+FCLNL1 MOVB *R0+,*R10+   ;copy the alias into NAMBUF (set at start of parse
+       DEC  R12          ;len, starts at max 50
+       JEQ  ERRSYN
+       DEC  R1
+       JNE  FCLNL1
+*
+
+       CLR  R4           Alias copied.
+
+*      MOVB *R9,R0       check for plain vanilla alias   (huh?)
+*      BL   @TERMIN      @@
+*      JEQ  COPRCH
+
+       MOVB @PERIOD,*R10+   ;add a period after the alias
+       DEC  R12             ;Remember, ASSIGNs have no trailing period!
+       JEQ  ERRSYN
+       JMP  FDIR         go to phase II for directory portion
+
+**COPRCH B    @COPYIT      @@   ;5.14.2022, removed. Part of above vanillacode
+*---------------- end FCOLN1
+
+*
+* this is going to be a volume search
+*
+FCOLN2 MOV  @6(R13),R0        ;Caller R3, alias prefix gen flag
+       JNE  FDIRSP            jump up then to FDIR (5.14 fix this to direct)
+*
+       MOVB *R9,R0
+       CLR  R8
+       BL   @TERMIN
+       JEQ  FVOLM
+       INC  R8
+*
+       LI   R0,VOLSRC
+       LI   R1,VOLLEN
+FVOL1  MOVB *R0+,*R10+
+       DEC  R12
+       JEQ  ERRSYN
+       DEC  R1
+       JNE  FVOL1
+*
+FVOLM  MOV  @SRCADD,R0
+       MOV  R9,R1
+       S    R0,R1
+       DEC  R1
+*
+FVOL2  MOVB *R0+,*R10+
+       DEC  R12
+       JEQ  ERRSYN
+       DEC  R1
+       JNE  FVOL2
+*
+       MOV  R8,R8
+       JNE  FVOL3
+       B    @COPYIT           just plain "VOLUME:"+termination
+*
+FVOL3  MOVB @PERIOD,*R10+
+       DEC  R12
+       JEQ  ERRSYN
+       JMP  FCOPY
+*
+* PHASE II, determine current directory string
+*      nil               if 1st char is "\"
+*      nil               if "cd" is nil
+*      cd                if string is "." + termination
+*      -cd               if string is ".." + termination
+*      cd.               if 1st is non-term
+*      cd.               if 1st two are ".\"
+*      -cd.              if 1st three are "..\"
+*
+FDIR   CB   *R9+,@BSLASH
+       JEQ  FCOPY
+*
+       DEC  R9
+       MOV  @USEDRV,R0
+       INCT R0
+       MOVB @MAXLEN,@TMPLEN
+       LI   R1,TMPSTR
+       BL   @NODSTR
+       CLR  R8
+       CB   *R9,@PERIOD
+       JNE  USE1
+       INC  R9
+       MOVB *R9+,R0
+       CB   R0,@BSLASH
+       JEQ  USE1
+       CB   R0,@PERIOD
+       JEQ  FDIR2
+       DEC  R9
+       BL   @TERMIN
+       JEQ  USE0
+       B    @ERRSYN
+*
+FDIR2  MOVB *R9,R0
+       BL   @TERMIN
+       JEQ  USE2
+       INC  R9
+       CB   R0,@BSLASH
+       JNE  SYNRCH
+*
+USE3   INC  R8
+USE2   LI   R1,TMPSTR    use parent of current directory
+       MOVB @TMPLEN,R2
+       JEQ  USE0         we are already at root..do a normal continue
+       SRL  R2,8
+       A    R2,R1
+       DECT R1                point to char before final period
+*
+USELP  CI   R1,TMPSTR
+       JL   USE2A
+*
+       CB   *R1,@PERIOD  shorten directory by one subdir
+       JEQ  USE2A
+       DEC  R1
+       JMP  USELP
+*
+USE2A  LI   R3,TMPSTR
+       S    R3,R1
+       JLT  USE2B
+       JMP  USE2C
+*
+USE2B  CLR  R1
+USE2C  SLA  R1,8
+       MOVB R1,@TMPLEN
+       JNE  USE0
+       MOVB R1,@TMPSTR
+       JMP  USE0
+*
+USE1   INC  R8
+USE0   LI   R1,TMPSTR
+       MOVB @TMPLEN,R2
+       JEQ  FCOPY
+       SRL  R2,8
+*      DEC  R2
+       C    R2,R12            are there enough places in the buffer
+       JH   SYNRCH
+*
+USELP2 MOVB *R1+,*R10+
+       DEC  R12
+       DEC  R2
+       JNE  USELP2
+*
+FDIR3  MOV  R8,R8             is there going to be more?
+       JEQ  COPYIT            no, copy our temp buffer to user's buffer
+       MOV  R12,R12
+       JEQ  SYNRCH
+       MOVB @PERIOD,*R10+
+       DEC  R12
+*
+* Phase III, copy rest of string into temp buffer...change "\" to "."
+*      quoted strings are copied verbatim
+*
+FCOPY  CLR  R1                state number: 0,1,2,3
+*
+FCOPY1 MOVB *R9,R0
+       JEQ  COPYIT            end of string...always exit
+*
+       MOV  R1,R2
+       SLA  R2,1
+       MOV  @QSTATE(R2),R2
+       CB   R0,@QUOTE
+       B    *R2
+*
+QSTATE DATA Q000,Q001,Q002,Q003
+*
+Q000   JNE  OUTQ
+       INC  R1                go to open quote state
+       JMP  FCOPY3            no chars to copy on state change
+*
+Q001   JNE  Q011
+*
+       CLR  R1                change to unquote state
+       JMP  FCOPY2            and copy a quote into buffer
+*
+Q011   INCT R1                state 3, we're in quoted string now
+       JMP  FCOPY2            copy this char into buffer
+*
+Q002   JNE  OUTQ              1st char outside of quoted string
+       INC  R1                2->3, quote inside of quoted string
+       JMP  FCOPY2            put a quote into buffer
+*
+Q003   JNE  Q013              quoted character
+       DEC  R1                go to state 2, quote found in quoted string
+       JMP  FCOPY3            nothing to put into buffer
+Q013   CB   R0,@SPACE         space in quoted string means stop!
+       JEQ  COPYIT
+       JMP  FCOPY2
+*
+OUTQ   BL   @TERMIN
+       JEQ  COPYIT
+       CB   R0,@BSLASH
+       JNE  FCOPY2
+       MOVB @PERIOD,R0
+*
+FCOPY2 MOVB R0,*R10+
+*
+       DEC  R12
+       JEQ  SYNRCH
+FCOPY3 INC  R9
+       JMP  FCOPY1
+*
+SYNRCH B    @ERRSYN
+*
+COPYIT NEG  R12
+       AI   R12,50
+       MOV  @DSTADD,R2
+       MOVB *R2,R1
+       SRL  R1,8
+       C    R1,R12
+       JL   SYNRCH
+       MOV  R12,R1
+       SLA  R1,8
+       MOVB R1,*R2+
+       JEQ  COPIT3
+*
+       LI   R10,NAMBUF
+COPIT2 MOVB *R10+,*R2+
+       DEC  R12
+       JNE  COPIT2
+COPIT3 CLR  R4
+       MOV  R9,R1
+*
+ENDPAR SZCB @H20,R15
+       MOV  R4,@2(R13)
+       JNE  ENDPA2
+       SOCB @H20,R15
+ENDPA2 ANDI R1,>1FFF
+       SOC  @ADDPAG,R1        restore user page number...
+       MOV  R1,*R13
+       MOV  @PARSEX,R11
+       RT
+*
+* is the char in r0 high a termination char?
+*
+**************************************************
+* modified/added 16 Feb 93, jj
+* routine masks all lower alpha chars to uppercase when CSFLG is low
+* (unless the filename is enclosed in quotes!)
+*
+TERMIN CB   R0,@SPACE
+       JEQ  TERMRT
+       CB   R0,@COMMA
+       JEQ  TERMRT
+       CB   R0,@NIL
+       JEQ  TERMRT
+       CB   R0,@SLASH
+       JEQ  TERMRT
+       CB   R0,@SEMI            moved from below, jj 16 feb 93
+       JEQ  TERMRT
+       ABS  @CSFLG              is case on?
+       JNE  TERMRT              if low, don't mask to uppercase
+       CB   R0,@HJJ61     a     added, jj, 16 feb 93
+       JL   TERMRT              \
+       CB   R0,@HJJ7A     z      \
+       JH   TERMRT                \
+       ANDI R0,>DFFF               \
+TERMRT RT
+HJJ61  BYTE >61                 'a'  added for case match
+HJJ7A  BYTE >7A                 'z'  added for case match
+*
+*******************************************************************
+*
+CHKDRV SETO @CHKFLG
+       ANDI R0,>DF00     convert lower case to upper case
+       CI   R0,'A'*256
+       JL   CHKOUT
+       CB   R0,@MAXDRV
+       JH   CHKOUT
+       AI   R0,->4100
+       SRL  R0,6
+       AI   R0,ALIASA
+       MOV  R0,*R1
+       CLR  @CHKFLG
+CHKOUT ABS  @CHKFLG
+       RT
+CHKFLG DATA 0
+*
+*
+*******************************************************************************
+*
+*      CONVERT NODES INTO STRING
+*      IN:  R0 POINTS TO USER'S NODE POINTER
+*           R1 POINTS TO STRING (BYTE AFTER LENGTH BYTE)
+*           LENGTH BYTE MUST HAVE LENGTH OF BUFFER
+*
+*      OUT:  OK     R0=0  EQUAL FLAG SET
+*            ERROR  R1=-1 EQUAL FLAG RESET
+*
+NODSTR MOV  *R0,R2
+       JEQ  NO#STR            ZERO LENGTH STRING
+       AI   R2,>8000          into user node
+       CB   @2(R2),@-1(R1)    COMPARE LENGTHS OF STRINGS
+       JHE  BADLEN            STRING TOO LONG FOR THEIR BUFFER
+       MOV  R1,R5             CURSOR TO USER'S STRING
+       DEC  R5
+       MOVB @2(R2),R6         COUNT OF CHARS TO MOVE
+       SRL  R6,8
+       INCT R6
+*
+NXTNOD MOV  R2,R3             CURSOR WITHIN NODE
+       INCT R3
+       MOV  R2,R4             POINTER TO END OF NODE
+       AI   R4,8
+*
+NODL1  MOVB *R3+,*R5+
+       DEC  R6
+       JEQ  NODJ1
+       C    R3,R4
+       JL   NODL1
+       MOV  *R2,R2            THIS LINK NEVER ZERO IF VALID STRING
+       AI   R2,>8000          point into user space
+       JMP  NXTNOD
+*
+NODJ1  CLR  R0
+       JMP  NODRET
+*
+NO#STR CLR  R0
+       MOVB R0,@-1(R1)
+       MOVB R0,*R1
+       JMP  NODRET
+*
+BADLEN SETO R0
+NODRET MOV  R0,R0
+       RT
+*
+********************************************************************************
+*
+MAXLEN BYTE 128
+*
+EQUALS BYTE '='
+QUOTE  BYTE '"'
+COLON  BYTE ':'
+PERIOD BYTE '.'
+BSLASH BYTE '\'
+SLASH  BYTE '/'
+NIL    BYTE >00
+SPACE
+H20    BYTE ' '
+COMMA  BYTE ','
+SEMI   BYTE ';'
+*
+NTABLE DATA L2,N3
+N1     BYTE 3
+       TEXT 'PRN'
+*
+L2     DATA L3,N6
+N2     BYTE 3
+       TEXT 'AUX'
+*
+L3     DATA L4,N3
+N3     BYTE 5
+       TEXT 'PIO/1'
+*
+L4     DATA L5,N4
+N4     BYTE 5
+       TEXT 'PIO/2'
+*
+L5     DATA L6,N3
+N5     BYTE 3
+       TEXT 'PIO'
+*
+L6     DATA L7,N6
+N6     BYTE 7
+       TEXT 'RS232/1'
+*
+L7     DATA L8,N7
+N7     BYTE 7
+       TEXT 'RS232/2'
+*
+L8     DATA L9,N8
+N8     BYTE 7
+       TEXT 'RS232/3'
+*
+L9     DATA L10,N9
+N9     BYTE 7
+       TEXT 'RS232/4'
+       BYTE 0
+*
+L10    DATA L11,N6
+N10    BYTE 5
+       TEXT 'RS232'
+*
+L11    DATA 0,N11
+N11    BYTE 3
+       TEXT 'CON'
+*
+       COPY "\MDOS\HEAD\OSTASK"
+       COPY "\MDOS\HEAD\LOWMAP"
+*
+       END
+*

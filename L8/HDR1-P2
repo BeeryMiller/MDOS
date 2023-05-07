@@ -1,0 +1,330 @@
+; File: HDR1-P2
+;
+       TITL 'HEADER, PAGE 0'
+
+* /4A ENTRY STARTS HERE
+* FIRST PATHS TO NAME, INTERRUPT ENTRIES, ETC.
+*
+* 02-25-18  Added SCS4,5,6 for future expansion
+*        ** WARNING! Must not exceed >4200. See Layout AORG PAGCOD
+*          -Might need to limit to SCSx due to DSR constraints with
+*           CYLPLT/space. Hmm.
+*          -check hdr2-p2 interrupt handler for SCSI
+*
+;Jul-Dec 20 Tested passthrough (worked but space limitations prevent it)
+;12.04.2020 Added TIP1.
+;12.19.2020 added URIx,PI devices (See hclis,hd.data,hdr2-p2)
+;           PI must follow PIO to disambiguate
+;01.18.2021 Merged w/MDOS 7.0 codebase
+;           Added TIPI well known addresses (xx10-xx16) [see HDR2-P2]
+;01.19.2021 Moved TIPI to top spot because some people aren't scanning table
+;          #Added TIPI/TIP1 and disabled SCS6 for time being
+;01.23.2021 Added DSK0 alias for TIPI use only; no remap required
+;
+;02.28.2021 Added link to hdr2-p2:pwrup3 for NUMFIL reset; BEEF flag
+;           See also GPL\TASK78S and GPL\KEYS
+;           Removed TIPI well known addresses; use rompage
+;
+;3.19.2021  Enabled SCS6 - Used remaining space in this segment >4000-41ff
+;
+
+       BYTE >AA          >4000 ID BYTE TELLS OS THAT DSR EXISTS
+       BYTE 3            >4001 VERSION NUMBER
+       BYTE 0            >4002 NUMBER OF PROGRAMS
+       BYTE 0            >4003 RESERVED
+       DATA PWRLNK       >4004 >POINTER TO POWER UP ROUTINE
+       DATA 0            >4006 PROGRAM LINK
+       DATA DSRLNK       >4008 DSR LINK
+       DATA GPLLNK       >400A GPL SUBPROGRAM LINK
+       DATA INTLNK       >400C INTERRUPT LINK  (vector to INTENT hdr2-p2)
+       DATA 0            >400E RESERVED
+       DATA PWRUP2       >4010 RESERVED FOR GPL 1.1H POWERUP ROUTINE
+; This ^^^^ powerup appears in EXEC and GPL.
+;      It is used for HFDC/SCSI powerup only
+       DATA >BEEF        >4012 ;special flag for GPL
+       DATA PWRUP3       >4014 ;set NUMFIL to >0A upon GPL exit
+
+* GPLLNK INFO NEEDS TO BE HERE FOR DM1000 / SST BASIC COMPILER
+*      (If someone needs to run DM1000/SST, they can use older OS.  -tt)
+*
+GPLLNK DATA SPLLN2,SP20       DIRECT SECTOR I/O TO HARD DISK (SCSI ONLY)
+       BYTE 1,>20
+SPLLN2 DATA SPLLN3,SP24       ACCESS DIRECT INPUT FILE( SCSI ONLY)
+       BYTE 1,>24
+SPLLN3 DATA VPLLNK,SP25       ACCESS DIRECT OUTPUT FILE(SCSI ONLY)
+       BYTE 1,>25
+VPLLNK DATA GPLLN2,GP10       DIRECT SECTOR I/O
+       BYTE 1,>10
+GPLLN2 DATA GPLLN3,GP11       DISK FORMATTING
+       BYTE 1
+H11    BYTE >11
+GPLLN3 DATA GPLLN4,GP12       FILE PROTECTION
+       BYTE 1
+H12    BYTE >12
+GPLLN4 DATA GPLLN5,GP13       FILE RENAME
+       BYTE 1
+H13    BYTE >13
+GPLLN5 DATA GPLLN6,GP14       ACCESS DIRECT INPUT
+       BYTE 1
+H14    BYTE >14
+GPLLN6 DATA GPLLN7,GP15       ACCESS DIRECT OUTPUT
+       BYTE 1
+H15    BYTE >15
+GPLLN7 DATA SBRCF,CFILEG      BUFFER NUMBER ALLOCATION
+       BYTE 1
+H16    BYTE >16
+
+SBRCF  DATA CDIR,CFILES
+H05    BYTE 5
+       TEXT 'FILES'
+
+CDIR   DATA CILR,CDIRL         CALL DIR(X)   HDR2-P2 LINE ~515
+H03    BYTE 3
+       TEXT 'DIR'
+
+CILR   DATA CLLR,ILR
+WRTCOD BYTE 3                 WRITE OPCODE
+       TEXT 'ILR'
+CLLR   DATA CLRC,LLR
+       BYTE 3
+       TEXT 'LLR'
+CLRC   DATA 0,LR
+       BYTE 2
+       TEXT 'LR'         ;possibly use this to mirror the tipi routine
+       EVEN
+*
+OPNCOD EQU  $
+H00    EQU  $
+*
+* -->  DSRPASS-S and HDR2-P2 have powerup code.
+*      |--9640 mode  |--TI Mode powerup?
+*         scsi buf       mostly 4a mode stuff not as low level
+*         remaps
+*         tracks, etc
+*
+       EVEN
+PWRLNK DATA 0,PWRUP      LINK, ENTRY TO POWER UP CODE
+       BYTE 0            NAME LENGTH
+D40B   BYTE 40           !UNUSED OTHERWISE
+D80    BYTE 80
+       EVEN
+*
+CRU1100 DATA >1100
+CRU1000 DATA >1000
+
+*
+* 2-25-18   Note how DSK/DSK1 are duplicated. First pair jumps into
+*           HDR2-P2 to check for HFDC options @PASHFD. It sets a HFDFLG
+*           and proceeds to DSRET1.  DSR tries to use HFDC floppy then
+*           will 'reset' HFDFLG and re-enter at DSRET1. Might be the
+*           reason emulation and DSK.volume access is a problem.
+*           Messy code alert.  :(
+*1.18.2021  Inspect for later TIPI DSKx emulation
+
+DSRLNK
+HSR1
+DSR1   DATA DSR5
+       DATA PASHFD       **hfdc first pass;see trace notes
+       BYTE 3
+       TEXT 'DSK'
+
+DSR5   DATA DSR1A         LINK
+       DATA PASHFD
+RESCOD BYTE 4            LENGTH OF "DSK1"
+DSKTXT TEXT 'DSK1'
+
+H07    BYTE >07         !AGAIN...
+DELCOD EQU  H07
+*
+* non-hfdc/real disk here
+*
+DSR1A  DATA DSR5A
+       DATA DSRET1
+       BYTE 3
+       TEXT 'DSK'
+
+DSR5A  DATA DSRQ
+       DATA DSRET1
+       BYTE 4
+       TEXT 'DSK1'
+H20    TEXT ' '
+BLANK  EQU  H20
+
+DSRQ   DATA DSRR
+       DATA DSRET1
+       BYTE 4
+       TEXT 'HDS1'
+DECIML TEXT '.'          !USE IT...
+DPT    EQU  DECIML
+
+DSRR   DATA DSRS
+       DATA DSRET1
+       BYTE 4
+       TEXT 'HDS2'
+H09    BYTE >09          !FILL EMPTY BYTE WITH SOMETHING USEFUL
+STACOD EQU  H09
+
+DSRS   DATA DSRT
+       DATA DSRET1
+       BYTE 4
+       TEXT 'HDS3 '
+
+DSRT   DATA DSRTA
+       DATA DSRET1
+       BYTE 3
+       TEXT 'HDS'
+
+DSRTA  DATA DSRTB
+       DATA DSRET1
+       BYTE 4
+       TEXT 'SCS1 '
+
+DSRTB  DATA DSRTC
+       DATA DSRET1
+       BYTE 4
+       TEXT 'SCS2 '
+
+DSRTC  DATA DSRTS4        DSRTD (2-25-18)
+       DATA DSRET1
+       BYTE 4
+       TEXT 'SCS3 '
+*
+* add scs4-9 here
+*
+DSRTS4 DATA DSRTS5
+       DATA DSRET1
+       BYTE 4
+       TEXT 'SCS4 '
+
+DSRTS5 DATA DSRTS6  ;DSRTS6
+       DATA DSRET1
+       BYTE 4
+       TEXT 'SCS5 '
+
+DSRTS6 DATA DSRTD   ;removed for TIPI/TIP1 testing 1.19.2021
+      DATA DSRET1
+      BYTE 4
+      TEXT 'SCS6 '
+
+DSRTD  DATA DSR2
+       DATA DSRET1
+       BYTE 3
+       TEXT 'SCS'
+*
+* Covered DSK1 and the hard drive devices. Bound to DSK2+ then RS232
+*
+DSR2   DATA DSR3
+       DATA DSRET1
+       BYTE 4
+       TEXT 'DSK2 '
+*
+DSR3   DATA DSR4
+       DATA DSRET1
+       BYTE 4
+       TEXT 'DSK3 '
+*
+DSR4   DATA DSR8
+       DATA DSRET1
+       BYTE 4
+       TEXT 'DSK4
+*
+DSR8   DATA DSR9
+       DATA DSRET1
+       BYTE 4
+       TEXT 'DSK5 '
+
+DSR9   DATA DSR9A
+       DATA DSRET1
+       BYTE 4
+       TEXT 'DSK6 '
+
+DSR9A  DATA DSR9B
+       DATA DSRET1
+       BYTE 4
+       TEXT 'DSK7 '
+
+DSR9B  DATA DSR9C
+       DATA DSRET1
+       BYTE 4
+       TEXT 'DSK8 '
+*
+DSR9C  DATA DSR11
+       DATA DSRET1
+       BYTE 4
+       TEXT 'DSK9 '
+*
+DSR11  DATA DSR12
+       DATA RS232
+       BYTE 5
+       TEXT 'RS232'
+
+DSR12  DATA DSR13
+       DATA PIO
+       BYTE 3
+       TEXT 'PIO'
+
+DSR13  DATA DSR14
+       DATA RS2322
+       BYTE 7
+       TEXT 'RS232/2'
+
+DSR14  DATA DSR15
+       DATA RS232
+       BYTE 7
+       TEXT 'RS232/1'
+
+DSR15  DATA DSR16
+       DATA PIO
+       BYTE 5
+       TEXT 'PIO/1'
+*
+DSR16  DATA DSRTP1       ;1.18 fixed pointer to DSRUR1
+       DATA PIO2
+       BYTE 5
+       TEXT 'PIO/2'
+
+DSRTP1 DATA DSRTPD
+       DATA DSRET1
+       BYTE 4
+       TEXT 'TIP1 '
+
+DSRTPD DATA DSRUR1
+       DATA DSRET1
+       BYTE 4
+       TEXT 'DSK0 '      ;1.23.2021, TIPI alias in GPL
+
+DSRUR1 DATA DSRUR2       ;12.19  Add URI1,URI2,URI3, and PI
+       DATA DSRET1       ;
+       BYTE 4
+       TEXT 'URI1 '
+
+DSRUR2 DATA DSRUR3
+       DATA DSRET1
+       BYTE 4
+       TEXT 'URI2 '
+
+DSRUR3 DATA DSRPI1
+       DATA DSRET1
+       BYTE 4
+       TEXT 'URI3 '
+
+DSRPI1 DATA DSR17        ;Must follow PIO[/1][/2]
+       DATA DSRET1
+       BYTE 2
+       TEXT 'PI '
+
+DSR17  DATA DSR18
+       DATA RS2323
+       BYTE 7
+       TEXT 'RS232/3'
+
+DSR18  DATA 0
+       DATA RS2324
+       BYTE 7
+       TEXT 'RS232/4'
+*
+INTLNK DATA 0,INTENT
+       DATA 0
+*
+       EVEN
+*eof

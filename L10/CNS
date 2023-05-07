@@ -1,0 +1,628 @@
+*
+*   PAUL HERE IS THE NEW CNS ROUTINE WHICH SHOULD FIX A BUNCH OF PROBLEMS
+*      PLEASE NOTE THE FORMAT OF THE CALL.  IF THIS IS DIFFERENT
+*      THAN WHAT YOU EXPECT (OR OTHERS) PLEASE TELL ME ABOUT IT
+*      INPUT R0=18
+*            R1=^STRING OUTPUT
+*            R2=^FLOAT1
+*            R3-R5=OPTIONS
+*
+*      OUTPUT R0=ERROR CODE
+*             R1=^STRING OUTPUT
+*             R2=LENGTH OF STRING
+*
+*-------------------------------------------------------------------------
+*
+*      WRITTEN: 07/17/1985
+*                TESTED AND MODIFIED 10/21/1985
+*      FILE:    WDS1.136.CNS
+*
+*      NAME:    CONVERT NUMBER TO STRING
+*
+*
+*       CCCCC    N     N    SSSSS
+*      C     C   NN    N   S     S
+*      C         N N   N   S
+*      C         N  N  N    SSSSS
+*      C         N   N N         S
+*      C     C   N    NN   S     S
+*       CCCCC    N     N    SSSSS
+*
+*
+*
+*-------------------------------------------------------------------------
+*
+*      CONVERT THE NUMBER IN THE FAC TO A STRING
+*      AS WAS CALLED BY BASIC
+*
+*      BL   @CNS
+*           FAC11        0 FOR FREE FORMAT(FAC12-FAC13 IGNORED)
+*                        BIT 0 ON FOR FIXED FORMAT
+*                        BIT 1 ON FOR AN EXPLICIT SIGN
+*                        BIT 2 ON TO OUTPUT THE SIGN OF A POS.
+*                        NO. AS A PLUS SIGN('+') INSTEAD OF A
+*                           SPACE (BIT 1 MUST ALSO BE ON)
+*                        BIT 3 ON FOR E-NOTATION OUTPUT
+*                           : BIT 4 ALSO ON FOR EXTENDED E-NOTATION
+*           FAC12 AND FAC13 SPECIFY THE FIELD SIZE
+*           FAC12        NUMBER OF PLACES IN THE FIELD TO THE
+*                        LEFT OF THE DECIMAL POINT INCLUDING AN
+*                        EXPLICIT SIGN AND EXCLUDING THE DECIMAL
+*                        POINT.
+*           FAC13        NUMBER OF PLACES IN THE FIELD TO THE
+*                        RIGHT OF THE DECIMAL POINT INCLUDING THE
+*                        DECIMAL POINT.
+*           FAC12 AND FAC13 EXCLUDE THE 4 POSITIONS FOR THE
+*                        EXPONENT IF BIT 3 IS ON.
+*
+*      ON INPUT USE THE FOLLOWING REGISTERS
+*           R0 CONTAINS FORMAT OPTIONS
+*           R1 CONTAINS NUMBER OF PLACES IN THE FIELD TO THE LEFT
+*                        OF THE DECIMAL POINT INCLUDING AN EXPLICIT
+*                        SIGN AND EXCLUDING THE DECIMAL POINT.
+*           R2 CONTAINS NUMBER OF PLACES IN THE FIELD TO THE RIGHT OF
+*                        THE DECIMAL POINT INCLUDING THE DECIMAL POINT
+*           R1 AND R2 EXCLUDE THE 4 POSITIONS FOR THE EXPONENT IF
+*                        BIT 3 IS ON
+*
+*      OTHER REGISTER USAGE
+*           R8   POINTS TO NUMBER TO BE CONVERTED
+*           R6   POINTS TO OUTPUT FIELD
+*           R10  POINTS TO END OF NUMBER (= TO FAC+8)
+*
+*      ERRORS: THE FIELD HAS MORE THAN 14 SIGNIFICANT DIGITS
+*
+*
+*
+CH0002
+LWCNS  DATA >0002
+LWCNP  DATA >0004
+LWCNE  DATA >0008
+LWCNF  DATA >0010
+*
+*    INTEGER POWER OF TEN TABLE
+*
+CNSITT DATA 10000
+       DATA 1000
+LW100  BYTE 0
+LB100  BYTE 100
+LW10   BYTE 0
+LB10   BYTE 10
+       BYTE 0
+LB1    BYTE 1
+*
+*    CONSTANTS
+*
+LBSPC  BYTE ' '
+LBAST  BYTE '*'
+LBPER  BYTE '.'
+LBE    BYTE 'E'
+LBZER  BYTE '0'
+CBH59  BYTE >59
+CBH63  BYTE >63
+*=========================================================================
+*
+*    CONVERT NUMBER TO STRING
+*
+*=========================================================================
+CNS    MOV  R13,@SAVR13
+       MOV  R13,R8                 SET UP POINTERS
+       STWP R10
+*
+       MOV  @6(R13),*R10+           GET OPT #1
+       MOV  @8(R13),*R10+           GET OPT #2
+       MOV  @10(R13),*R10+          GET OPT #3
+*
+       MOV  @4(R13),R13             GET POINTER TO NUMBER
+       MOV  R13,R4                  MAP IT IN
+       SRL  R4,13
+       MOVB @TSKMAP(R4),@MAPPER+5
+       INC  R4
+       ANDI R4,>0007
+       MOVB @TSKMAP(R4),@MAPPER+6
+       ANDI R13,>1FFF
+       AI   R13,>A000
+*
+       LI   R6,FAC                 MOVE IT TO FAC
+       MOV  *R13+,*R6+
+       MOV  *R13+,*R6+
+       MOV  *R13+,*R6+
+       MOV  *R13,*R6
+       LI   R6,FAC+11              GET LOCATION OF DESTINATION
+       MOVB @LBSPC,*R6+
+       LI   R3,'-'*256
+       ABS  @FAC                   IS NUMBER POSITIVE?
+       JLT  CNS01                  IS NEGATIVE
+       LI   R3,' '*256             SO MASK IS EITHER + OR " "
+       CZC  @LWCNP,R0              IS IT REQUIRED SIGN?
+       JEQ  CNS01                  NO
+       LI   R3,'+'*256             YES, REQUIRED SIGN OF NUMBER
+CNS01  MOVB R3,*R6+
+       MOV  R0,R0                  IS IT FREE FORM FLOATING OUTPUT?
+       JNE  CNSX                   NO, IS FORMATTED
+*
+*    FREE FORMAT FLOATING OUTPUT
+*
+       MOV  @FAC,R4
+       JNE  CNSF1
+       MOVB @LBZER,*R6+
+       MOVB @LWCNS,*R6
+       B    @CNSMLS                FINISH UP
+
+CNSF1  BL   @CNSTEN                GET BASE 10 EXPONENT, IS NO.
+*                                  LESS THAN ONE?
+       JLT  CNSF02                 YES-IT CANNOT BE PRINTED AS AN INT.
+       CI   R13,9                  NO-IS NUMBER TOO BIG TO PRINT AS INT.?
+       JGT  CNSF02                 YES-SO ROUND NO. FOR E-NOTATION OUTPUT
+       MOVB @FAC,R0                NO-CHECK IF THE NUMBER IS AN INT.
+*                                  GET EXP. HIGH BYTE IS STILL ZERO
+       SWPB R0
+       AI   R0,FAC-62
+CNSF01 MOVB *R0+,R1                IS NEXT BYTE OF FRACTION ZERO
+       JNE  CNSF02                 NO-PRINT NUM IN FIXED FORMAT
+       CI   R0,FAC+8               HAVE WE REACHED THE END OF NUMBER
+       JL   CNSF01                 NOT YET
+       CLR  @WSM10                 SET INTEGER TYPE OUTPUT
+       JMP  CNSF05
+
+CNSF02 LI   R1,5                   ASSUME ROUNDING FOR E-NOTATION
+       CI   R13,9                  IS NO. TOO BIG FOR FIXED POINT OUTPUT?
+       JGT  CNSF04                 YES-ROUND FOR E-NOTATION
+       CI   R13,-4                 NO-IS NUMBER TOO SMALL FOR FIXED POINT
+       JLT  CNSF04                 YES ROUND FOR E-NOTATION OUTPUT
+       LI   R1,9                   FORCE R1 TO = 9
+       CI   R13,-2                 NO-WILL NO, BE PRINTED WITH MAX. NO. OF
+*                                  FIXED FORMAT SIGNIFICANT DIGITS?
+       JGT  CNSF04                 YES-ROUND ACCORDINGLY
+       INC  R1                     NO-ROUND NUMBER FOR MAX. SIGNIFICANT
+*                                  DIGITS (R1=10)
+       A    R13,R1                 THAT CAN BE [RINTED FOR THIS NUMBER
+CNSF04 BL   @CNSRND                ROUND NO. ACCORDINGLY ROUNDING CAN
+       SETO @WSM10                 CHANGE THE EXPONENT AND SO THE PRINT FORMAT
+*                                  TO BE USED, SET NON-INTEGER PRINT FLAG
+CNSF05 CI   R13,9                  DECIDE WHICH PRINT FORMAT TO USE
+       JGT  CNSG                   TOO BIG FOR FIXED FORMAT
+       CI   R13,-6                 USE E-NOTATION NUMBER IN RANGE FOR MAX.
+*                                  FIXED POINT DIGITS?
+       JGT  CNSF08                 YES-USE FIXED FORMAT OUTPUT
+       CI   R13,-10                NO-NO. TOO SMALL FOR FIXED FORMAT?
+       JLT  CNSG                   YES-USE E-NOTATION OUTPUT
+*                                  NO- NO. OF SIGNIFICANT DIGITS WILL
+*                                  DETERMINE FIXED FORMAT OUTPUT OR NOT
+       LI   R0,FAC+8               GET POINTER TO LAST BYTE
+       LI   R3,4                   4=15-11 GET NO. OF DIGITS+2-EXPONENT
+       A    R7,R3                  SCALE FACTOR TAKE INTO ACCOUNT A LEADING
+*                                  ZERO IN FAC+1
+CNSF06 DECT R3                     DECREMENT SIG DIGIT COUNT FOR LAST ZERO
+*                                  BYTE
+       DEC  R0                     POINT TO NEXT MOST SIG BYTE OF FAC
+       MOVB *R0,R1                 IS NEXT BYTE ALL ZERO?
+       JEQ  CNSF06                 YES-CONTINUE LOOKING FOR LEAST SIG BYTE
+*                                  NO-FOUND THE LEAST SIG BYTE, THIS LOOP
+*                                  WILL ALWAYS TERMINATE SINCE FAC+1 NEVER 0
+       CLR  R0                     TAKE INTO ACCOUNT IF THE LEAST SIG BYTE IS
+*                                  DIVISIBLE BY TEN
+       SRL  R1,8
+       DIV  @LW10,R0               DIVIDE LSB BY 10
+       MOV  R1,R1                  IS THE REMAINDER ZERO?
+       JNE  CNSF07                 NO-SIGNIFICANT DIGIT COUNT IS CORRECT
+       DEC  R3                     YES-LS BYTE HAS A TRAILING 0
+CNSF07 C    R3,R13                 TOO MANY SIG DIGITS FOR FIXED FORMAT?
+       JGT  CNSG                   YES-USE E-NOTATION
+*
+*    FREE FORMAT FIXED POINT AND INTEGER
+*    FLOATING OUTPUT
+*
+CNSF08 LI   R3,12
+       S    R7,R13
+       JLT  CNSF12
+       LI   R4,3
+       A    R13,R4
+CNSF10 BL   @CNSDIG
+       JMP  CNSF11
+
+CNSF12 SETO R0
+       S    R13,R0
+       BL   @CNSPER
+       CLR  R4
+       JMP  CNSF10
+
+CNSF11 BL   @CNSUTR
+       JMP  CNSG01
+*
+*    FREE FORMAT E-NOTATION FLOATING OUTPUT
+*
+CNSG   LI   R3,8
+       LI   R4,3
+       S    R7,R4
+       BL   @CNSDIG
+       BL   @CNSUTR
+       BL   @CNSEXP
+CNSG01 B    @CNSMLS
+*
+*   FIELD TOO BIG, SO LENGTH IS 0 ERROR
+*
+FLDBIG CLR  R0       LENGTH IS ZERO
+       CLR  R6       POINTER IS ZERO
+       B    @CNSS02
+*
+*    FIXED FORMAT OUTPUT
+*
+CNSX   MOV  R2,R4
+       A    R1,R4
+       CI   R4,14
+       JGT  FLDBIG         FIELD SIZE IS TOO LARGE
+       CZC  @LWCNE,R0
+       JNE  CNSX01
+       CI   R3,'-'*256
+       JEQ  CNSX01
+       CZC  @LWCNS,R0
+       JEQ  CNSX02
+CNSX01 DEC  R1
+       JGT  CNSX02
+       CI   R3,'-'*256
+       JEQ  CNSX02
+       CLR  R1
+CNSX02 MOV  R1,@WSM6
+       JLT  CNSJ04
+       DEC  R2
+       JGT  CNSX03
+       CLR  R2
+CNSX03 MOV  R2,@WSM8
+       MOV  R1,R4
+       A    R2,R4
+       JEQ  CNSJ04
+*
+*    FIXED FORMAT FLOATING OUTPUT
+*
+       BL   @CNSTEN
+       CZC  @LWCNE,R0
+       JNE  CNSK
+*
+*    FIXED FORMAT FLOATING F-FORMAT
+*
+       C    R13,@WSM6
+       JLT  CNSJ00
+CNSJ04 B    @CNSAST
+CNSJ00 MOV  R13,R1
+       A    R2,R1
+       CI   R1,-1
+       JLT  CNSVZR
+       BL   @CNSRND
+       S    R7,R13
+       JLT  CNSJ01
+       SETO R0
+*
+*
+*
+       A    @WSM6,R0
+       S    R13,R0
+       BL   @CNSZER
+       LI   R3,3
+       A    R13,R3
+       MOV  R3,R4
+       A    @WSM8,R3
+       JMP  CNSJ02
+CNSJ01 MOV  @WSM8,R3
+       JEQ  CNSVZR
+       MOV  @WSM6,R0
+       INC  R0
+       BL   @CNSZER
+       MOV  R6,R12
+       SETO R0
+       S    R13,R0
+       BL   @CNSPER
+       A    R13,R3
+       AI   R3,3
+       CLR  R4
+CNSJ02 BL   @CNSDIG
+       MOV  @10(R8),R0
+       JNE  CNSJ03
+       MOVB R0,*R12
+CNSJ03 B    @CNSCHK
+*
+*    FIXED FORMAT OUTPUT OF ZERO
+*
+CNSVZR MOV  @WSM6,R0
+       INC  R0
+       BL   @CNSZER
+       MOV  R6,R12
+       MOV  @10(R8),R0
+       JEQ  CNSV01
+       BL   @CNSPER
+CNSV01 MOV  @6(R8),R0
+       CZC  @LWCNE,R0
+       JEQ  CNSJ03
+       JMP  CNSK01
+*
+*    FIXED FORMAT FLOATING E-FORMAT
+*
+CNSK   MOV  @FAC,R5
+       JNE  CNSK1
+       CLR  R7
+       CLR  R13
+       JMP  CNSVZR
+CNSK1  A    R2,R1
+       DEC  R1
+       BL   @CNSRND
+       MOV  @WSM6,R3
+       S    R3,R13
+       INC  R13
+       S    R7,R3
+       INCT R3
+       MOV  R3,R4
+       A    @WSM8,R3
+       BL   @CNSDIG
+       MOV  @10(R8),R0
+       JNE  CNSK01
+       DEC  R6
+CNSK01 BL   @CNSEXP
+       JMP  CNSJ03
+*
+*
+*
+*
+*
+CNSRND MOV  R11,R10
+       S    R1,R13
+       S    R7,R1
+       SRA  R1,1
+       INCT R1
+       LI   R3,49*256
+       SRA  R13,1
+       JNC  CNSR01
+       LI   R3,4*256
+CNSR01 CI   R1,7
+       JGT  CNSR05
+       LI   R7,FAC
+       CLR  R12
+       MOVB *R7,R13
+       MOVB R13,R4
+       SRL  R13,8
+       A    R1,R7
+       AB   R3,*R7
+       MOVB @FAC,R5
+       SRL  R5,8
+       MOV  R5,@EXP
+       MOVB R5,@SIGN
+       BL   @ROUNUP          USES ONLY R0-R2,R11 FOR RETURN
+       CLR  R1
+       CI   R7,FAC+1
+       JNE  CNSR02
+       CB   @FAC,R4
+       JNE  CNSR03
+CNSR02 CI   R3,4*256
+       JNE  CNSR04
+       CLR  R0
+       SWPB R1
+       MOVB *R7,R1
+       SWPB R1
+       DIV  @LW10,R0
+       MPY  @LW10,R0
+       SWPB R1
+       MOVB R1,*R7
+       SWPB R1
+CNSR03 INC  R7
+CNSR04 MOVB R1,*R7+           ZERO NEXT BYTE OF FAC
+       CI   R7,FAC+8          DONE ZEROING THE RESR OF THE FAC
+       JL   CNSR04            NO - CONTINUE ZEROING THE REST
+CNSR05 MOV  R10,R11           YES RESTORE RETURN ADDRESS
+*
+*    GET BASE TEN EXPONENT OF THE NUMBER IN FAC
+*
+*
+CNSTEN LI   R13,->4000        NEGATIVE BIAS
+       AB   @FAC,R13          GET BASE 1 HUNDRED EXPONENT OF FAC
+       SRA  R13,7             MULTIPLY IT BY TWO AND PUT IT IN LOW BYTE
+       CLR  R7                THE HIGH BIT OF FAC+1 IS ALWAYS OFF
+       CB   @FAC+1,@CBHA      IS FIRST DIGIT OF FAC ONE DECIMAL
+       JLT  CNST01
+       INC  R13               YES - BASE TEN EXPONENT IS EVEN
+       INC  R7                THIS MAKES THE BASE TEN EXPON ODD
+CNST01 MOV  R13,R13           SET STATUS BITS TO REFLECT BASE TEN EXPO
+CNSDRT RT
+*
+*
+*
+*
+CNSDIG MOV  R11,R10
+       CLR  @FAC+8
+       CLR  R1
+       LI   R2,FAC+1
+       BL   @CNSD03
+CNSD01 CLR  R0
+       SWPB R1
+       MOVB *R2+,R1
+       SWPB R1
+       DIV  @LW10,R0
+       BL   @CNSD02
+       MOV  R1,R0
+       LI   R11,CNSD01
+CNSD02 AI   R0,'0'
+       SWPB R0
+       MOVB R0,*R6+
+       SWPB R0
+CNSD03 DEC  R4
+       JNE  CNSD04
+       MOV  R6,R12
+       MOVB @LBPER,*R6+
+*
+*    VSPTR IS AT CPU ADDRESS >6E
+*    MAKE SURE NOT TO DESTROY IT
+*
+CNSD04 CI   R6,FAC+30
+       JHE  CNSD06
+       DEC  R3
+       JGT  CNSDRT
+CNSD06 MOVB R3,*R6
+
+       B    *R10
+*
+*
+*
+CNSEXP MOV  R11,R10
+       MOV  R12,@SAVR12     SAVE R12 TEMPORARILY
+       MOVB @LBE,*R6+
+       LI   R0,'-'*256
+       ABS  R13
+       JLT  CNSE01
+       LI   R0,'+'*256
+CNSE01 MOVB R0,*R6+
+       LI   R0,LW100
+       CI   R13,100
+       JLT  CNSE02
+       MOV  @6(R8),R12
+       JEQ  CNSE04
+       CZC  @LWCNF,R12
+       JNE  CNSE02
+CNSE04 MOVB @LBAST,*R6+
+       MOVB @LBAST,*R6+
+       JMP  CNSE03
+
+CNSE02 BL   @CNSI01
+       MOV  @6(R8),R0
+       JEQ  CNSE05
+       CZC  @LWCNF,R0
+       JNE  CNSE03
+CNSE05 AI   R6,-3
+       MOVB @01(R6),*R6+
+       MOVB @01(R6),*R6+
+CNSE03 MOVB @LW10,*R6
+       MOV  @SAVR12,R12  RESTORE R12
+       B    *R10
+*
+*
+*    CONVERT AN UNSIGNED INTEGER INTO AN ACSII STRING
+*
+*
+CNSINT LI   R0,CNSITT
+CNSI01 CLR  R12
+       DIV  *R0+,R12
+       AI   R12,'0'
+       SWPB R12
+       MOVB R12,*R6+
+       CI   R0,CNSITT+10
+       JL   CNSI01
+       MOVB R12,*R6
+       RT
+*
+*
+*
+CNSPER MOVB @LBPER,*R6+
+       JMP  CNSZER
+CNSZ01 MOVB @LBZER,*R6+
+CNSZER DEC  R0
+       JGT  CNSZ01
+       MOVB R0,*R6
+       RT
+*
+*    SUPPRESS LEADING ZEROS
+*
+CNSMLS LI   R11,CNSSTR        ENTRY TO FINISH UP NUMBER AFTERWARD
+CNSLEA LI   R6,FAC+12         GET POINTER TO SIGN
+       MOVB *R6,R1            GET SIGN
+CNSL01 MOVB @LBSPC,*R6+       PUT A SPACE WHERE THE ZERO OS SIGN WAS
+       CB   *R6,@LBZER        IS THE NEXT BYTE ZERO
+       JEQ  CNSL01            YES SUPPRESS IT
+       MOVB *R6,R0            NO IS THIS THE END OF THE NUMBER
+       JEQ  CNSL02            YES PUT THE ZERO BACK
+       CB   R0,@LBE           NO IS THIS THE START OF THE EXPONENT
+       JEQ  CNSL02            YES PUT THE ZERO BACK IN
+       CB   R0,@LBPER         NO IS THIS THE DECMIAL POINT
+       JNE  CNSL03            NO PUT THE SIGN BACK IN
+       MOV  @6(R8),R0         YES IS FREE FORMAT OUTPUT
+       JNE  CNSL03            NO THEN PUT THE SIGN BACK IN FIX FORMAT
+       MOVB @01(R6),R0        YES ANY DIGITS TO RIGHT OF DECMINAL POINT
+       JEQ  CNSL02            NO END OF NUMBER PUT ZERO BACK IN
+       CB   R0,@LBE           DOES EXPONENT START AFTER DECMINAL POINT
+       JNE  CNSL03            NO PUT THE SIGN BACK
+CNSL02 DEC  R6                YES POINT BACK TO WHERE THE ZERO WAS
+       MOVB @LBZER,*R6        PUT THE ZERO BACK IN THE NUMBER
+CNSL03 DEC  R6                POINT BACK TO WHERE THE SIGN WILL GO
+       MOVB R1,*R6            PUT THE SIGN BACK IN THE BUFFER
+       RT
+*
+*    REMOVE TRAILING ZEROS
+*
+CNSU01 DEC  R6
+CNSUTR CB   @-01(R6),@LBZER
+       JEQ  CNSU01
+       MOV  @WSM10,@WSM10
+       JNE  CNSU02
+       MOV  R12,R6
+*
+*
+*
+CNSU02 MOVB R3,*R6
+       RT
+*
+*    SET UP POINTER TO THE BEGINNING OF A FIXED FORMAT
+*    FIELD AND SEE IF THE FIELD IS LARGE ENOUGH, AND
+*    FINISH UP.
+*
+CNSCHK BL   @CNSLEA
+       MOV  R12,R6
+       S    @8(R8),R6
+       CB   @-01(R6),@LBSPC
+       JNE  CNSAST
+       MOV  @6(R8),R0
+       CZC  @LWCNS,R0
+       JEQ  CNSSTR
+       CB   *R6,@LBSPC
+       JEQ  CNSSTR
+       CB   *R6,R1
+       JEQ  CNSSTR
+*
+*
+*
+CNSAST MOV  R8,R6
+       AI   R6,6
+       MOV  *R6+,R0
+       MOV  *R6+,R1
+       A    *R6+,R1
+       CZC  @LWCNE,R0
+       JEQ  CNSA01
+       C    *R1+,*R1+
+       CZC  @LWCNF,R0
+       JEQ  CNSA01
+       INC  R1
+CNSA01 LI   R6,FAC+12
+       MOV  R6,R0
+CNSA02 MOVB @LBAST,*R0+
+       DEC  R1
+       JGT  CNSA02
+       MOVB R1,*R0
+*
+*    FINISH UP. COMPUTE THE LENGTH OF THE
+*               STRING AND RETURN THE STRING TO THE USER
+*                                  AND THE STRING LENGTH
+*
+CNSSTR MOV  R6,R0
+CNSS01 MOVB *R0+,R1
+       JNE  CNSS01
+       DEC  R0
+       S    R6,R0        LENGTH IN R0, STRING ADDRESS IN R6
+CNSS02 MOV  @SAVR13,R13
+       CLR  *R13              assume no error
+       MOV  R0,@4(R13)        string length
+       JNE  CNSEX1
+       SETO *R13              ERROR
+       JMP  CNSS03            CNSS03
+
+CNSEX1 MOV  @2(R13),R4
+       MOV  R4,R5
+       SRL  R4,13
+       MOVB @TSKMAP(R4),@MAPPER+5
+       INC  R4
+       ANDI  R4,>0007
+       MOVB @TSKMAP(R4),@MAPPER+6
+       ANDI R5,>1FFF
+       AI   R5,>A000
+CNSS04 MOVB *R6+,*R5+
+       DEC  R0
+       JNE  CNSS04
+
+CNSS03 MOV  *R13,R0           GET STATUS
+       STST R15
+       RTWP
+*

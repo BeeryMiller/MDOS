@@ -1,0 +1,13 @@
+*
+* define our data structures for keeping track of memory
+*
+* there are two types of nodes, each of two words
+*
+       DORG 0
+NXTNOD DATA 0            pointer to next node in list, 0 = END OF LIST
+*
+TYPLST EQU  $            pointer to list of pages for this type
+MEMTYP BYTE 0            0=private memory  non-zero is shared type
+MEMPAG BYTE 0            physical page in this memory
+NODLEN EQU  $
+*

@@ -1,0 +1,603 @@
+* FILENAME: VX0405S
+*
+* SetDisPage
+*
+* R1x = Page number
+* R2x = Initialize tables? (0=YES !0=NO)
+*
+* Uses: RSCHAR, reset character table based upon routine >28
+*
+
+X904LS  DATA    X904M0,X904M1,X904M2,X904M3
+        DATA    X904M4,X904M5,X904M6,X904M7
+        DATA    X904M8,X904M9
+X904RS  DATA    0
+*
+X904VC
+X904L1  MOVB    @VIDREG+1,R0
+        ANDI    R0,>BF00
+        SRL     R0,8
+        ORI     R0,>0100
+        BLWP    @VWTR                   * Mode register 1 (SCREEN ON)
+        MOV     @2(R13),@PAGE
+        MOV     @VIDMOD,R1    get vidmode
+        SLA     R1,1          adjust
+        MOV     @X904LS(R1),R2  get the routine's address from above table
+        MOV     R11,R12
+        MOV     @PAGE,R3
+        BL      *R2           perform routine for specific mode
+        MOV     R12,R11
+        MOV     @PAGE,R0
+        LI      R1,256
+        MPY     R0,R1
+        MOV     R2,@PAGEPX
+        MOV     R0,R1
+        SLA     R1,1
+        MOV     @CURX,@CURX+2(R1)
+        MOV     @CURY,@CURY+2(R1)
+        MOV     @CURXMX+2(R1),@CURXMX
+        MOV     @CURYMX+2(R1),@CURYMX
+        MOV     @CURXMN+2(R1),@CURXMN
+        MOV     @CURYMN+2(R1),@CURYMN
+        MOV     @CURX+2(R1),@CURX
+        MOV     @CURY+2(R1),@CURY
+        CLR     @SPRACT
+        MOVB    @VIDREG+1,R0
+        ORI     R0,>4000
+        SRL     R0,8
+        ORI     R0,>0100
+        BLWP    @VWTR                   * Mode register 1 (SCREEN ON)
+        RT
+*
+X904M0  MOV     R11,@X904RS
+        MOV     R3,R0
+        SLA     R0,2
+        ORI     R0,>0200
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,1
+        INC     R0
+        ORI     R0,>0400
+        BLWP    @VWTR
+        MOV     @4(R13),@4(R13)
+        JNE     X904Z0
+*
+        BL      @RSCHAR
+        BL      @TMCLR
+X904Z0 SWPB @SCRIMG+2         move real screen to cpu screen image
+       MOVB @SCRIMG+2,@VDPWA
+       SWPB @SCRIMG+2
+       MOVB @SCRIMG+2,@VDPWA
+       MOV  @SCRIMG,R0
+       SWPB R0
+       MOVB R0,@VDPWA
+       SWPB R0
+       MOVB R0,@VDPWA
+*
+       LI   R1,SCRBUF
+       MOV  R1,@SCROFF
+X904O0 MOV  R1,R2
+       LI   R3,40
+X904P0 MOVB @VDPRD,*R2+
+       DEC  R3
+       JNE  X904P0
+*
+       AI   R1,80
+       C    R1,@SCREND
+       JL   X904O0
+*
+        MOV     @X904RS,R11
+        RT
+*
+X904M1  MOV     R11,@X904RS
+        MOV     R3,R0
+        SLA     R0,3
+        ORI     R0,>0203
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,7
+        AI      R0,>28
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>0307
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0A00
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,2
+        INCT    R0
+        ORI     R0,>0400
+        BLWP    @VWTR
+        MOV     @4(R13),@4(R13)
+        JNE     X904Z1
+*
+        BL      @RSCHAR
+        BL      @TMCLR
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        MOV     @CTABLE,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        CLR     R1
+        LI      R2,270
+X904N1  MOVB    R1,@VDPWD
+        DEC     R2
+        JNE     X904N1
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        MOV     @SCRIMG,R0
+        AI      R0,2080
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        LI      R1,>2000
+        LI      R2,80
+X904O1  MOVB    R1,@VDPWD
+        DEC     R2
+        JNE     X904O1
+X904Z1 SWPB @SCRIMG+2         move real screen to cpu screen image
+       MOVB @SCRIMG+2,@VDPWA
+       SWPB @SCRIMG+2
+       MOVB @SCRIMG+2,@VDPWA
+       MOV  @SCRIMG,R0
+       SWPB R0
+       MOVB R0,@VDPWA
+       SWPB R0
+       MOVB R0,@VDPWA
+*
+       LI   R1,SCRBUF
+       MOV  R1,@SCROFF
+X904P1 MOV  R1,R2
+       LI   R3,80
+X904Q1 MOVB @VDPRD,*R2+
+       DEC  R3
+       JNE  X904Q1
+*
+       AI   R1,80
+       C    R1,@SCREND
+       JL   X904P1
+*
+        MOV     @X904RS,R11
+        RT
+*
+X904M2  MOV     R11,@X904RS
+        MOV     R3,R0
+        SLA     R0,2
+        INC     R0
+        ORI     R0,>0200
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,1
+        INC     R0
+        ORI     R0,>0400
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,5
+        AI      R0,>E
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>0500
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0B00
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,1
+        ORI     R0,>0600
+        BLWP    @VWTR
+        MOV     @X904RS,R11
+        RT
+*
+X904M3  MOV     R11,@X904RS
+        MOV     R3,R0
+        SLA     R0,2
+        INC     R0
+        ORI     R0,>0200
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,6
+        AI      R0,>1E
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>0300
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0A00
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,1
+        INC     R0
+        ORI     R0,>0400
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,5                    *
+        AI      R0,>E
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>0500
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0B00
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,1
+        AI      R0,>1
+        ORI     R0,>0600
+        BLWP    @VWTR
+        MOV     @4(R13),@4(R13)
+        JNE     X904Z3
+*
+        BL      @RSCHAR
+        BL      @TMCLR
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        MOV     @CTABLE,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        MOV     @STDCLR,R2
+        ANDI    R2,>0F00
+        SRL     R2,4
+        MOV     @STDCLR,R1
+        ANDI    R1,>F
+        SOC     R2,R1
+        SWPB    R1
+        LI      R2,32
+X904N3  MOVB    R1,@VDPWD
+        DEC     R2
+        JNE     X904N3
+*
+X904Z3 SWPB @SCRIMG+2         move real screen to cpu screen image
+       MOVB @SCRIMG+2,@VDPWA
+       SWPB @SCRIMG+2
+       MOVB @SCRIMG+2,@VDPWA
+       MOV  @SCRIMG,R0
+       SWPB R0
+       MOVB R0,@VDPWA
+       SWPB R0
+       MOVB R0,@VDPWA
+*
+       LI   R1,SCRBUF
+       MOV  R1,@SCROFF
+X904O3 MOV  R1,R2
+       LI   R3,32
+X904P3 MOVB @VDPRD,*R2+
+       DEC  R3
+       JNE  X904P3
+*
+       AI   R1,80
+       C    R1,@SCREND
+       JL   X904O3
+*
+        MOV     @X904RS,R11
+        RT
+*
+X904M4  MOV     R11,@X904RS
+        MOV     R3,R0
+        SLA     R0,4
+        AI      R0,>E
+        ORI     R0,>0200
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,8
+        AI      R0,>80
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>037F
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0A00
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,3
+        ORI     R0,>0403
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,7
+        AI      R0,>76
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>0500
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0B00
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,3
+        AI      R0,>3
+        ORI     R0,>0600
+        BLWP    @VWTR
+        MOV     @4(R13),@4(R13)
+        JNE     X904Z4
+*
+        BL      @RSCHAR
+        BL      @TMCLR
+*
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        MOV     @SCRIMG,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        CLR     R1
+        LI      R2,768
+X904N4  MOVB    R1,@VDPWD
+        AI      R1,>0100
+        DEC     R2
+        JNE     X904N4
+X904Z4  MOV     @X904RS,R11
+        RT
+*
+X904M5  MOV     R11,@X904RS
+        MOV     R3,R0
+        SLA     R0,4
+        AI      R0,>E
+        ORI     R0,>0200
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,8
+        AI      R0,>80
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>037F
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0A00
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,3
+        ORI     R0,>0403
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,7
+        AI      R0,>7C
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>0507
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0B00
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,3
+        AI      R0,>3
+        ORI     R0,>0600
+        BLWP    @VWTR
+        MOV     @4(R13),@4(R13)
+        JNE     X904Z5
+*
+        BL      @RSCHAR
+        BL      @TMCLR
+*
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        MOV     @SCRIMG,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        CLR     R1
+        LI      R2,768
+X904N5  MOVB    R1,@VDPWD
+        AI      R1,>0100
+        DEC     R2
+        JNE     X904N5
+X904Z5  MOV     @X904RS,R11
+        RT
+*
+X904M6  MOV     R11,@X904RS
+        MOV     R3,R0
+        SLA     R0,5
+        ORI     R0,>021F
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,8
+        AI      R0,>F7
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>0507
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0B00
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,4
+        AI      R0,>E
+        ORI     R0,>0600
+        BLWP    @VWTR
+        MOV     @4(R13),@4(R13)
+        JNE     X904Z6
+*
+        BL      @RSCHAR
+        BL      @GRCLR
+X904Z6  MOV     @X904RS,R11
+        RT
+*
+X904M7  MOV     R11,@X904RS
+        MOV     R3,R0
+        SLA     R0,5
+        ORI     R0,>021F
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,8
+        AI      R0,>F7
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>0507
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0B00
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,4
+        AI      R0,>E
+        ORI     R0,>0600
+        BLWP    @VWTR
+        MOV     @4(R13),@4(R13)
+        JNE     X904Z7
+*
+        BL      @RSCHAR
+        BL      @GRCLR
+X904Z7  MOV     @X904RS,R11
+        RT
+*
+X904M8  MOV     R11,@X904RS
+        MOV     R3,R0
+        SLA     R0,5
+        ORI     R0,>021F
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,9
+        AI      R0,>F7
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>0507
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0B01
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,5
+        AI      R0,>1E
+        ORI     R0,>0600
+        BLWP    @VWTR
+        MOV     @4(R13),@4(R13)
+        JNE     X904Z8
+*
+        BL      @RSCHAR
+        BL      @GRCLR
+X904Z8  MOV     @X904RS,R11
+        RT
+*
+X904M9  MOV     R11,@X904RS
+        MOV     R3,R0
+        SLA     R0,5
+        ORI     R0,>021F
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,9
+        AI      R0,>F7
+        MOVB    R0,R4
+        ANDI    R0,>00FF
+        ORI     R0,>0507
+        BLWP    @VWTR
+        MOV     R4,R0
+        SRL     R0,8
+        ORI     R0,>0B01
+        BLWP    @VWTR
+        MOV     R3,R0
+        SLA     R0,5
+        AI      R0,>1E
+        ORI     R0,>0600
+        BLWP    @VWTR
+        MOV     @4(R13),@4(R13)
+        JNE     X904Z9
+*
+        BL      @RSCHAR
+        BL      @GRCLR
+X904Z9  MOV     @X904RS,R11
+        RT
+
+* Reset character set based upon Video Mode
+
+RSCHAR  SETO    R1       force reset of characters
+        SETO    R2       force reset of sprite characters
+        LWPI    LOWWP2
+        MOV     @CURWS,R13
+        BL      @X928L1       go reset char tables
+        DATA    >009D
+        MOV     @VIDMOD,R1
+        CI      R1,2     text mode?
+        JLE     RSCHR2   yes, leave sprite data alone
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        MOV     @SPRATT,R0
+        LI      R2,32
+        CLR     R3
+RSCHR1  SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        LI      R1,>D400           *
+        MOVB    R1,@VDPWD
+        CLR     @SPRMTB(R3)
+        CLR     @SPRMTB+2(R3)
+        AI      R3,4
+        AI      R0,4
+        DEC     R2
+        JNE     RSCHR1
+RSCHR2  RT
+
+TMCLR   CLR     R1
+        CLR     R2
+        CLR     R3
+        MOV     @CHROWS,R4
+        MOV     @CHCOLS,R5
+        DEC     R4
+        DEC     R5
+        LI      R6,>20
+        MOV     @STDCLR,R7
+        LWPI    LOWWP2
+        MOV     @CURWS,R13
+        BL      @X906L1
+        DATA    >009D
+        RT
+
+GRCLR   CLR     R1
+        CLR     R2
+        CLR     R3
+        MOV     @GXROWS,R4
+        MOV     @GXCOLS,R5
+        DEC     R4
+        DEC     R5
+        MOV     @STDCLR,R6
+        SLA     R6,8
+        LWPI    LOWWP2
+        MOV     @CURWS,R13
+        BL      @X916L1
+        DATA    >009D
+        RT
+
+* GetDisPage
+*
+* -----
+* R0x = Returned page number
+*
+X905VC
+X905L1  MOV     @PAGE,*R13
+        RT

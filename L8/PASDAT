@@ -1,0 +1,306 @@
+*****  FILE PLAY\PASDAT  *****
+********************************************************************************
+
+*  ROUTINE TO PASS DATA BETWEEN DSR AND CALLING PROGRAM
+*  MUST HAVE ITS OWN WS THAT IS INITIALIZED EACH TIME DSR IS CALLED
+*
+*  REGISTER USAGE IS AS FOLLOWS
+*
+*   R2:  0=DSR -> USER ; 0<> USER -> DSR
+*   R3:  0=DATA IN CPU MEMORY; 0<>VDP MEMORY (ONLY CHECKS MSByte)
+*   R4/R5: ADDRESS OF DATA IN PROGRAM SPACE  (21 BIT ADDRESS)
+*   R7:  LENGTH OF DATA
+*   R8:  ADDRESS OF DATA IN DSR SPACE
+*
+*  REGISTERS WILL BE CHANGED TO AN UNKNOWN STATE UPON RETURN
+*
+*  ROUTINE WILL USE PAGE 6 (>C000) FOR DATA TRANSFER BUT UPON RETURN
+*   ORIGINAL PAGE 6 WILL BE REPLACED
+*
+*  jph 01/31/87
+*  jpc 01/09/89               redone for better hard drive speed!
+*                             (precalc page boundaries into partial counts)
+*  hcp 02/06/93               fixed bug in PASNXT re use of R1
+*  tt  01/19/2021        Test VDP speed enhancement
+********************************************************************************
+
+*
+PASDAT DATA PASWS,PASD0       ENTRY VECTOR
+*
+PASD0  MOVB @MAP96+6,R12      SAVE THE PAGE WE MAY USE
+*
+       LI   R9,>F000
+       LI   R10,PASSAV
+       LI   R11,24
+PASD1  MOV  *R9+,*R10+
+       DECT R11
+       JNE  PASD1
+*
+       MOVB R3,R3
+       JEQ  PASD01            cpu transfer
+*
+* vdp, hope they keep track of which mode they call from!
+*
+       MOV  R4,R0             convert 21 bit to page and 16k offset
+       SLA  R0,2
+       MOV  R5,R1
+       SRL  R1,14
+       A    R1,R0
+       ANDI R0,>000F
+       ORI  R0,>8E00
+       MOVB @PASWS+1,@VDP1
+       SWPB R10               wait
+       MOVB R0,@VDP1          vdp page is now set
+       MOV  R5,R0
+       ANDI R0,>3FFF
+       MOV  R2,R2             is a read into dsr space ?
+       JNE  PASD00            yes.
+       ORI  R0,>4000          writing to VDP
+*
+PASD00 MOVB @PASWS+1,@VDP1
+       SWPB R10               wait
+       MOVB R0,@VDP1          VDP address now set...
+       JMP  PASD02            go to the transfer code itself
+*
+* cpu, this is easy
+*
+PASD01 MOV  R5,R0
+       SRL  R0,13
+       MOV  R4,R1
+       SLA  R1,3
+       A    R0,R1             r1 now has 8k page number...
+*
+       C    R1,@PAGCNT
+       JL   PASD03
+       SETO R1                page out of their memory space...dummy page
+*
+PASD03 MOVB @PAGLST(R1),@MAP96+6             enable correct page
+       ANDI R5,>1FFF                         offset into >C000
+       AI   R5,>C000
+*
+* look at transfer status
+*
+PASD02 MOV  R5,@>F00A
+       MOV  R1,@>F00C          PAGE # FOR PASNXT
+       MOV  R7,@>F00E
+       MOV  R8,@>F010
+       LI   R9,PASCOD
+       LI   R10,>F000
+       LI   R11,8
+PASD04 MOV  *R9+,*R10+
+       DECT R11
+       JNE  PASD04
+*
+       MOV  R2,R2             test transfer direction
+       JEQ  PASD10            move from DSR to VDP
+*
+* program -> dsr
+*
+PASD20 MOV  R7,R7             all done?
+       JEQ  PASEX2            yes!
+       MOVB R3,R3             VDP transfer?
+       JEQ  PASD30            no, cpu
+*
+PASD21 MOVB @VDP0,*R8+        move a byte from VDP
+       DEC  R7
+       JNE  PASD21
+PASEX2 B    @PASEX            done with move from VDP
+*
+PASD30 LWPI >F000
+       MOV  R8,R9
+       XOR  R5,R9
+       SRL  R9,1
+       JNC  PASD40            we can use WORD moves...
+*
+       MOV  @PASOP1,R0        movb *r5+,*r8+
+       MOV  R7,R9
+       A    R5,R9             calc ending address
+       CI   R9,>E000
+       JH   PASD34
+       CLR  R9                no residue on this page
+       JMP  PASD36
+*
+PASD34 AI   R9,->E000         calc true residue
+       S    R9,R7
+PASD36 BL   R0
+       MOV  R9,R7
+       JEQ  PASEXT            no residue to move
+       BL   @PASNXT           bump to next page
+       JMP  PASD36
+*
+PASD40 MOV  R8,R9
+       SRL  R9,1
+       JNC  PASD42            no initial byte to move
+*
+       MOVB *R5+,*R8+
+       DEC  R7
+       JEQ  PASEXT            all bytes moved
+*
+       CI   R5,>E000
+       JL   PASD42
+       BL   @PASNXT
+PASD42 MOV  @PASOP2,R0        mov *r5+,*r8+
+       MOV  R5,R9
+       A    R7,R9
+       CI   R9,>E000
+       JH   PASD44
+*
+       CLR  R9                no residue left
+*
+PASD43 SRL  R7,1
+       JNC  PASD46
+       JEQ  PASD48            transfer the last byte.
+       INC  R9                one byte residue after transfer
+       JMP  PASD46
+*
+PASD44 AI   R9,->E000         calc residue on next page
+       S    R9,R7
+       SRL  R7,1              turn byte count into word count (always aligned)
+PASD46 BL   R0
+*
+       MOV  R9,R7             new count
+       JEQ  PASEXT
+*
+       CI   R5,>E000
+       JL   PASD43            last byte is on this page
+*
+       BL   @PASNXT
+       JMP  PASD43
+*
+PASD48 MOVB *R5+,*R8+
+       JMP  PASEXT
+*
+* dsr - > program
+*
+PASD10 MOV  R7,R7             all done?
+       JEQ  PASEX             yes!
+       MOVB R3,R3             VDP transfer?
+       JEQ  PASD50            no, cpu
+*
+; 1.19.2021 - works but not much gain
+; Experimental; read from dsr to VDP
+;      Set VDP0 as register
+;      move up to 8 bytes/loop
+;
+;;     LI   R9,PASVDW    push to PAD
+;;     LI   R10,>F000
+;;     MOV  *R9+,*R10+   0
+;;     MOV  *R9+,*R10+   1
+;;     MOV  *R9+,*R10+   2
+;;     MOV  *R9+,*R10+   3
+;;     MOV  *R9+,*R10+   4
+;;     MOV  *R9+,*R10+   5
+;;     BL   @>F000       and execute
+;;     JMP  PASEX
+
+PASD11 MOVB *R8+,@VDP0        move a byte to VDP
+       DEC  R7
+       JNE  PASD11
+       JMP  PASEX             done with move to VDP
+;---------------------------------------
+*
+PASD50 LWPI >F000
+       MOV  R8,R9
+       XOR  R5,R9
+       SRL  R9,1
+       JNC  PASD60            we can use WORD moves...
+*
+       MOV  @PASOP3,R0
+       MOV  R7,R9
+       A    R5,R9             calc ending address
+       CI   R9,>E000
+       JH   PASD54
+       CLR  R9                no residue on this page
+       JMP  PASD56
+*
+PASD54 AI   R9,->E000         calc true residue
+       S    R9,R7
+PASD56 BL   R0
+       MOV  R9,R7
+       JEQ  PASEXT            no residue to move
+       BL   @PASNXT           bump to next page
+       JMP  PASD56
+*
+PASD60 MOV  R8,R9
+       SRL  R9,1
+       JNC  PASD62            no initial byte to move
+*
+       MOVB *R8+,*R5+
+       DEC  R7
+       JEQ  PASEXT            all bytes moved
+*
+       CI   R5,>E000
+       JL   PASD62
+       BL   @PASNXT
+PASD62 MOV  @PASOP4,R0
+       MOV  R5,R9
+       A    R7,R9
+       CI   R9,>E000
+       JH   PASD64
+*
+       CLR  R9                no residue left
+*
+PASD63 SRL  R7,1
+       JNC  PASD66
+       JEQ  PASD68            transfer the last byte.
+       INC  R9                one byte residue after transfer
+       JMP  PASD66
+*
+PASD64 AI   R9,->E000         calc residue on next page
+       S    R9,R7
+       SRL  R7,1              turn byte count into word count (always aligned)
+PASD66 BL   R0
+*
+       MOV  R9,R7             new count
+       JEQ  PASEXT
+*
+       CI   R5,>E000
+       JL   PASD63            last byte is on this page
+*
+       BL   @PASNXT
+       JMP  PASD63
+*
+PASD68 MOVB *R8+,*R5+
+*
+PASEXT MOV  R5,@PASWS+10
+       MOV  R7,@PASWS+14
+       MOV  R8,@PASWS+16
+*
+PASEX  LWPI PASWS
+       MOVB R12,@MAP96+6      restore original page #6
+       LI   R9,>F000
+       LI   R10,PASSAV
+       LI   R11,24
+PASEX9 MOV  *R10+,*R9+
+       DECT R11
+       JNE  PASEX9
+       RTWP                   return
+*
+PASNXT INC  R6
+       JNE  PASNX2
+       SETO R6
+*
+PASNX2 MOVB @PAGLST(R6),@MAP96+6
+       LI   R5,>C000
+       CLR  R9                no more residue (we can't be moving 8k++)
+       RT
+*
+PASCOD MOVB *R0+,*R0+
+       DEC  R7
+       JNE  PASCOD
+       RT
+
+;1.19.2021, part of experimental routine
+;PASVDW LI   R12,VDP0      4   ;12
+;PASVD1 MOVB *R8+,*R12    2    ;xx bytes total
+;      DEC  R7           2    ;1-20-2021, experimental
+;      JNE  PASVD1       2
+;      RT                2
+
+*
+PASOP1 MOVB *R5+,*R8+
+PASOP2 MOV  *R5+,*R8+
+PASOP3 MOVB *R8+,*R5+
+PASOP4 MOV  *R8+,*R5+
+*
+

@@ -1,0 +1,235 @@
+*
+       DEF  FORK
+*
+       REF  FRECNT,NODFRE,COMNOD
+       REF  HEAD#T,TAIL#T,TASK#C
+*
+       COPY "\MDOS\HEAD\PAGENUMS"
+*
+* XOP @NINE,0                 R0=10
+*
+* return to parent:           r0=-1 : error
+*                             r0=header page of child, otherwise
+*                             pc=instruction after xop call
+*
+* return to child:            r0=-1 : @>00E9 = PARENT PAGE #
+*                             pc=2nd instruction after xop call
+*
+FORK   SETO *R13
+       LI   R1,1
+       MOV  @MEMLST,R2
+FORK00 CB   @2(R2),@NULLP     is it an empty node?
+       JEQ  FORK01
+       MOVB @2(R2),R0
+       JNE  FORK01            it is shared, don't bump count
+*
+       INC  R1                another page needs to be allocated
+*
+FORK01 MOV  *R2,R2            go to next node in list
+       JNE  FORK00
+*
+       C    R1,@FRECNT        are there enough free pages in system?
+       JLE  FORK02
+       B    @FORK99           not enough free pages!
+*
+* now to step through parent memory list again, and duplicate the
+* pages, and create a page list for the child
+*
+FORK02 LI   R0,10
+       LI   R1,>FF00          get 1st available page
+       SETO R2                get a fast page, if available
+       XOP  @SEVEN,0          get a header page for child
+       MOV  R1,R10            save header page pointer
+       CLR  *R1               for the moment, this is the last in list
+*
+       MOV  @MEMLST,R9
+       JMP  FORK18            jump to copy all 8k of data
+*
+FORK10 MOV  *R9,R9
+       JEQ  FORK20            all done, end of list
+*
+       MOV  R1,R8             save pointer to last node
+*
+       MOVB @2(R9),R0
+       JNE  FORK12            this page is shared or blank, get an empty node
+*
+       LI   R0,10
+       LI   R1,>FF00
+       SETO R2
+       XOP  @SEVEN,0          get a free page
+*
+       MOV  R1,*R8            add to end of list
+       CLR  *R1
+       JMP  FORK18            copy data to the new page
+*
+FORK12 MOV  @NODFRE,R1        get a pointer to a free node
+       JNE  FORK13
+       B    @FORK80           error; no more nodes, do a nice error recovery
+*
+FORK13 MOV  *R1,@NODFRE
+       MOV  R1,*R8            add to end of list
+       CLR  *R1
+       MOV  @2(R9),@2(R1)     copy shared/blank info to new node
+       JMP  FORK10            go to next node
+*
+FORK18 MOVB @3(R1),@>F115
+       MOVB @3(R9),@>F116
+       LI   R3,>A000
+       LI   R4,>2000
+FORK19 MOV  @>2000(R3),*R3+
+       DECT R4
+       JNE  FORK19            more bytes to copy
+       JMP  FORK10            advance to next node
+*
+* copied all pages, now to set up child's header page
+* fix memlst, pc, savpad, calling regs
+*           tsktbl,slice,pname,tskmap
+*
+FORK20 MOVB @>F114,@PARENT
+       MOVB @3(R10),@>F114    map in the child
+       MOV  @MEMLST,R9        save parent's memlst pointer
+       MOV  R10,@MEMLST       fix memlst
+*
+       MOV  R13,@UWP          fix WP
+       MOV  @SYSREG+2,@UPC
+       INCT @UPC              fix pc
+       MOV  R15,@UST
+       SOC  @SYSREG+4,R15     fix SR
+*
+       LI   R1,SAVPAD
+       LI   R2,>F000
+       LI   R3,>0080
+*
+FORK22 MOV  *R2+,*R1+         fix savpad
+       DECT R3
+       JNE  FORK22
+*
+       MOVB @>F114,@TSKTBL    fix tsktbl
+*
+       MOV  @TASK#C,R1        fix slice
+       MOVB @2(R1),@SLICE
+*
+       INC  @PNAME+6          fix pname
+*
+* fix tskmap
+*      for each page in the parent's tskmap, we have to find
+*      the virtual page #, then get the real page # of the same
+*      virtual page belonging to the parent
+*
+       LI   R8,TSKMAP
+*
+FORK30 MOVB *R8,R0            physical page #
+       MOV  R9,R7             search parent's memlst
+       CLR  R6                first node
+*
+FORK31 CB   @3(R7),R0         same page?
+       JEQ  FORK34            yes, advance to same position in child list
+*
+       INC  R6
+       MOV  *R7,R7            go to next node in list
+       JNE  FORK31            if not at end of list
+*
+       INC  R8
+       JMP  FORK38            go to next entry in tskmap, skip this one
+*
+FORK34 MOV  @MEMLST,R7
+FORK35 DEC  R6
+       JNC  FORK36            jump once we get to correct node
+*
+       MOV  *R7,R7
+       JNE  FORK35
+*
+       BLWP @0                reboot on impossible error
+*
+FORK36 MOVB @3(R7),*R8+
+*
+FORK38 CI   R8,TSKMAP+8       skip the debugger page for now
+       JL   FORK30
+*
+* inc refcnts of shared types --- this sucks
+* R9 = cursor through task's memory list
+* R8 = cursor through COMNOD headers
+* r7 = pointer to REFCNT node
+* r6 = pointer to comnod with type #
+* r5 = last shared type used
+* r4 = type from current node
+*
+       MOV  @MEMLST,R9
+       CLR  R5
+*
+FORK40 MOVB @2(R9),R4
+       JEQ  FORK49            not a shared node
+*
+       CI   R4,>FF00
+       JHE  FORK49            not a shared node
+*
+       MOV  R4,R5
+*
+       LI   R8,COMNOD
+*
+FORK42 MOV  *R8,R8
+       JEQ  FORK49            shared type not defined (impossible)
+*
+       MOV  @2(R8),R7         refcnt node
+       MOV  *R7,R6            page node
+       CB   R5,@2(R6)
+       JNE  FORK42            not same shared type
+*
+       INC  @2(R7)            inc refcnt
+*
+FORK44 MOV  *R9,R9            skip remaining contiguous pages of this type
+       JEQ  FORK50            no more nodes to search
+       MOV  *R6,R6            get next page from shared list
+       JNE  FORK44            if it exists, skip it
+*
+FORK49 MOV  *R9,R9
+       JNE  FORK40            more nodes to search
+*
+* add child to task table
+*
+FORK50 MOV  @TAIL#T,R1
+       MOV  @TASK#C,R2
+       MOV  *R2,*R1
+       MOV  R1,*R2
+       MOVB @2(R2),@2(R1)     copy timeslice info
+       MOVB @>F114,@3(R1)     install child's page #
+       AI   R1,4
+       MOV  R1,@TAIL#T
+*
+       CLR  @COTASK
+       MOVB @PARENT,@COTASK+1
+*
+* continue execution of parent task
+*
+       CLR  *R13
+       MOVB @>F114,@1(R13)    return child page # to parent
+       MOVB @PARENT,@>F114
+       JMP  FORK99
+*
+* error handling for no free nodes---release all child pages, return error
+*      to calling process
+*
+FORK80 MOV  @3(R10),R1
+       SRL  R1,8
+       LI   R0,11             free page, #
+       XOP  @SEVEN,0
+*
+       MOV  R10,R1
+       MOV  *R10,R10
+       LI   R0,12             free node, ptr
+       XOP  @SEVEN,0
+*
+       MOV  R10,R10
+       JNE  FORK80
+*
+FORK99 RT
+*
+SEVEN  DATA 7
+NULLP  BYTE P_NULL
+PARENT BYTE 0
+*
+       EVEN
+       COPY "\MDOS\HEAD\OSTASK"
+*
+       END
+*

@@ -1,0 +1,146 @@
+* NOW FOR ASSEMBLY LIBRARY EQUATES
+XMLLNK EQU  >2100
+KSCAN  EQU  >2104
+VSBW   EQU  >2108
+VMBW   EQU  >210C
+VSBR   EQU  >2110
+VMBR   EQU  >2114
+VWTR   EQU  >2118
+LOADER EQU  >2120
+NAMLNK EQU  >2002
+TGOBLD EQU  >2004
+
+CFILEZ SZCB @CHAT,@CHAT
+CFILEX LI   R12,>1EF4
+       SBO  0                 make sure we're in 9640 mode
+       B    @ILRET            return
+
+********************************************************************************
+*
+* BASIC SUPPORT FOR ASSEMBLY LANGUAGE
+*
+* THIS ROUTINE MOVES ASSM LIBRARY ROUTINES TO RAM
+* AND PASSED ARGUMENTS TO IOBUF
+*
+*
+MVASNM MOV  R11,R9
+       MOVB @SAVMAP+1,@MAP96+6
+       C    @>C000,@HA55A
+       JEQ  MVAS1
+       BL   @MOVASM
+MVAS1  MOVB @SAVMAP+1,@MAP96+1
+       LI   R12,>1EF4
+       SBZ  0                 now we're in /4a mode !
+*
+       A    @CHRPTR,R0
+       LI   R2,IOBLEN    -->PC, 10/11
+       LI   R1,IOBUF
+       BLWP @VMBR
+       CB   *R1+,@HC7    TEST FOR STRING
+       JNE  CFILEX
+       MOVB *R1,R3       TEST FOR LENGTH OF ZERO
+       JEQ  CFILEX
+       B    *R9
+       PAGE
+*
+*****************************************************************
+*
+* CALL ILR , FOR BASIC
+*
+ILR    BLWP @SETMOD
+       BL   @MOVASM      INIT LOAD AND RUN
+       JMP  CFILEZ       DONE
+*
+*****************************************************************
+*
+* CALL LLR("ROUTINE NAME")
+*
+* MAKE SURE LIBRARY HAS BEEN LOADED INTO RAM AND
+* THAT THE NAME IS IN IOBUF
+*
+LLR    BLWP @SETMOD
+       LI   R0,5
+       BL   @MVASNM
+*
+       LI   R2,>834A     CLEAR THE FAC
+       MOV  R2,R5
+LLR1   MOVB @BLANK,*R5+
+       CI   R5,>834A+8
+       JNE  LLR1
+*
+       INC  R1           AFTER MVASNM R1 POINTS TO LENGTH
+       SRL  R3,8
+       CI   R3,6         TEST IF NAME LESS THAN 6
+       JH   CFILEX
+LLR2   MOVB *R1+,*R2+    NOW MOVE PATHNAME TO FAC
+       DEC  R3
+       JNE  LLR2
+*
+       MOV  @NAMLNK,R9
+       JMP  LLR3
+       PAGE
+*
+*******************************************************************
+*
+*  CALL LR("PATHNAME")
+*
+* THIS ROUTINE LOADS AND POSSIBLY EXECUTES ASSEMBLY LANGUAGE PROGRAMS
+*
+*
+LR     BLWP @SETMOD
+       LI   R0,4
+       BL   @MVASNM
+*
+       LI   R1,PABILR    MOVE THE PAB, FOR LOADER
+       LI   R0,>1000
+       LI   R2,9
+*
+       BLWP @VMBW
+       A    R2,R0        MAKE R0 POINTER TO NAME LENGTH
+       MOV  R0,@>8356
+*
+       LI   R1,IOBUF+1   MOVE PATHNAME AND LENGTH TO PAB
+       MOVB *R1,R2
+       SRL  R2,8
+       INC  R2           COMPENSATE FOR 'LEN' + LEN
+       BLWP @VMBW
+*
+       MOV  @TGOBLD,R9   GO TO LOADER
+*
+LLR3   MOV  @SAVJPH,@11*2+>83E0  GET RETURN TO OS
+       MOV  R9,@9*2+>83E0
+       MOV  @SAVMAP+0,@MAP4A+0               restore the map
+       MOV  @SAVMAP+2,@MAP4A+2
+       MOV  @SAVMAP+4,@MAP4A+4
+       MOV  @SAVMAP+6,@MAP4A+6
+       MOV  @SAVGRM,@GRMWA
+       MOV  @SAVGRM+1,@GRMWA
+       LWPI >83E0
+       INCT R11
+       CLR  R0           0 FOR 0 OF CRU BITS
+       B    *R9
+*
+PABILR DATA >0004
+       DATA >1100,>0000,>0000
+       BYTE >60
+HC7    BYTE >C7
+HA55A  DATA >A55A
+       PAGE
+*
+************************************************************
+*
+* ROUTINE TO LOAD RAM FORM ROM
+* FORMAT IS LENGTH, DETINATION FOLLOWED BY CODE
+*
+*
+MOVASM LI   R1,ASMCOD
+       MOVB @SAVMAP+1,@MAP96+6
+MASM2  MOV  *R1+,R2      GET LENGTH IF 0 THEN COMPLETE
+       JEQ  MASM3        BRANCH IF COMPLETE
+       MOV  *R1+,R6      GET DESTINATION
+       AI   R6,>A000          lives in C000 page
+MASM1  MOV  *R1+,*R6+
+       DECT R2           ONE LESS WORD TO WRITE
+       JNE  MASM1
+       JMP  MASM2
+MASM3  RT

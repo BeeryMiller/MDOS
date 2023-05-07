@@ -1,0 +1,132 @@
+       PAGE
+********************************************************************************
+* GETSEC *
+**********
+*
+*      USING BITMAP, CLAIM A FREE SECTOR
+*
+*      2/1/1986pc
+*
+*      INPUT PARAMETERS:
+*        R0 : DESIRED SECTOR NUMBER
+*
+*      REGISTERS USED:
+*        R5 : START SECTOR FOR SEARCH
+*        R6 : CURRENT SECTOR FOR SEARCHEING LOOKED FOR
+*        R7 : INDEX REG TO BYTES IN VIB
+*        R8 : BIT MASK FOR CURRENT BYTE IN VIB
+*        R9 : TEMP STORAGE FOR 'CZC' INSTRUCTION
+*        R10: RETURN TO CALLER
+*
+*      USES:
+*        VIBID - DRIVE NUMBER OF VIB IN RAM. 0=NO VIB
+*
+*       RETURNS
+*        R0 STARTING SECTOR POSITION
+*        R6 NUMBER OF SECTORS ALLOCATED
+;
+;3.31.2021  Fixed boundary condition where in rare cases, the routine would
+;           overflow beyond the bitmap into the next buffer (see LAYOUTS)
+;           The DELETE:fresec routine was similarly impacted.
+*
+********************************************************************************
+*
+D1600  DATA 1600
+D3200  DATA 3200
+D6400  DATA 6400
+*
+* FIRST CHECK IF CORRECT VIB, TAKEN CARE IN GETVIB
+*
+GETSEC MOV  R11,R10      SAVE RETURN
+       BL   @GETVIB      GET CORRECT VIB IN VIB BUF
+       DATA BADOP        HARDWARE ERROR
+*
+       LI   R11,VIBBUF+TOTAUS
+*
+; If entire bitmap is used (1600/3200/6400) and the last bit is free,
+;      the cluster allocation will continue. This special case forces
+;      the routine to reset and pick a new cluster w/noncontiguous sector
+;
+       SETO R5           3.30.21 Special case
+       C    R0,*R11      Is caller asking for sector==totalAUs
+       JEQ  FORCEWRAP    yes, force an immediate wrap to sector 0
+
+GS$L1  MOV  R0,R5        START SECTOR
+       MOV  R0,R6        CURRENT SECTOR
+*
+       C    @D1600,*R11
+       JHE  GS$J1A
+       SRL  R0,1
+       C    @D3200,*R11
+       JHE  GS$J1A
+       SRL  R0,1
+       C    @D6400,*R11
+       JHE  GS$J1A
+       SRL  R0,1
+*
+GS$J1A MOV  R0,R7
+       SRL  R7,3         BYTE OFFSET IN BITMAP
+*
+       LI   R8,>0100     MAKE BIT MASK, COUNT IS IN R0
+*
+H0100  EQU  $-2
+H01    EQU  H0100
+CLSCOD EQU  H0100
+PFILE  EQU  H0100
+*
+       ANDI R0,>0007
+       JEQ  GS$L2
+       SLA  R8,0
+*
+GS$L2  MOVB @VIBBUF+BITMAP(R7),R9
+       CZC  R8,R9
+       JEQ  GS$J2             JUMP IF SECTOR IS NOT USED
+*
+GSJGS  SLA  R8,1              UPDATE MASK
+       JNE  GS$J1
+       LI   R8,>0100
+       INC  R7
+*
+GS$J1  INC  R6                POINTER FOR NEXT SECTOR
+*
+       C    @D1600,*R11
+       JHE  GS$J2A
+       INC  R6
+       C    @D3200,*R11
+       JHE  GS$J2A
+       INCT R6
+       C    @D6400,*R11
+       JHE  GS$J2A
+       INCT R6
+       INCT R6
+*
+GS$J2A C    R6,*R11           PAST END OF DISK?
+       JL   GS$L2
+*
+FORCEWRAP
+       CLR  R0
+       MOV  R5,R5             TEST IF WE STARTED AT SECTOR ZERO, TRUE=DISK FULL
+       JNE  GS$L1             NO, START BACK AT SECTOR 0
+*
+       MOV  *R10,R11          ERROR RETURN!
+       LI   R10,>8000         OVERFLOW CODE (4)
+       RT
+*
+GS$J2  AB   R8,@VIBBUF+BITMAP(R7)            CLAIM THE SECTOR!
+       MOVB R8,@VIBCHG                     WE CHANGED THE VIB
+       MOV  R6,R0                            SECTOR # FOUND
+*
+       LI   R6,1
+       C    @D1600,*R11
+       JHE  GS$J3
+       SLA  R6,1              ADJUST FOR GIANT DISK
+       C    @D3200,*R11
+       JHE  GS$J3
+       SLA  R6,1
+       C    @D6400,*R11
+       JHE  GS$J3
+       SLA  R6,1
+*
+GS$J3  INCT R10               SKIP ERROR TRAP
+       B    *R10
+*

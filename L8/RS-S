@@ -1,0 +1,32 @@
+       UNL
+* RS-S
+* copy file for the RS232 card shit
+
+       DEF  DSREN2
+
+       REF  SYSRT1
+       REF  PASDAT
+       DEF  PIOTYP
+       DEF  PIOTY2
+       DEF  BUFEMP
+       REF  ABTKEY            routine out of >6000 page to check abort key
+       DEF  STATAB            pointer into the port status table
+       DEF  RSMAP             low-level redirection
+       DEF  SPPAG             page list for spooler
+       DEF  SPPNT             pointers into spooler buffer
+*
+; 2.10.2021 Prefixed all filenames with RS for this section
+       COPY "\MDOS\HEAD\PAGENUMS"
+       COPY "\MDOS\L8\LAYOUT"
+       AORG RSCODE
+       COPY "\MDOS\L8\RSA2-P"
+       COPY "\MDOS\L8\RSB2-P"
+       COPY "\MDOS\L8\RSC2-P"
+       COPY "\MDOS\L8\RSD2-P"
+       COPY "\MDOS\L8\RSBUFFERS"
+       COPY "\MDOS\L8\RSINTS"
+*
+DSREN2 EQU  $
+*
+       END
+*

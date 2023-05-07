@@ -1,0 +1,88 @@
+* 3.10.2021 SET ALL 256 CHARACTER DEFINITIONS ON POWERUP
+
+
+
+* FILENAME: XOPS-S
+*
+       UNL
+*
+*      REF  X930VC,X931VC,X932VC             mouse stuff
+*      REF  X933VC,X934VC                    sound stuff
+*      DEF  SOUNDC,TRUEX,TRUEY               mouse & sound stuff
+*
+VDPWA  EQU  >F102
+VDPWD  EQU  >F100
+VDPRD  EQU  >F100
+VDPSTA EQU  >F102
+VDPPT2 EQU  >F104
+VDPPT3 EQU  >F106
+KEYCOD EQU  >F118
+*
+       COPY "\MDOS\HEAD\OSTASK"
+       COPY "\MDOS\HEAD\LOWMAP"
+*
+       RORG 0            2000
+       JMP  PWRUP        2002
+       B    @KINT        2004
+       B    @VINT        2008
+       B    @XOPA        200C this is really xop 5 (keyboard)
+       B    @XOP9        2010 this is really xop 6 (video)
+*
+       DATA KEYSDN       2012 this must stay at addr : >2012 !!
+       DATA KEYINT       2014 this must stay at addr : >2014
+*
+       DATA EXTVEC       2016
+*
+* do not change... will throw everything off!  Use 201A/201E to determin
+*      location to load character set
+*
+
+* \CLI\NEWCMDS; L6\VX282AS references >2022
+*      IBMGRF ON/OFF command modifies location >2022.
+*           127*8 = normal character set
+*           255*8 = all character mode, IBM Graphics
+
+PWRUP  LI   R0,CHREST    2018/201A     make a good character set
+       LI   R1,CHDEFT    201C/201E
+*      LI   R2,127*8     2020/2022     IBM Graphics area!!!!!!
+       LI   R2,255*8     2020/2022     3.1.2021 FULL IBM Graphics area
+*
+PWRUP1 MOV  *R0+,*R1+    2024
+       DECT R2           2026
+       JNE  PWRUP1       2028
+*
+       CLR  @EXTVEC      202A/202C
+*
+       B    @KEYPWR      202E/2030  then initialize the Keyboard
+*
+* now for the real stuff...
+*
+       COPY "\MDOS\L6\KEY1S"                        ** 920829 hcp
+       COPY "\MDOS\L6\KEY2S"                        ** 920829 hcp
+       COPY "\MDOS\L6\CHARSETS"
+       COPY "\MDOS\L6\VX-INTS"                      ** 920829 hcp
+       COPY "\MDOS\L6\VX0003S"                      ** 920829 hcp
+       COPY "\MDOS\L6\VX0405S"                      ** 920829 hcp
+       COPY "\MDOS\L6\VX06S"                        ** 920829 hcp
+       COPY "\MDOS\L6\VX07S"                        ** 920829 hcp
+       COPY "\MDOS\L6\VX08S"                        ** 920829 hcp
+       COPY "\MDOS\L6\VX090AS"                      ** 920829 hcp
+       COPY "\MDOS\L6\VX0B0ES"                      ** 920829 hcp
+       COPY "\MDOS\L6\VX0F15S"                      ** 920829 hcp
+       COPY "\MDOS\L6\VX161CS"                      ** 920829 hcp
+       COPY "\MDOS\L6\VX1D23S"                      ** 920829 hcp
+       COPY "\MDOS\L6\VX2426S"                      ** 920829 hcp
+       COPY "\MDOS\L6\WRITETTY"
+       COPY "\MDOS\L6\RS232DEBUG"
+       COPY "\MDOS\L6\VX282AS"                      ** 920829 hcp
+       COPY "\MDOS\L6\VX2B2CS"                      ** 920829 hcp
+       COPY "\MDOS\L6\VX2D2FS"                      ** 920829 hcp
+       DATA 0
+       COPY "\MDOS\L6\SOUNDS"
+       DATA 0
+       COPY "\MDOS\L6\VX353AS"                      ** 920829 hcp
+VIDEND EQU  $
+       DEF  VIDEND
+       LIST
+       END
+*

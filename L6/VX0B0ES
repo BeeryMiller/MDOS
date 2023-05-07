@@ -1,0 +1,527 @@
+* FILENAME: VX0B0ES
+*
+* GCharColor
+*
+* R1x = Row
+* R2x = Col
+* -----
+* R0x = ASCII character read from screen
+* R1h = Foreground color for character
+* R1l = Background color for character
+*
+X90BLS  DATA    X90BM0,X90BM1,X90BM2,X90BM3
+        DATA    X90BM4,X90BM4,X90BM6,X90BM6
+        DATA    X90BM6,X90BM6
+*
+X90BVC
+X90BL1  MOV     @VIDMOD,R1
+        SLA     R1,1
+        MOV     @X90BLS(R1),R9
+        MOV     R11,R12
+        BL      *R9
+        MOV     R12,R11
+        RT
+*
+X90BM0  MOV     @4(R13),R5
+        MOV     @2(R13),R6
+        SLA     R1,8
+        MOV     R6,R7
+        MPY     @CHCOLS,R7
+        MOV     R8,R0
+        A       R5,R0
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        A       @SCRIMG,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        MOVB    @VDPRD,R1
+        SRL     R1,8
+        MOV     R1,*R13
+        MOVB    @VIDREG+7,R1
+        MOVB    R1,R2
+        SRL     R1,4
+        ANDI    R1,>0F00
+        SRL     R2,8
+        ANDI    R2,>F
+        SOC     R2,R1
+        MOV     R1,@2(R13)
+        RT
+*
+X90BM1  MOV     @4(R13),R5
+        MOV     @2(R13),R6
+        MOV     R6,R7
+        MPY     @CHCOLS,R7
+        MOV     R8,R0
+        A       R5,R0
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        A       @SCRIMG,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        S       @SCRIMG,R0
+        MOVB    @VDPRD,R1
+        SRL     R1,8
+        MOV     R1,*R13
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        MOV     R0,R3
+        SRL     R0,3
+        A       @CTABLE,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        ANDI    R3,>7
+        MOVB    @VDPRD,R4
+        CLR     R1
+        MOVB    @BTMASK(R3),R1
+        COC     R1,R4
+        JEQ     X90BN1
+        MOVB    @VIDREG+7,R1
+        MOVB    R1,R2
+        SRL     R1,4
+        ANDI    R1,>0F00
+        SRL     R2,8
+        ANDI    R2,>F
+        SOC     R2,R1
+        JMP     X90BO1
+X90BN1  MOVB    @VIDREG+12,R1
+        MOVB    R1,R2
+        SRL     R1,4
+        ANDI    R1,>0F00
+        SRL     R2,8
+        ANDI    R2,>F
+        SOC     R2,R1
+X90BO1  MOV     R1,@2(R13)
+        RT
+*
+X90BM2  RT
+*
+X90BM3  MOV     @4(R13),R5
+        MOV     @2(R13),R6
+        MOV     R6,R7
+        MPY     @CHCOLS,R7
+        MOV     R8,R0
+        A       R5,R0
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        A       @SCRIMG,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        S       @SCRIMG,R0
+        MOVB    @VDPRD,R1
+        SRL     R1,8
+        MOV     R1,*R13
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SRL     R0,3
+        A       @CTABLE,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        MOVB    @VDPRD,R1
+        MOVB    R1,R2
+        SRL     R1,4
+        ANDI    R1,>0F00
+        SRL     R2,8
+        ANDI    R2,>F
+        SOC     R2,R1
+        MOV     R1,@2(R13)
+        RT
+*
+X90BM4  MOV     @4(R13),R5
+        MOV     @2(R13),R6
+        MOV     R6,R8
+        SLA     R8,8
+        MOV     R8,R0
+        MOV     R5,R7
+        SLA     R7,3
+        A       R7,R0
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        A       @PTABLE,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        LI      R1,X900ST
+        LI      R4,8
+X90BN4  MOVB    @VDPRD,*R1+
+        DEC     R4
+        JNE     X90BN4
+        S       @PTABLE,R0
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        A       @CTABLE,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        MOVB    @VDPRD,R1
+        MOVB    R1,R2
+        SRL     R1,4
+        ANDI    R1,>0F00
+        SRL     R2,8
+        ANDI    R2,>F
+        SOC     R2,R1
+        MOV     R1,@2(R13)
+        LI      R3,CHDEFT
+        LI      R5,0
+X90BO4  LI      R2,X900ST
+        MOV     R3,R0
+        LI      R4,8
+X90BP4  CB      *R0+,*R2+
+        JNE     X90BQ4
+        DEC     R4
+        JNE     X90BP4
+        JMP     X90BR4
+X90BQ4  AI      R3,8
+        INC     R5
+        CI      R5,256
+        JNE     X90BO4
+        CLR     R5
+X90BR4  MOV     R5,*R13
+        RT
+*
+X90BM6  MOV     @4(R13),R5
+        MOV     @2(R13),R6
+        LI      R0,6
+        MPY     R5,R0
+        MOV     R1,R0
+        A       @GRPHLF,R0
+        MOV     R6,R1
+        SLA     R1,3
+        A       @PAGEPX,R1
+        LI      R4,6
+        LI      R5,8
+        CLR     R6
+        LI      R7,>A0
+        BLWP    @VDCMD2
+        LI      R7,X900ST
+        LI      R2,8
+        CLR     R3
+X90BN6  CLR     R5
+        CLR     R4
+X90BO6  LI      R8,>8F02                * Read status register #2
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        MOVB    @VDPSTA,R8
+        ANDI    R8,>8000
+        JEQ     X90BO6
+        LI      R8,>8F07                * Read status register #7
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        MOVB    @VDPSTA,R8
+        CI      R2,8
+        JNE     X90BA6
+        MOV     R4,R4
+        JNE     X90BA6
+        MOVB    R8,R6
+X90BA6  CB      R8,R6
+        JEQ     X90BP6
+        INV     R3
+X90BP6  MOV     R3,R3
+        JEQ     X90BQ6
+        MOVB    R8,@2(R13)
+        SOCB    @BTMASK(R4),R5
+        JMP     X90BR6
+X90BQ6  MOVB    R8,@3(R13)
+X90BR6  MOVB    R8,R6
+        INC     R4
+        CI      R4,6
+        JNE     X90BO6
+        MOVB    R5,*R7+
+        DEC     R2
+        JNE     X90BN6
+        LI      R7,X900ST
+        LI      R8,X900ST+8
+        LI      R2,8
+X90BS6  MOVB    *R7+,R1
+        INV     R1
+        MOVB    R1,*R8+
+        DEC     R2
+        JNE     X90BS6
+        LI      R3,CHDEFT
+        LI      R5,0
+X90BT6  LI      R2,X900ST
+        MOV     R3,R0
+        LI      R4,8
+X90BU6  CB      *R0+,*R2+
+        JNE     X90BV6
+        DEC     R4
+        JNE     X90BU6
+        JMP     X90BZ6
+X90BV6  LI      R2,X900ST+8
+        MOV     R3,R0
+        LI      R4,8
+X90BW6  CB      *R0+,*R2+
+        JNE     X90BX6
+        DEC     R4
+        JNE     X90BW6
+        JMP     X90BY6
+X90BX6  AI      R3,8
+        INC     R5
+        CI      R5,256
+        JNE     X90BT6
+        CLR     R5
+        JMP     X90BZ6
+X90BY6  SWPB    @2(R13)
+X90BZ6  MOV     R5,*R13
+        RT
+
+* SetBorderColor
+*
+* R1x = Color to render border
+*
+X90CVC
+X90CL1  MOV     @2(R13),R1
+        ANDI    R1,>FF
+        MOV     @BRDCOL,R0
+        ANDI    R0,>FF00
+        SOC     R1,R0
+        MOV     R0,@BRDCOL
+        ANDI    R0,>FF
+        ORI     R0,>0700
+        BLWP    @VWTR
+        MOV     @VIDMOD,R1
+        CI      R1,2
+        JHE     X90CL2
+        MOV     @BRDCOL,R0
+        SWPB    R0
+        SWPB    @STDCLR
+        MOVB    R0,@STDCLR
+        SWPB    @STDCLR
+X90CL2  RT
+
+* SetColPalette
+*
+* R1x = Palette register number
+* R2x = Color to put into palette register
+*       (G,R,B -- AS BOOK DESCRIBES)
+*
+X90DVC
+X90DL1  MOV     @2(R13),R0
+        SLA     R0,8
+        ORI     R0,>90
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        MOV     @4(R13),R2
+        SWPB    R2
+        MOVB    R2,@VDPPT2
+        SWPB    R2
+        MOVB    R2,@VDPPT2
+        MOV     @2(R13),R1
+        SLA     R1,1
+        AI      R1,PALEXP
+        MOV     R2,*R1
+*       AI      R1,-PALEXP
+*       AI      R1,PALSQS
+        AI      R1,PALSQS-PALEXP
+        MOV     R2,R3
+        SRL     R3,1
+        ANDI    R3,>0038
+        MOV     R3,R4
+        MOV     R2,R3
+        SRL     R3,2
+        ANDI    R3,>01C0
+        SOC     R3,R4
+        ANDI    R2,>7
+        SOC     R4,R2
+        MOV     R2,*R1
+        RT
+
+* SetPixelColor
+*
+* R1x = X coordinate of pixel
+* R2x = Y coordinate of pixel
+* R3h = Foreground color to render pixel
+* R3l = Background color to render pixel in graphics 2-3
+* R4h = Logic operation to be performed
+*
+X90ELS  DATA    X90EM0,X90EM0,X90EM0,X90EM0
+        DATA    X90EM4,X90EM4,X90EM6,X90EM6
+        DATA    X90EM6,X90EM6
+X90EL2  DATA    IMPE,ANDE,ORE,EORE,NOTE
+X90EL3  DATA    IMPEC,ANDEC,OREC,EOREC,NOTEC
+X90EL4  DATA    TIMPE,TANDE,TORE,TEORE,TNOTE
+X90EL5  DATA    TIMPEC,TANDEC,TOREC,TEOREC,TNOTEC
+SAV0ER  DATA    0
+*
+X90EVC
+X90EL1  MOV     @VIDMOD,R1
+        SLA     R1,1
+        MOV     @X90ELS(R1),R9
+        MOV     R11,R12
+        BL      *R9
+        MOV     R12,R11
+        RT
+*
+X90EM0  RT
+*
+X90EM4  MOV     R11,@SAV0ER
+        MOV     @2(R13),R1
+        MOV     @4(R13),R2
+        MOV     @6(R13),R3
+        MOV     @8(R13),R8
+        SRL     R8,8
+        ANDI    R8,>F
+        MOV     R3,R0
+        SLA     R3,4
+        ANDI    R3,>F000
+        SLA     R0,8
+        ANDI    R0,>0F00
+        SOCB    R0,R3
+        MOV     R2,R4                   *
+        SLA     R4,5                    *
+        SOC     R2,R4                   * This code assumes that:
+        ANDI    R4,>FF07                * R1x = X offset from u/l of screen
+        MOV     R1,R5                   * R2x = Y offset from u/l of screen
+        ANDI    R5,7                    *
+        A       R1,R4                   *
+        S       R5,R4                   *
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        A       @PTABLE,R4
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        MOVB    @VDPRD,R7
+        MOV     R8,R9
+        ANDI    R9,>8
+        JEQ     X90EN4
+        ANDI    R8,>7
+        SLA     R8,1
+        MOV     @X90EL4(R8),R9
+        BL      *R9                     * ACT ON LOGIC "T"
+        SRL     R8,1
+        ORI     R8,>8
+        JMP     X90EO4
+X90EN4  SLA     R8,1                    * ACT ON LOGIC NO "T"
+        MOV     @X90EL2(R8),R9
+        BL      *R9
+        SRL     R8,1
+X90EO4  SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        SWPB    R4
+        ORI     R4,>4000
+        MOVB    R4,@VDPWA
+        S       @PTABLE,R4
+        MOVB    R7,@VDPWD
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        A       @CTABLE,R4
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        MOVB    @VDPRD,R7
+        MOV     R8,R9
+        ANDI    R9,>8
+        JEQ     X90EP4
+        ANDI    R8,>7
+        SLA     R8,1
+        MOV     @X90EL5(R8),R9
+        BL      *R9                     * ACT ON LOGIC "T"
+        SRL     R8,1
+        ORI     R8,>8
+        JMP     X90EQ4
+X90EP4  SLA     R8,1                    * ACT ON LOGIC NO "T"
+        MOV     @X90EL3(R8),R9
+        BL      *R9
+        SRL     R8,1
+X90EQ4  SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    R4
+        MOVB    R4,@VDPWA
+        SWPB    R4
+        ORI     R4,>4000
+        MOVB    R4,@VDPWA
+        MOVB    R7,@VDPWD
+        MOV     @SAV0ER,R11
+        RT
+TIMPE
+TNOTE   CI      R7,0
+        JEQ     RET0E
+IMPE
+NOTE    SZCB    @BTMASK(R5),R7
+        SOCB    @BTMASK(R5),R7
+RET0E   RT
+TANDE   CI      R7,0
+        JEQ     RET0E
+ANDE    SZCB    @BTMASK(R5),R7
+        RT
+TORE    CI      R7,0
+        JEQ     RET0E
+ORE     SOCB    @BTMASK(R5),R7
+        RT
+TEORE   CI      R7,0
+        JEQ     RET0E
+EORE    XOR     @BTMASK(R5),R7
+        RT
+TIMPEC
+TNOTEC  CI      R7,0
+        JEQ     RET0E
+IMPEC
+NOTEC   MOVB    R3,R7
+        RT
+TANDEC  CI      R7,0
+        JEQ     RET0E
+ANDEC   INV     R3
+        SZCB    R3,R7
+        RT
+TOREC   CI      R7,0
+        JEQ     RET0E
+OREC    SOCB    R3,R7
+        RT
+TEOREC  CI      R7,0
+        JEQ     RET0E
+EOREC   XOR     R3,R7
+        RT
+*
+X90EM6  MOV     @2(R13),R0
+        MOV     @4(R13),R1
+        A       @PAGEPX,R1
+        MOVB    @6(R13),R4
+        SRL     R4,8
+        MOVB    @12(R13),R5
+        SRL     R5,8
+        ORI     R5,>50
+        BLWP    @VDCMD1
+        RT

@@ -1,0 +1,157 @@
+;rs232debug
+; RAMDISK  DEBUG SERIAL OUTPUT
+; TRANSMIT SERIAL BYTE  (see D030 for new code)
+;**** HAH *** MUST DISABLE INTERRUPTS HERE !! ! ! ! ! ! !
+
+; BLWP @XMTEXT
+; DATA FNDXM1
+; BLWP @XMNUM
+; DATA address,#words
+
+DEBUGFLG  DATA 0         enable console 2 rs232 output
+INITFLG   DATA 0
+
+INITXM1 TEXT '~DEBUG enabled~'
+        BYTE 0
+PABXM  TEXT '~PBin : '
+       BYTE 0
+;
+HEXHEX  TEXT '0123456789ABCDEF'
+SQUIG   TEXT '~~'
+        DATA 0
+DUMB1   DATA 0    temp holding for a  word
+
+XMWS    BSS  >20
+XMTEXT DATA XMWS,XMTXT1  text null term
+XMTLEN DATA XMWS,XMTLN2  text,with len (like ttyout)
+XMNUM  DATA XMWS,XMNUM1  hex
+XMCRLF DATA XMWS,XMCRL   single crlf
+
+XMCRL  LIMI 0
+       ABS  @DEBUGFLG
+       JEQ  XMLRT
+       LI   R0,>0D0A   crlf
+       BL   @XMIT1
+       SWPB  R0
+       BL   @XMIT1
+       RTWP
+
+; bl @xmtlen
+; data address,len
+XMTLN2 LIMI 0
+       MOV *R14+,R1
+       MOV *R14+,R3      count
+       JEQ  XMLRT        0?  not allowed
+       ABS  @DEBUGFLG
+       JEQ  XMLRT
+
+XMLA   MOVB *R1+,R2
+       CB   R3,@SQUIG
+       JNE  XMLB
+       LI   R0,>0D0A   crlf
+       BL   @XMIT1
+       SWPB  R0
+       JMP  XMLC
+
+XMLB   MOVB R2,R0
+XMLC   BL   @XMIT1
+       DEC  R3           any more?
+       JNE  XMLA
+XMLRT  RTWP
+
+
+
+; xmit string
+XMTXT1  LIMI  0
+ MOV *R14+,R1
+       ABS @DEBUGFLG     debug allowed?
+       JEQ XMTR          no
+
+XMT0 MOVB *R1+,R2     get character
+ JEQ  XMTR  null?  end
+ CB   R2,@SQUIG   "~"
+ JNE  XMT1
+ LI   R0,>0D0A   crlf
+ BL   @XMIT1 ;display cr
+ SWPB  R0
+ JMP  XMT2 ; and now LF
+
+XMT1   MOVB R2,R0
+XMT2   BL   @XMIT1
+       JMP  XMT0
+
+;=============================
+; xmit  a  16-bit hex value
+; blwp @xmnum
+; data add,#words
+XMNUM1  MOV *R14+,R8 get  address of  number
+        MOV *R14+,R5 get  number of hex  words to print
+
+       ABS @DEBUGFLG     debug allowed?
+       JEQ XMTR          no
+
+; loop here for multiple numbers
+XMNUM2 MOV *R8+,R1     get 16-bit number
+ MOV  R1,R2 copy number for shift
+ SRL  R2,12
+ ANDI R2,>000F
+ MOVB @HEXHEX(R2),R0
+ BL  @XMIT1
+
+ MOV  R1,R2
+ SRL  R2,8
+ ANDI R2,>000F
+ MOVB @HEXHEX(R2),R0
+ BL  @XMIT1
+
+ MOV  R1,R2
+ SRL  R2,4
+ ANDI R2,>000F
+ MOVB @HEXHEX(R2),R0
+ BL  @XMIT1
+
+ MOV  R1,R2
+ ANDI R2,>000F
+ MOVB @HEXHEX(R2),R0
+ BL  @XMIT1
+
+ LI R0,>2000 xmit a space
+ BL  @XMIT1
+
+ DEC R5
+ JNE XMNUM2
+
+XMTR RTWP
+
+
+; BL @XMIT1
+; R0msb - xmit byte
+; might need to change from TB >17 to TB >16
+;
+XMIT1  LI  R12,>1340
+EO     TB   >17    xmit?
+       JNE  EO
+       SBO  >10
+       LDCR R0,8
+       SBZ  >10
+       RT
+
+CREG DATA  >8300 ;8n1
+BREG DATA  >000D ;38.4  1A=19.2; 34=9600
+;
+; BLWP  @INITRS
+;
+INITRS DATA XMWS,INITR1
+INITR1 LIMI 0
+       LI R12,>1340
+       SBO  >1F          Reset 9902
+       LI   R5,>0200
+INITR2 DEC  R5           delay
+       JNE  INITR2
+       SBZ  >0D          Bit 13, disable interval register
+       LDCR @CREG,8      set 8n1
+       LDCR @BREG,>0C    set baud
+       SBZ  >12           Disable RCV interrupt! (and hope XB doesn't overrid
+;;       SBO  >12          Enable RCV Interrupt
+       RTWP
+;EOF

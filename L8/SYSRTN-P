@@ -1,0 +1,293 @@
+; File: SYSRTN
+;
+; 2.16.2021 Added BADNFB. Called from OPEN&LS:ISNOPN when R3=0 to denote
+;           no available file buffers. Alas, CLR *R3 clears address >0000 !
+;
+*
+* returns which clean things up before leaving
+*
+SRTSF  MOV  R3,R0             set last change date and time for real FCB
+       AI   R0,FCB+UPDDAT
+       BLWP @REDCOM
+SRTSFD BL   @SFBO             write FCB to disk (pointers for DELETE)
+SRTFB  CLR  *R3               FREE UP BUFFER
+*
+********************************************************************************
+*
+*      THIS ROUTINE SYSRTN CHECKS TO SEE IF THE VIB IN VIBBUF HAS CHANGED
+*           IF IT HAS THEN IT CHECKS TO SEE IF A FILE WITH THIS DRIVE NUMBER
+*           IS STILL OPEN AND IF NOT, IT SAVES THE VIB
+*
+********************************************************************************
+SYSRTN MOV  @CLOSEF,R8
+       JNE  CLOSFL            6/18/89 ... flush sector zero for security
+*
+       MOVB @NUMFIL,R8        test for open file on same drive as VIBBUF
+       SRL  R8,8
+       CI   R8,11
+       JLT  SRT
+       LI   R8,10             max files!
+SRT    LI   R7,BUF1-FBUFLN
+SYSRT2 AI   R7,FBUFLN
+       CB   @VIBID,@FDRVID(R7)               is it same?
+       JEQ  SYSRT1            yes, open file...return to OS
+       DEC  R8
+       JNE  SYSRT2            search more buffers...
+*
+CLOSFL MOVB @VIBCHG,R7        no open files, test if VIB altered
+       JEQ  SYSR11            not altered
+*
+       CLR  @MYR3             SECTOR 0
+       LI   R7,VIBBUF-FCB
+       MOV  R7,@MYR1
+       MOVB @MYPAD+>50,R7
+*
+       MOVB @DRIVID,R8
+       MOVB @VIBID,@DRIVID
+*
+       BLWP @WSCPU            write it out
+       DATA $+2
+*
+       MOVB R8,@DRIVID
+*
+       MOVB @MYPAD+>50,R8     test for error on sector zero write
+       JNE  SYSR11            if error, report it...
+       MOVB R7,@MYPAD+>50     otherwise, report older error
+*
+SYSR11 CLR  @VIBCHG           ZERO OUT CHANGE AND VIB NUMBER
+SYSRT1 MOVB @PAGD0,@MAP96+3   yapcfu (#1)
+       BL   @PABBCK           write back the PAB to VRAM
+*
+SYSRT4 MOVB @MODE4A,R0        ARE WE IN /4A MODE?
+       JNE  SYSRT9            NOPE. USE DIFFENT RETURN CODE.
+*
+* PaulC, 3/24/90
+* make sure that user's >8000 page is there before returning arguments...
+* to fix a bug in the HFDC code, but it's a good idea anyway.
+* (it can't hurt to have it here)
+*
+       MOVB @SAVMAP+4,@MAP96+4               3/24/90
+*
+       MOV  @TENBYT,R12       was this GPL i/o with an update?
+       JEQ  RTNXXX            nope
+*
+       MOVB @>8350,R12
+       SRL  R12,8
+       MOV  R12,R13
+       AI   R12,>8300
+       AI   R13,MYPAD
+       MOV  *R13+,*R12+
+       MOV  *R13+,*R12+
+       MOV  *R13+,*R12+
+       MOV  *R13+,*R12+
+       MOV  *R13+,*R12+
+RTNXXX LI   R12,>834A
+       LI   R13,MYPAD+>4A
+       MOV  *R13+,*R12+
+       MOV  *R13+,*R12+
+       MOV  *R13+,*R12+
+       MOV  *R13+,*R12+
+       MOV  *R13+,*R12+
+       MOV  *R13+,*R12+
+       MOV  *R13+,*R12+
+
+ILRET  LWPI 0                 entry point for ILR etc returns to OS
+SAVWS  EQU  $-2          THIS MEANS CODE CAN NOT BE IN ROM!!!!
+
+       MOV  @SAVMAP+0,@MAP96+0
+       MOV  @SAVMAP+2,@MAP96+2
+       MOV  @SAVMAP+4,@MAP96+4
+       MOV  @SAVMAP+6,@MAP96+6
+       LI   R12,>1EF4
+       SBZ  0                 RETURN TO 99/4A MODE
+*
+       MOVB @SAVGRM,@GRMWA
+       MOVB @SAVGRM+1,@GRMWA
+       BL   @FIX700           make sure 6000 page is correct
+*
+       LI   R12,>1100         REAFFIRM THAT WE WERE A DISK
+       LI   R11,0             NOW RETURN TO OS
+SAVJPH EQU  $-2          ANOTHER TRICK WHICH PUTS THIS CODE IN RAM FER SURE
+*
+* return incorrect version if there was an error on the HFDC
+*
+       MOV  @HFDFLG,@HFDFLG
+       JNE  HFDERR
+       INCT R11
+HFDERR CLR  @HFDFLG
+       RT                     FINAL RETURN TO OS
+*
+H0001  DATA >0001
+*
+* routine to insure proper page mapped in at >6000
+*
+FIX700 LI   R10,>7000
+       LI   R9,0
+S7000  EQU  $-2               what was at >7000 when we were called
+       C    *R10,R9           changed?
+       JEQ  S7001             nope . . .
+       MOVB *R10,*R10         flip page?
+       C    *R10+,R9          correct now?
+       JEQ  S7001             yup
+       MOVB *R10,*R10         other page, has to be right
+S7001  RT
+*
+SYSRT9 LWPI WS4000            9640 return
+*
+WINRET MOVB @PABERR,R0
+       JEQ  WNRT1
+       ORI  R15,>2000         ERROR CODE.  set r15 EQ status bit
+       JMP  WNRT2
+WNRT1  ANDI R15,>DFFF         NO ERROR CODE. reset r14 EQ status bit
+*      STST R15               return with status bits set correctly
+*
+WNRT2  MOV  @SAVMAP+0,@MAP96+0
+       MOV  @SAVMAP+2,@MAP96+2
+       MOV  @SAVMAP+4,@MAP96+4
+       MOV  @SAVMAP+6,@MAP96+6
+*
+       MOV  R3,R13            RESTORE R13-R15 SO THAT WE CAN . . .
+       MOV  R4,R14
+*
+       RTWP                   . . . RETURN TO CALLING PROGRAM
+*
+BADOP3 LI   R10,>6000
+CNBOP  SOCB R10,@PABERR       PUT ERROR IN ERROR BYTE
+SYSRR2 B    @SYSRTN           too far
+*
+BADOPS MOVB @MYR9,R10         MY WORKSPACE R9
+BADO4S B    @CL3
+*
+BADOP2 LI   R10,>4000
+*
+BADOPT EQU  $                 GPL WORKSPACE R10
+CNBOP1 CLR  *R3
+CNBOP2 MOVB R10,@MYPAD+>50
+       JMP  CNBOP
+*
+BADOP  MOVB @MYR9,R10
+       JMP  BADOPT
+*
+BADOP7 LI   R10,>E000
+HE0    EQU  $-2
+*
+       JMP  CNBOP1
+*
+BADOP4 LI   R10,>8000
+       JMP  CNBOP1
+
+BADNFB LI   R10,>8000    2.16.2021, fix old bug when no more files available
+       JMP  CNBOP2       Don't allow R3=0 flag to clear >0000 in CNBOP1 !
+;                        Called from L8.OPEN&LS2:ISNOPN
+BUDOP4
+       CLR  @VIBCHG
+       CLR  @CLOSEF
+       JMP  BADOP4
+
+*
+* save FCB to disk (pointer sector for delete)
+*
+*
+SFBO   MOV  @FLOCFC(R3),@MYR3
+SFBOFC MOV  R3,@MYR1          special entry for GPL rename
+       BLWP @WSCPU
+       DATA BADOP
+       RT
+*
+SYSR4  LI   R1,>0E00          GPL subprogram return...reset page
+       BL   @VDPWAD
+       DATA >8000
+       B    @SYSRT4
+*
+PABBCK LI   R7,OPCODE
+       MOV  R11,R10           SAVE RETURN ADDRESS
+       CB   *R7,@H10XX
+       JHE  SYSR4             DO NOT RESTORE PAB IF GPL I/O
+*
+       MOVB @MODE4A,R15       ARE WE IN /4A MODE?
+       JNE  PABBC7            NOPE. SO RESTORE PAB FOR 9640 MODE
+*
+       C    @PATHNM,@DSKCHK
+       JNE  PABBP0            PaulC...rs232 fix
+*
+* UPDATE THE POINTERS IN VDP THAT /4A MODE EXPECTS. THANKS A WHOLE LOT
+*  MILLERS GRAPHICS.
+       MOV  @VOLUME,R15       GET VOLUME NUMBER
+       JEQ  PABBC0            GARBAGE
+       SWPB R15
+       LI   R1,>3EEB          LAST DRIVE ACCESSED
+       BL   @VDPWAD
+       DATA >4000
+       MOVB R15,@VDP0         PUT BYTE IN VDP
+       LI   R1,>3FF5
+       BL   @VDPWAD
+       DATA >4000
+       MOVB R15,@VDP0         PUT IT IN VDP
+* NOW TRANSFER FILENAME
+       LI   R15,COMBUF        WHERE FILENAME IS
+PABBC1 MOVB *R15+,@VDP0       MOVE A BYTE
+       CI   R15,COMBUF+10     DONE?
+       JNE  PABBC1            NOPE.
+*
+* PAGE WILL FLIP IF NOT IN A /4A GRAPHICS MODE.
+* SET VDP PAGE BACK TO 0 . .. . IN CASE
+*
+PABBP0 LI   R1,>0E00          SET VDP REG 14 TO 0
+       BL   @VDPWAD
+       DATA >8000             NEAT TRICK TO WRITE TO A REG, NO?
+*
+PABBC0 MOV  @PABLOC,R1
+*
+* NOW NEED TO MAP THE 9640 PAB BACK INTO THE /4A PAB BEFORE WE CAN
+*  COPY IT BACK. EASIER THAN MAPPING THE OTHER WAY.
+*
+       MOVB @FLGSTS,@FLGST4
+       SOCB @PABERR,@FLGST4   CREATE RETURN "FLGST4" BYTE
+
+       MOVB @SCNOFF,@SCNOF4   ONLY MATTERS FOR STATUS CALL
+
+* BUFAD4 DOES NOT HAVE TO BE UPDATED
+* NOR DOES OPTLEN, OPCODE, PATHNM, OR WHATEVER . ..
+       MOV  R10,R11           FAKING IT HERE . . . CHECK OUT ABOVE
+       CB   *R7,@SAVCOD       SAVE?
+       JEQ  VDPHED
+       MOV  @LRECLN,@LRECL4   map back size of program image-64k limit
+       CB   *R7,@LODCOD       LOAD?
+       JEQ  VDPHED
+       MOVB @LRECLN+1,@LRECL4 WORDS MAPPED BACK TO BYTES
+       MOVB @CHRCNT+1,@CHRCN4
+       MOV  @RECNUM,@RECNU4   PASS BACK RECORD NUMBER
+*
+VDPHED LI   R2,10
+VDPHE1 MOV  R11,R10
+       BL   @VDPWAD           SET UP WRITE ADDRESS
+       DATA >4000
+       MOV  R10,R11
+       LI   R7,OPCOD4         MOVE THE /4A MODE PAB . . .
+SYSRT3 MOVB *R7+,@VDP0
+       DEC  R2
+       JNE  SYSRT3
+       RT
+*
+PABBC7 MOV  @WS4000+6,R13     entry r13
+       MOV  *R13,R7
+PABD00 MOVB @SAVMAP+4,@MAP96+4               restore caller page 0
+       MOV  R7,R6
+       SRL  R6,13
+       MOVB @TSKMAP(R6),@MAP96+6
+       ANDI R7,>1FFF
+       ORI  R7,>C000
+       LI   R0,OPCODE
+       LI   R1,16
+PABP00 MOVB *R0+,*R7+
+       DEC  R1
+       JEQ  PABP01
+       CI   R7,>E000
+       JL   PABP00
+       MOVB @TSKMAP+1(R6),@MAP96+6
+       LI   R7,>C000
+H10XX  JMP  PABP00
+*
+PABP01 RT
+D16    DATA 16
+*

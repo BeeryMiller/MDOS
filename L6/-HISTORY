@@ -1,0 +1,56 @@
+L6 Development History - Clint Pulley
+
+92/08/27 - Received disks and installed files
+92/08/29 - Re-organized source files:
+            KEYS > KEY1S, KEY2S
+            VIDXOP1-S > VX-INTS, VX0003S, VX0405S
+            VIDXOP2-S > VX06S, VX07S, VX08S
+            VIDXOP3-S > VX090AS, VX0B0ES
+            VIDXOP4-S > VX0F15S, VX161CS, VX1D23S (partial)
+            VIDXOP5-S > VX1D23S (partial), VX2426S, VX282AS,VX2B2CS (partial),
+                        VX2D2FS
+            VIDXOP6-S > VX2B2CS (partial), VX353AS
+         - Applied KSCAN mode 8 fix to KEY1S
+         - Revised XOPS-S to reflect new source file organization. XOPS are
+           now in order.
+92/09/30 - Updated !MAKEFILE re L6 changes.
+         - Ran MAKE with new !MAKEFILE successfully.
+         - Analyzed WriteTTY form feed handling and noted changes between
+           .97h and .98h.
+92/09/02 - Started analysis of bitmap move/copy XOPs (>12 - >15). Found that
+           backward operations were deliberately inhibited. Created test
+           version of HDOS with instructions commented out. Tested -
+           backward move works.
+92/09/03 - Revised XOPs >12 - >15 in VX0F15S by:
+            removing code which inhibited backward moves.
+            creating common subroutines (BMCSET & BMCFIL) to setup registers
+            for move/copy and fill.
+            optimizing some low level operations.
+92/09/04 - Ran MAKE and tested in detail. Found that overlapping moves did not
+           work properly.
+         - Changed BMCSET to correct problem.
+         - Ran MAKE and tested - overlapping moves work properly.
+92/09/06 - Modified VX353AS re XOP >35 to do range check on VDP register #.
+         - Tested - OK.
+92/09/11 - Started analysis of ColorSRCH (XOP >11) and found that in addition
+           to coding errors the 9938 manual appears to describe the sense of
+           the EQ bit incorrectly. The operation works if the bit is cleared.
+92/09/12 - Revised XOP >11 by:
+            correcting coding errors.
+            clearing the VDP EQ bit in R#46.
+            optimizing low level operations.
+         - Ran MAKE and tested - OK.
+92/09/16 - Revised WRITETTY by:
+            Restoring >0C (Form Feed) to original function (clear screen and
+            home cursor), equivalent to >1A (^Z).
+            Adding X92719 to make character >19 (^Y) perform the "new Form
+            Feed" function of moving the cursor one position right.
+
+96/05/07    TAT, Revised TTYOUT Function..
+              Added flag in XOPS-S @>2018.  0=normal; 1=Psystem.  The above
+              revision by CP caused the Psystem to fail.  This new flag will
+              allow the new MDOS command, "PSYS <on/off>", to determine how
+              certain sequences are interpreted.
+
+              Modifed WRITETTY to make use of the PSYS flag.
+

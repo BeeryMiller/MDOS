@@ -1,0 +1,175 @@
+********************************************************************************
+* GETAUS *
+**********
+*
+*      R5 CONTAINS SECTOR # WITHIN FILE
+*
+*      MAKE SURE THAT FILE HAS AT LEAST R5 # OF SECTORS
+*
+*      USES ALL REGISTERS (EXCEPT R3,R4,R12-R15)
+*
+*      RETURN: R1 IS SECTOR # ON DISK OF SECTOR R5 WITHIN FILE.
+*
+********************************************************************************
+*
+GETAUS MOV  R11,@R11SAV
+       MOV  R5,@R5SAVE
+       JEQ  XX01
+       JMP  XX0
+XX01   B    @GETAF3            DON'T NEED ANY AU'S.
+*
+XX0    CLR  @R1SAVE           IN CASE THERE WERE NO CLUSTERS TO START WITH
+
+       LI   R0,34             START AT SECTOR 34 IF WE NEED TO EXTEND FILE (TI)
+*
+       BL   @GETVIB           NEW CODE STARTS HERE PER CLINT PULLEY
+       DATA BADOP
+       MOV  @VIBBUF+TOTAUS,R11
+       CI   R11,718
+       JL   HCP1A             SSSD
+       LI   R0,50             DSSD
+       CI   R11,1438
+       JL   HCP1A             IF DSSD
+       LI   R0,66
+       CI   R11,2878
+       JL   HCP1A             IF DSSD
+       LI   R0,256
+       CI   R11,3201
+       JL   HCP1A
+       LI   R0,512
+
+HCP1A  MOV  @R5SAVE,R5
+
+*           END OF CLINT'S ROUTINE
+
+       MOV  @D76,@CLUSNO      MAX NUMBER OF CLUSTERS
+       SETO R8                USE R8 AS INDEX INTO CLUSTERS
+       DEC  R5                ADJUST NUMBER BASE TO ZERO
+       MOV  R3,R9             R9 POINTS TO CLUSTERS
+       AI   R9,CLUSTR+FCB
+       BL   @PTTOWD           GET FIRST CLUSTER PAIR->  EQUAL FLAG FOR R1=0
+       MOV  R1,R1
+       JEQ  UNUSED            BRANCH IF NOT USED (NEED TO GET MORE SECTORS)
+*
+USEDCL C    R2,R5
+       JHE  XX02
+       JMP  XX03
+XX02   B    @GETAUF            BRANCH IF ENOUGH ALREADY ALLOCATED
+*
+XX03   DEC  @CLUSNO           ONE LESS CLUSTER POSSIBLE
+       JNE  RANGE
+       B    @DSKFUL            NO MORE POSSIBLE CLUSTERS.
+*
+RANGE  MOV  R8,R7             HIGH POINTER FROM PREVIOUS CLUSTER
+       MOV  R2,R8             HIGH POINTER FROM THIS CLUSTER
+       MOV  R1,R0
+       BL   @PTTOWD
+       MOV  R1,R1
+       JNE  USEDCL            BRANCH IF USED CLUSTER
+*
+       A    R8,R0
+       S    R7,R0             R0 IS NOW POINTER TO SECTOR AFTER LAST ONE IN FILE
+*
+GETAU1 MOV  R0,@R1SAVE        SAVE POINTER PAST END OF FILE INTO R1
+UNUSED MOV  R9,@R9SAVE        SAVE R9
+*
+       BL   @GETSEC           R6 RETURNS # OF SECTORS ALLOCATED
+       DATA DSKFUL            2 IF DISK HAS MORE THAN 1600 SECTORS, ELSE 1
+*
+       MOV  @R9SAVE,R9        RESTORE R9
+*
+       LI   R8,3              CONSTANT 3 IS USED LOTS
+       S    R8,R9             POINT TO THIS CLUSTER
+       MOV  R0,R1
+       C    R0,@R1SAVE
+       JNE  NEWC              BRANCH IF NOT CONTIGUOUS
+*
+       S    R8,R9             POINT TO LAST USED CLUSTER
+       INC  @CLUSNO           COMPENSATE FOR REUSING SAME CLUSTER
+       BL   @PTTOWD
+       S    R8,R9
+       JMP  NEWCL
+*
+NEWC   CLR  @JGSFLG
+NEWCL  A    R6,@LV2REC+FCB(R3)
+       MOV  @LV2REC+FCB(R3),R2
+
+MASH1  DEC  R2                ADJUST TO BASE #0 FROM BASE #1
+*
+       MOVB @3(R4),*R9+       SAVE CLUSTR
+       SLA  R2,4
+       AB   @5(R4),R1
+*
+H0005  EQU  $-2
+LODCOD EQU  $-1
+*
+       MOVB R1,*R9+
+       C    @D3200,@VIBBUF+TOTAUS
+       JHE  NO144
+       MOV  @JGSFLG,@JGSFLG
+       JNE  JGS1ST
+       MOV  R0,@JGSMEM
+       SETO @JGSFLG
+JGS1ST DECT R9
+       MOV  R10,@JGSR10
+       MOVB @3(R4),R10
+       SWPB R10
+       MOVB R1,R10
+       ANDI R10,>0FFF
+       SRL  R10,2
+       C    @D6400,@VIBBUF+TOTAUS
+       JHE  NOT8AU
+       SRL  R10,1
+NOT8AU MOV  @JGSMEM,R1
+       CI   R1,>0FFF
+       JLE  NOVER
+       C    @D6400,@VIBBUF+TOTAUS
+       JLE  BIT8
+       AI   R10,>0200
+BIT8   AI   R10,>0200
+NOVER  MOVB @5(R4),R1
+       ANDI R1,>F000
+       A    R1,R10
+       SWPB R10
+       MOVB R10,*R9+
+       SWPB R10
+       MOVB R10,*R9+
+       MOV  @JGSR10,R10
+NO144  MOVB R2,*R9+
+*
+       A    R8,R9
+       MOV  R0,R1
+       A    R6,R0
+       C    @LV2REC+FCB(R3),@R5SAVE          have we allocated enough sectors?
+       JHE  GETAF4                           yes---maybe even too many
+*
+GETAUG DEC  @CLUSNO
+       JNE  GETAU1
+       JMP  DSKFUL
+*
+GETAUF A    R5,R1
+       S    R8,R1
+       DEC  R1
+*
+GETAF3 C    @LV2REC+FCB(R3),@R5SAVE          this is a fix for random i/o files
+       JHE  GETAF5                           don't change lv2rec if in file
+*
+GETAF4 MOV  @R5SAVE,@LV2REC+FCB(R3)
+GETAF5 MOV  @R11SAV,R11
+       CLR  @JGSFLG
+       INCT R11
+       RT
+*
+DSKFUL MOV  @R11SAV,R11
+       LI   R10,>8000         ERROR CODE (4)
+*      B    @BUDOP4
+
+*
+H8000  EQU  $-2
+H80    EQU  $-2
+*      CLR  @JGSFLG
+       MOV  *R11,R11
+       RT
+JGSFLG DATA 0
+JGSMEM DATA 0
+JGSHD  DATA 0

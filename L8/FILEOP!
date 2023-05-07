@@ -1,0 +1,618 @@
+*
+********************************************************************************
+*
+* file operations...get the FCB into the FDR buffer
+*
+FILEOP MOV  @PNTSEC,@MYR3
+       MOV  @VDPBUF,@MYR1
+       BLWP @RSCPU2           get pointers into data buffer
+       DATA BADOP             bad open...no pointers found
+*
+REFIND MOV  @VDPBUF,R8        vdp buffer is used for pointers on search
+*
+********************************************************************************
+*
+*      binary search for filename
+*
+*      INPUT -  R8 points to pointers
+*               R3 pointer to open FDR
+*
+*      uses r5-r10, COMBUF
+*
+*      returns equal set if file found
+*              r1 points to approprate pointer in pointer sector
+*
+       CLR  R10               low pointer
+       LI   R9,254            high pointer
+       LI   R7,7              max interation count
+BINSR  MOV  R9,R13            get high pointer
+       A    R10,R13           add low pointer
+       SRL  R13,2             get midpoint and truncate
+       SLA  R13,1             to a word boundary...
+*
+       MOV  R13,R1            current pointer offset
+       A    R8,R1             into address
+       MOV  *R1,@MYR3
+       JEQ  CLT               null pointer
+*
+       MOV  R3,R6
+       AI   R6,FCB
+       MOV  R3,@MYR1          FCB buffer
+       BLWP @RSCPU            fetch file header
+       DATA BADOP             bad open...trashed directory @@ could search some
+*
+       LI   R5,COMBUF         compare buffer
+CNAMES C    *R5+,*R6+         test
+       JH   CGRT
+       JL   CLT
+       CI   R5,COMBUF+10      equal, have we checked them all?
+       JNE  CNAMES            nope...check the rest
+       B    @FFND             yep, handle an existing file
+*
+CLT    MOV  R13,R9            this one becomes next high fencepost
+       DEC  R7                all searched?
+       JNE  BINSR             nope, continue
+       JMP  NFND              not found...
+*
+CGRT   MOV  R13,R10           this one becomes next low fencepost
+       DEC  R7                all searched?
+       JNE  BINSR             nope, continue
+       INCT R1                not found, must be next higher location
+*
+********************************************************************************
+*
+*      handle a non-existent file <giant if_then_else_if_then_else...>
+*
+NFND   MOV  R1,@FIPTSV        save this in case we create the file
+       MOV  @OPCODE,R5        get opcode and flags
+*
+       CB   R5,@H0D           rename?
+       JNE  NTRENX            nope, skip rename code...
+*
+* 9640 file rename, 2nd pass
+*
+       MOV  @LRECLN,R5        pass 0?
+       JEQ  BO077             yep, file to rename not found...error
+*                                  else end second pass
+       MOV  @FLOCFC(R3),@MYR3 KLUDGE FIX FOR BAD ALGORITHM!
+       MOV  R3,@MYR1          NEED TO READ NEW FILENAME ON PASS 0
+       BLWP @RSCPU            AND FIND OLD FILENAME ON PASS 1
+       DATA BADOP
+*
+       LI   R13,COMBUF        move name
+       MOV  R3,R14
+       AI   R14,FCB
+RENAX1 MOV  *R13+,*R14+
+       CI   R13,COMBUF+10
+       JL   RENAX1
+*
+       MOV  @VDPBUF,R5        insert pointer...
+       AI   R5,252             (there's always a clear one from delete)
+RENAX2 MOV  *R5,@2(R5)
+       C    R5,R1
+       JEQ  RENAX3
+       DECT R5
+       JMP  RENAX2
+*
+RENAX3 MOV  @FLOCFC(R3),*R1
+       MOV  @PNTSEC,@MYR3      save new pointers
+       MOV  @VDPBUF,@MYR1
+       BLWP @WSCPU2
+       DATA BADOP
+       B    @SRTSF            save FCB with new name
+*
+NTRENX COC  @H1000,R5         GPL routine?
+       JNE  NGPL1             nope...skip GPL code
+*
+*      since file was not found, the only valid GPL ops are:
+*         rename---if on new name
+*         output---access code=0 <create>
+*
+       CB   R5,@H13           rename?
+       JNE  NOTH13            nope
+       MOV  @LRECLN,R5        test pass, 0=new name, -1=old name
+       JNE  BO077             old name doesn't exist, error...
+*
+       SETO @LRECLN           next pass...
+       MOV  R1,@RECNUM        save pointer where we can get to it
+       MOV  @BUFADR,R1        old name pointer to by buffer.
+       BL   @MOVEFN
+       JMP  REFIND            search again.
+*
+NOTH13 CB   R5,@H15           GPL output?
+       JNE  BO077             can't do protect or input on null file
+*
+       MOVB @MYPAD+>4D,R7     check access code
+       JEQ  NFND1             jump to create FCB if access code is zero
+       B    @BOGP17           can't write to null file.
+*
+* handle normal opcodes for null file
+*
+NGPL1  CB   R5,@SAVCOD        save?
+       JEQ  NFND1             yep, create an FCB for it
+*
+       MOVB R5,R5             open?
+       JEQ  NFNOPN            yep, do more checks...
+*
+       CB   R5,@LODCOD        load?
+       JEQ  BO077             yep, can't load nil file
+*
+       CB   R5,@H0A           binary read ?
+       JEQ  BO077             can't read file which ain't there
+*
+       CB   R5,@H0B           binary write?
+       JEQ  OPB1              do whatever is necessary for empty file...
+*
+       CB   R5,@STACOD        status?
+       JNE  DKAR              nope, must be delete...
+       MOVB @H80,@SCNOFF      return flag for non-existent file
+DKAR   B    @SYSRTN           return to calling program
+*
+OPB1   MOV  @CHRCNT,R5        check access code
+       JEQ  NFND1             get a fresh sector for FCB
+*
+BO077  B    @BADOP7
+BDOP40 B    @CNBOP1
+*
+*      check open modes for null file...input is illegal
+*
+NFNOPN COC  @H0004,R5         check access mode
+       JNE  NFND1             create file on update or output
+       COC  @H0002,R5
+       JNE  BO077             error if input mode, fall through for append
+*
+* try to create a new file...
+*
+NFND1  LI   R10,>8000         bad op #4 if no pointers free
+       MOV  @VDPBUF,R1        base of pointers
+       MOV  @252(R1),R6       is last pointer free?
+       JNE  BDOP40            nope, error #4
+*
+       CLR  R0                search for FCB sector
+       BL   @GETSEC           find a free sector from bitmap
+       DATA BADOP4            no sectors free...error #4
+*
+       LI   R5,127            number of pointers to move from old list
+       MOV  @VDPBUF,R1        old list
+       MOV  R3,R6
+       AI   R6,FCB            where to build new list
+*
+PTRSBK C    R1,@FIPTSV        is this where to put the new pointer?
+       JNE  NOPTRH            nope...
+       MOV  R0,*R6+           yes, put it into stream
+NOPTRH MOV  *R1+,*R6+         move another pointer from old list
+       DEC  R5                one less to move
+       JNE  PTRSBK
+*
+       MOV  R3,@MYR1          write pointers back to disk
+       MOV  @PNTSEC,@MYR3    <into sector 1>
+       BLWP @WSCPU
+       DATA BADOP
+*
+* set up FDR now, for new file
+*
+       MOV  R0,R15            save location of FCB on diskette
+       MOV  R3,R0
+       AI   R0,FCB+CREDAT
+       BLWP @REDCOM           time stamp it!
+       MOV  R15,R0            restore location of FCB on diskette
+*
+* entry for save, open_output...when file already existed
+*           binary write
+*
+OPNSAV MOV  R3,R5             pointer to FDR
+       MOV  @VOLUME,*R5+      load drive number, record offset=0
+       MOV  R0,*R5+           FCB location on disk
+       CLR  *R5+              no data buffer yet
+       CLR  *R5+              no offset into file yet
+*
+       LI   R6,COMBUF         copy filename into FCB
+MFILNM MOV  *R6+,*R5+
+       CI   R6,COMBUF+10
+       JNE  MFILNM
+*
+       CLR  *R5+              clear extended record length
+       MOV  R5,R6             save flag pointer for later use
+       CLR  *R5+              12
+       CLR  *R5+              14
+       CLR  *R5+              16
+       CLR  *R5+              18
+       AI   R5,4              don't wack creation date
+*
+       LI   R2,128-12         word count for rest of FCB
+CLRFCB CLR  *R5+              clear rest of FCB
+       DECT R2
+       JNE  CLRFCB
+*
+       MOV  @OPCODE,R2
+       CB   R2,@SAVCOD
+       JNE  OPENFI
+       B    @OPENUP           save FCB immediately on save file...
+*
+********************************************************************************
+*
+*      OPEN FILE  --- set up fresh FCB for file
+*                             -open, output
+*                             -binary write (GPL or 9640)
+* R6 POINTS TO FILE STATUS FLAGS
+* other than filename, creation date, the entire FCB is zeroed
+*
+OPENFI MOVB R2,R2             GPL or OPEN ?
+       JEQ  OPENFL            BRANCH IF OPEN FILE
+*
+       CB   R2,@H0B           test for direct write, or GPL write
+       JNE  GP15#1
+*
+*      binary write---file creation
+*
+       SETO @PASRW
+       MOVB @BUFADH,@PASADH
+       MOV  @BUFADR,@PASADL
+       MOVB @CPUFLG,@PASVDP
+       MOV  @H0012,@PASCNT
+       MOV  R3,R5
+       AI   R5,FCB+EXTRLN
+       MOV  R5,@PASDSR
+       BLWP @PASDAT           get info into FCB from calling program
+*
+       MOV  @FCB+LV2REC(R3),R5 count of AUs needed for this file
+       CLR  @FCB+LV2REC(R3)    zero this out for GETAUS to work correctly!
+       MOV  R5,@CHRCNT         assume the best
+       BL   @GETAUS
+       DATA TRAP#1            not enough sectors on disk...
+       JMP  SAVFCB
+*
+TRAP#1 MOV  @FCB+LV2REC(R3),@CHRCNT return real number allocated
+       SOCB R10,@PABERR
+       JMP  SAVFCB
+*
+* GPL 15 file creation
+*
+GP15#1 MOV  R3,R7             GPL#15 file creation...move parameters from user
+       AI   R7,FCB+FSTATF     where to copy parameters from caller
+       MOV  @RECNUM,R6        point to parameters
+       MOV  *R6+,R5           # of sectors
+       MOV  *R6+,*R7+         move parameters
+       INCT R7
+       MOV  *R6+,*R7+
+       MOV  *R6+,*R7+
+*
+       BL   @GETAUS           try to get enough AUs
+       DATA GP15#2
+       CLR  R10
+GP15#2 MOVB R10,@MYPAD+>50    report the error
+SAVFCB SETO @CLOSEF           force bitmap update 6/18/89  paulc
+       B    @SRTSFD           now save the control block
+*                             (2/27/91 - no update of last modify date, paulc)
+*
+* open an empty file...define FCB
+*
+OPENFL MOV  @LRECLN,R9        get logical record length
+       JNE  FCRE00            don't use default...
+       LI   R9,80             80 is default record length
+FCRE00 MOV  R9,@LRECLN        return user record length
+       MOVB @H00,@CHRCNH
+       MOV  R9,@CHRCNT        return file record length
+*
+       CLR  R7                clear high word of divide
+       LI   R8,256            low word of divide...bytes per sector
+       BL   @FLGCON           convert flags from PAB to FCB
+       MOVB R5,*R6+           store file type flags
+*
+       DIV  R9,R7             how many records per sector?
+       SLA  R7,8              # of records/sector...0 for extended records
+       MOVB R7,*R6+           store records/sector
+*
+       MOV  @RECNUM,R6        # of records user wants to allocate
+*
+       MOVB @LRECLN,R9        test for extended records
+       JEQ  FCRE04                   not extended
+       MOV  @LRECLN,@FCB+EXTRLN(R3)  move extended record length
+*
+* handle file allocation on open of empty file...extended records
+* sectors = records * (bytes/record) / 256
+*
+       MPY  @LRECLN,R6        byte count in r6,r7
+       MOV  @OPCODE,R2
+       SRL  R2,5              test for variable record file
+       JNC  FCRE02            jump if fixed file
+       A    @RECNUM,R7        compensate for record length word
+       JNC  FCRE01
+       INC  R6
+FCRE01 A    @RECNUM,R7
+       JNC  FCRE02
+       INC  R6
+FCRE02 AI   R7,255            round up...
+       JNC  FCRE03
+       INC  R6
+FCRE03 MOVB R6,R6
+       JNE  CREBD4            caller really screwed up!
+       MOVB R7,R6             other screwups here done by getaus
+       SWPB R6
+       MOV  R6,R5             number of sectors to allocate
+       JMP  ALLOC0
+*
+CREBD4 B    @BADO4S
+*
+FCRE04 MOVB @LRECLN+1,@FCB+RECLEN(R3) move normal record length
+*
+* handle file allocation on open of empty file...non-extended records
+* sectors = records / (records/sector)
+*
+       MOVB @FCB+LRECPA(R3),R10  # records/sector
+       SRL  R10,8
+       MOV  @RECNUM,R6        # of records user wants to allocate
+       CLR  R5
+       DIV  R10,R5            now, # of sectors in R5, partials in R6
+       MOV  R6,R6             on sector boundary?
+       JEQ  ALLOC0            yep, don't round up
+       INC  R5                round up
+ALLOC0 BL   @GETAUS           get sectors for file
+       DATA BADO4S            no more sectors on disk, clusters full...
+ALLOC1 CLR  @RECNUM           set user record # to zero...
+*
+* handle open, save...
+*
+OPENUP BL   @SFBO             save FCB to keep directory intact
+       SETO @CLOSEF           force bitmap update 6/18/89 paulc
+*
+       MOV  @OPCODE,R2
+       CB   R2,@SAVCOD        save?
+       JEQ  OLS001            yep, go to move data to disk
+       B    @SYSRTN           FCB saved, we're ok...
+BAD7
+BAD2A
+BDOP4  B    @CNBOP1
+*
+OLS001 B    @SAVEFI
+*
+* change flags from pab format to FCB format
+* entry: r8=number of useable bytes/sector
+*        r9=logical record length
+*
+FLGCON MOVB R9,R9             extended record length?
+       JEQ  FLGC00            no
+       DEC  R8                0 records/sector after divide
+*
+FLGC00 CLR  R5                build flags here
+       COC  @H0010,R2         variable?
+       JNE  NVAR1             nope..
+       ORI  R5,>8000          variable
+       CI   R9,255
+       JH   NVAR1             extended records
+       JEQ  FLGC01            no end of sector mark required for var 255
+*
+       DEC  R8                compensate for end of sector mark
+FLGC01 INC  R9                compensate for length byte
+*
+NVAR1  COC  @H0008,R2         internal?
+       JNE  NINTE             nope...
+       ORI  R5,>0200          set flag for internal
+NINTE  RT
+*
+********************************************************************************
+*
+*      file found on name search, look at opcode to know what to do ...
+*        <giant chained if_then_else>
+*
+FFND   MOV  @MYR3,@FLOCFC(R3)
+       MOV  @OPCODE,R2         get opcode and PAB flags
+       MOVB @FCB+FSTATF(R3),R5 get file flags
+*
+       CB   R2,@H0C
+       JNE  NPROTX
+*
+* 9640 file protect/unprotect
+*
+       ORI  R5,>0800          assume protect bit set
+       MOVB @FLGSTS,R6        test caller flag
+       JNE  PROTX             caller wants protection
+*
+       ANDI R5,>F700           unprotect the file
+PROTX  MOVB R5,@FCB+FSTATF(R3) put it back into FCB
+       B    @SRTSF             save FCB and exit
+*
+NPROTX CB   R2,@H0D
+       JNE  NRENX
+*
+* 9640 file rename
+*
+       MOV  @LRECLN,R5        which pass?
+       JEQ  RENX01            go to start pass 2
+       B    @BADOP2           pass 2, can't rename to existing file
+*
+RENX01 SETO @LRECLN
+       MOVB @BUFADH,@PASADH
+       MOV  @BUFADR,@PASADL
+       MOV  @D10,@PASCNT
+       LI   R5,COMBUF
+       MOV  R5,@PASDSR
+       MOVB @CPUFLG,@PASVDP
+       SETO @PASRW
+       BLWP @PASDAT           get new filename to compare buffer
+*
+* time to delete a pointer
+*
+       MOV  @VDPBUF,R5        last possible pointer location
+       AI   R5,254
+*
+REND1  C    R1,R5             last pointer moved down?
+       JHE  REND2
+       MOV  @2(R1),*R1+       move down
+       JNE  REND1
+*
+REND2  CLR  *R1               clear last pointer
+       B    @REFIND
+*
+********************************************************************************
+*
+NRENX  COC  @H1000,R2         GPL opcode?
+       JNE  NGPL2             nope, normal opcode
+*
+* /4a file protect/unprotect
+*
+       CB   R2,@H12           protection?
+       JNE  NOTMFP            no
+*
+       ORI  R5,>0800          assume protect
+       MOVB @MYPAD+>4D,R6     test caller flag
+       JNE  PROTC             caller wants protection
+*
+       ANDI R5,>F700          unprotect it
+*
+PROTC  MOVB R5,@FCB+FSTATF(R3)
+       B    @SRTSF             save FCB and return to caller
+*
+* /4a file rename
+*
+NOTMFP CB   R2,@H13           rename?
+       JNE  NOTREN            nope
+       MOV  @LRECLN,R5        is it pass 1 ?
+       JNE  RENP2             nope, old file exists...we're ok
+BD7X   B    @BADOP7           can't rename to existing name
+*
+RENP2  MOV  @MYPAD+>4E,R1     get address of new name
+       BL   @VDPRAD
+       MOV  R3,R5
+       AI   R5,FCB            where to put it...start of FCB
+       LI   R1,10             10 chars in name
+RENM1  MOVB @VDP0,*R5+        get data from VDP
+       DEC  R1
+       JNE  RENM1
+       BL   @SFBOFC           write it back
+       B    @FIXSTK           new pointer in recnum, old one in R2
+*
+* direct input or direct output file
+*
+NOTREN CB   R2,@H14           input?
+       JNE  ADOF              nope...output
+*
+* /4a direct input file
+*
+       MOVB @ACCODE,R5        test access code
+       JNE  ADIF1A            non-zero, get data from file
+       MOV  @RECNUM,R7        otherwise, return file info to here...
+       MOV  R3,R5
+       AI   R5,FCB+LV2REC     #aus in file
+       MOV  *R5+,*R7+
+       MOV  @-4(R5),*R7+      flags and records/au
+       MOV  *R5+,*R7+
+       MOV  *R5+,*R7+
+       MOVB @H00,@MYPAD+>50
+       B    @SRTFB            release this buffer
+*
+* /4a direct output file
+*
+ADOF   MOVB @MYPAD+>4D,R5     test access code
+       JEQ  NGPL2             create direct output file.
+ADIF1A B    @ADIF1            write data into file
+*
+NGPL2  CLR  R1
+       MOVB @FCB+FSTATF(R3),R1  get FCB flags
+*
+       CB   R2,@STACOD        status?
+       JNE  NSTAT             no
+*
+       ANDI R1,>8B00          mask off irrelevant bits
+       SRC  R1,13
+       AB   @3(R4),R1         R1 LSB ADJUST TO GET F/V FLAG
+       MOVB R1,@SCNOFF        PUT IN SCREEN OFFSET
+       B    @SRTFB            release file buffer and return
+*
+NSTAT  MOV  R1,R5
+       CB   R2,@LODCOD        load?
+       JNE  NLOAD             nope...
+       B    @LOADFI           load file.
+*
+NLOAD  CB   R2,@H0A           binary read?
+       JNE  NBINR1
+       B    @OPA2
+*
+NBINR1 CB   R2,@H0B
+       JNE  NBINW1
+       MOV  @CHRCNT,R5        access code
+       JEQ  NBINW1            check for protection on creation!
+       B    @OPB2             otherwise, write data to file
+*
+NBINW1 ANDI R1,>0800          file protected?
+       JEQ  NOTPRO            nope
+*
+* protected file, only open-input is valid
+*
+       MOVB R2,R2             open?
+       JNE  BAD1              nope, error
+*
+       COC  @H0004,R2         update or output?
+       JNE  BAD1              yes, error
+       CZC  @H0002,R2         append?
+       JEQ  NOTPRO            no...must be input
+*
+BAD1   LI   R10,>2000         protection violation
+BD7    B    @CNBOP1
+*
+* existing file not protected
+*
+NOTPRO CB   R2,@DELCOD        delete it?
+       JNE  NDEL              nope
+DELOP1 B    @DELOOP           yes, delete the file
+*
+NDEL   MOVB R2,R2             open?
+       JNE  DELOP1            nope...direct output, empty the file
+*
+* open opcode housekeeping for existing file
+*
+       COC  @H0002,R2
+       JNE  NOOUT             update or input
+       CZC  @H0004,R2
+       JEQ  DELOP1            output, empty the file
+*
+NOOUT  LI   R10,>4000         incompatible file type
+       MOV  R5,R1             move FCB flags
+       SLA  R5,8
+       JOC  BD7               can't open a program image file
+*
+       BL   @FLGCON           convert PAB flags to FCB flags
+       ANDI R1,>8200          leave int/dis, var/fix flags
+       CB   R5,R1             same file type?
+       JNE  BD7               nope...incompatible types
+*
+       MOVB @H00,@CHRCNH      length to return to caller
+       CLR  @CHRCNT           <default>
+*
+       CLR  @RECNUM           added 4/23/1988 -PC
+*
+       MOVB @FCB+RECLEN(R3),R6  file record length
+       SRL  R6,8                make it a word
+       JNE  DRLN00              don't use extended record length
+       MOV  @FCB+EXTRLN(R3),R6  use extended record length
+       MOVB @MODE4A,R5          /4a mode?
+       JEQ  DRLN01              yes, report extended record length as zero...
+*
+DRLN00 MOV  R6,@CHRCNT
+DRLN01 MOV  @LRECLN,R5          caller record length
+       JNE  DRLN03              they don't want default record length
+       MOVB R6,R6
+       JEQ  DRLN02              record length valid in /4a and 9640 mode
+       MOVB @MODE4A,R1
+       JEQ  DRLN03              if /4a mode and default=extended...error
+*
+DRLN02 MOV  R6,R5               default record length
+       MOV  R6,@LRECLN          return default to caller
+DRLN03 C    R6,R5               check record length
+       JNE  BD7                 wrong record length...error
+*
+       MOV  @VOLUME,*R3         reserve FCB buffer
+       CLR  @FLOCDA(R3)         10/12/87 in case it wasn't already zeroed out
+*
+       COC  @H0006,R2           append?
+       JNE  RLEN2B              nope, return to caller
+*
+       MOV  @LV3REC+FCB(R3),R5  get sector offset for EOF
+       SWPB R5                  swap to make it a word
+       MOV  R5,@FLOFL2(R3)      level 2 offset for end of file
+       JEQ  RLEN2B              no sectors in file
+       BL   @GETAUS             make sure file has enough sectors
+       DATA BADOP7              this error should never happen
+       BL   @GETDSC             get the last data sector save location
+       MOVB @EOFOST+FCB(R3),*R3 get EOF offset in last sector
+RLEN2B B    @SYSRTN             return to caller

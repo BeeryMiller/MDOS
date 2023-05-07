@@ -1,0 +1,607 @@
+*      call dir loop structure in this file
+********************************************************************************
+*
+*      read,write routines
+*
+READ
+WRITE  MOVB @CPUFLG,@PASVDP   memory type, from PAB
+       LI   R10,>E000         bad op #7
+       CI   R2,ENDBUF         file already open?
+       JNE  RW001             yes...
+       B    @CNBOP1           no, error #7.
+*
+RW001  MOV  @FCB+LV3REC(R3),R5
+       SWPB R5                number of records already in file
+*
+       MOV  @OPCODE,R2        get opcode and PAB flags
+       COC  @H0010,R2         variable?
+       JNE  FIXXXX            nope
+       B    @VARI             yes.
+*
+********************************************************************************
+*
+* handle i/o to fixed record length files
+*
+FIXXXX MOVB @H00,@CHRCNH
+       MOV  @LRECLN,@CHRCNT   number of bytes moved
+       MOV  @FLOCFC(R3),R1    test FCB sector number
+       JEQ  FIXDIR            if zero, must be a directory file access
+       B    @FIXFIL           not directory file access
+*
+* do directory file access
+*
+FIXDIR MOV  @RECNUM,R1
+       JEQ  VREAD             record zero is disk volume info
+*
+       CI   R1,130            read past end of file? (127 files + 3 subdirs)
+       JLE  INRAN1            no, we're okay
+*
+       CB   @OPCODE,@REDCOD   read?
+       JEQ  FIXDI9            yes, error...
+*
+CDCON2 A    @D10,@CHRPTR      end of CALL DIR(X)
+       SZCB @CHAT,@CHAT
+       B    @SYSRTN
+FIXDI9 B    @BADOP5
+*
+H10
+H1000  DATA >1000
+H0010  DATA >0010
+*
+INRAN1 CI   R1,127
+       JH   DIRF00            must be a directory if recnum > 127
+*
+       DEC  R1                convert record number
+       SLA  R1,1              into a pointer offset
+       A    @VDPBUF,R1        now into the address of the pointer
+       MOV  *R1,R1            get sector number of FCB
+       JNE  VREAD             valid sector
+*
+DIRF00 C    @PNTSEC,@H0001    test if using root directory
+       JNE  DIRF99            not root, therefore no subdirs exist
+*
+       MOV  @RECNUM,R0
+       MOV  @VDPBUF,R1        count files, see if RECNUM points to a dir
+       CLR  @254(R1)          just in case directory was corrupt
+*
+DIRF01 MOV  *R1,*R1+          test if pointer is used
+       JEQ  DIRF10            nope, no more files to count
+       DEC  R0                one less file
+       JMP  DIRF01
+*
+DIRF10 CI   R0,3              r0 = 1,2,3 for dir #
+       JH   DIRF99            no such file entry
+*
+       LI   R1,VIBBUF+FDIRN1
+DIRF20 MOV  @10(R1),R5
+       JEQ  DIRF80            try next dir entry
+*
+       DEC  R0
+       JNE  DIRF80            not yet enough, try next dir entry
+*
+* create a dir entry to return to caller
+*
+       MOV  R3,R5
+       AI   R5,FCB
+       LI   R0,10
+*
+DIRF30 MOV  *R1+,*R5+         copy name to FCB
+       DECT R0
+       JNE  DIRF30
+*
+       LI   R0,6
+       LI   R10,1
+       C    @D1600,@VIBBUF+TOTAUS
+       JHE  DIRF35
+       INC  R10
+       C    @D3200,@VIBBUF+TOTAUS
+       JHE  DIRF35
+       INCT R10
+       C    @D6400,@VIBBUF+TOTAUS
+       JHE  DIRF35
+       INCT R10
+       INCT R10
+DIRF35 LI   R1,NULSEC+200
+       MOV  R0,*R1+
+       MOV  R10,*R1+
+       MOV  R10,R2
+       SLA  R2,8
+       MOV  R2,*R1+
+DIRF36 CLR  *R1+
+       CI   R1,NULSEC+230
+       JL   DIRF36
+*
+       CB   @OPCODE,@REDCOD
+       JEQ  JGSFX1
+       B    @CDIRFI            still in a CALL DIR(x)
+JGSFX1 B    @DONEX
+*
+DIRF80 AI   R1,12
+       CI   R1,VIBBUF+BITMAP
+       JL   DIRF20            still more to check, fall through if no such dir
+*
+DIRF99 CB   @OPCODE,@REDCOD   read?
+       JNE  CDCON2            no, end of CALL DIR(x)
+*
+       MOVB @BLANK,@FCB(R3)   return a null file to caller
+       LI   R1,NULSEC+200     clear file info
+NOFILG CLR  *R1+
+       CI   R1,NULSEC+230
+       JL   NOFILG
+       B    @DONEX
+*
+VREAD  MOV  R1,@MYR3          sector number
+       MOV  R3,@MYR1          where to put the sector
+       BLWP @RSCPU            read it in
+       DATA BADOP
+*
+       MOV  @RECNUM,R1        test for VIB access
+       JNE  FIPARM            not VIB
+*
+       CLR  R0                   type zero file
+       MOV  @FCB+TOTAUS(R3),R10  number of au's on disk
+       DECT R10               compensate for VIB and PTRs
+       C    @D3200,@VIBBUF+TOTAUS
+       JHE  JSFIX1
+       DECT R10
+       C    @D6400,@VIBBUF+TOTAUS
+       JHE  JSFIX1
+       DECT R10
+       DECT R10
+*
+JSFIX1 CLR  R2                count of free sectors
+       LI   R8,100            100 words in bitmap to check
+       MOV  R3,R6
+       AI   R6,FCB+BITMAP     pointer to bitmap
+*
+NXTBTS MOV  *R6+,R5           get word from bitmap
+       LI   R7,16             count for 16 bits
+NBIT1  SRL  R5,1              test this bit
+       JOC  NBIT              one...used
+       INC  R2                not used, increment count
+NBIT   DEC  R7
+       JNE  NBIT1             more bits in this work
+*
+       DEC  R8
+       JNE  NXTBTS            more words in bitmap
+*
+       C    @D1600,@VIBBUF+TOTAUS            doubled bitmap?
+       JHE  NBIT2                            no
+       SLA  R2,1              yes, double our count
+       C    @D3200,@VIBBUF+TOTAUS
+       JHE  NBIT2
+       SLA  R2,1
+       C    @D6400,@VIBBUF+TOTAUS
+       JHE  NBIT2
+       SLA  R2,1
+*
+NBIT2  CB   @OPCODE,@REDCOD   read?
+       JEQ  DONE              yes, return the info to user
+       LI   R5,18             call dir header routine
+       JMP  CDCON1            call routine in other page
+*
+* get file info within directory access
+*               -file type
+*               -number of sectors
+*               -record length <length of file for program image>
+*
+FIPARM MOVB @FCB+FSTATF(R3),R6  get flags
+       LI   R0,5                assume program file
+       MOV  @FCB+LV2REC(R3),R10 number of sectors in file
+       MOV  R10,R2              save length of data part
+       INC  R10                    account for FCB sector
+       C    @D1600,@VIBBUF+TOTAUS  doubled bitmap? <hmmm...empty VIB?>
+       JHE  S$$1                   nope
+       INCT R10               yes, more compensation
+       ANDI R10,>FFFE         always even
+*
+       C    @D3200,@VIBBUF+TOTAUS
+       JHE  S$$1
+       INCT R10
+       C    @D6400,@VIBBUF+TOTAUS
+       JHE  HD3200
+       INCT R10
+       INCT R10
+HD3200 MOV  R1,@JGSR1
+       MOV  R9,@JGSR9
+       MOV  R10,@JGSR10
+       LI   R1,4
+       C    @D6400,@VIBBUF+TOTAUS
+       JHE  HD3201
+       SLA  R1,1
+HD3201 CLR  R9
+       DIV  R1,R9
+       CI   R10,0
+       JEQ  JGSOK
+       MOV  @JGSR10,R10
+       INCT R10
+       MOV  R10,@JGSR10
+       JMP  HD3201
+*      C    @D6400,@VIBBUF+TOTAUS
+*      JHE  JGSOK1
+*      INCT R10
+*      JMP  JGSOK1
+*
+JGSOK  MOV  @JGSR10,R10
+JGSOK1 MOV  @JGSR9,R9
+       MOV  @JGSR1,R1
+S$$1   MOVB R2,@HIBYTE
+       SWPB R2                      trash msb of sector count!
+       MOVB @FCB+EOFOST(R3),@5(R4)  size is LSB + eof offset -256
+       JEQ  SECBOU                  unless we're at sector boundary
+       AI   R2,->0100               256 less...
+SECBOU SRL  R6,9              program image?
+       JOC  PFILE1            yes...check protection
+*
+       MOVB @FCB+RECLEN(R3),R2 @@ record length for file
+       SRL  R2,8
+*
+       DEC  R0                set file-type
+*
+       SRL  R6,1              internal?
+       JOC  INTER             yes, type 3,4
+       DECT R0                no,  type 1,2
+*
+INTER  SLA  R6,11             variable?
+       JOC  INTER1            yes...type 2,4
+       DEC  R0                no,   type 1,3
+INTER1 SRL  R6,10             re-adjust flags
+*
+PFILE1 SRL  R6,3              protected?
+       JNC  CDIRFI            nope
+       NEG  R0                yes, negate filetype
+*
+CDIRFI CB   @OPCODE,@REDCOD   read?
+       JEQ  DONE              yes, return info to caller
+*
+       LI   R5,20             otherwise call display routine
+*
+* 7/7/96, TEST
+*
+* CDCON1
+CDCON1 BL   @PG2LN3           on other page...
+       INC  @RECNUM           next record
+       B    @FIXDIR
+*
+BADOP5 B    @BOCL5
+*
+* copy file info to return area
+*
+DONE   LI   R1,NULSEC+200
+       MOV  R0,*R1+
+       CLR  *R1+
+       MOV  R10,*R1+
+       CLR  *R1+
+       MOV  R2,*R1+
+       MOVB @H00,*R1+
+       MOVB @HIBYTE,*R1+
+*
+       MOV  R3,R15
+       AI   R15,FCB+CREDAT
+       BL   @UNSQAS           creation date/time
+       BL   @UNSQAS           update   date/time
+*
+* convert dir info into strings for caller
+*
+DONEX  CLR  R5
+       MOV  R3,R1
+       AI   R1,FCB
+       MOV  R1,R7
+*
+DONEL1 CB   *R1+,@H20         determine length of name
+       JEQ  DONE2
+       INC  R5
+       CI   R5,10
+       JLT  DONEL1
+*
+DONE2  LI   R14,NULSEC        BUILD DIRECTORY ENTRY into nulsec
+       LI   R8,NULSEC+200     pointer to numeric return arguments
+       LI   R6,4              default number of numerics user expects
+       C    @RECLEN,@D38      are they using short record?
+       JEQ  MVLE              yes, don't return creation and update dates
+       LI   R6,16             return date & time info
+*
+MVLE   MOVB @11(R4),*R14+     number of chars to move (r5 lsbyte)
+       JEQ  LENMOV            none to move
+*
+MOVNME MOVB *R7+,*R14+        move a character
+       DEC  R5                one less to move
+       JNE  MOVNME            more to move...
+*
+       MOVB @BLANK,@FCB(R3)   make sure compare doesn't see this as a file
+*
+LENMOV DEC  R6                done?
+       JEQ  NONEX             yes, no more numbers to transfer
+*
+       LI   R5,8              length of a number
+       MOV  *R8+,@FAC         convert next nubmer
+       MOV  *R8+,@FAC+2
+       LWPI WRKREG
+       LI   R5,22             subroutine code for CIF
+       BL   @PG2LN3           do it...
+       LWPI DSRWS             get our workspace back
+       LI   R7,FAC            location of number to return
+       JMP  MVLE              copy the bytes over
+*
+HIBYTE DATA 0
+*
+NONEX  INC  @RECNUM           bump user pointer for sequential access
+*
+       CLR  @PASRW            DSR --> user
+       MOV  @BUFADH,@PASADH
+       MOV  @BUFADR,@PASADL   user buffer
+       MOV  @GBGSEC,@PASDSR   dsr buffer
+       MOV  @LRECLN,@PASCNT   send back the right number of bytes
+       JNE  NONEP             default return length is 38 if they nuked
+       MOV  @D38,@PASCNT      PAB after open...
+NONEP  BLWP @PASDAT           return the info to the user
+CDCON5 B    @SYSRTN
+*
+********************************************************************************
+*
+*      unsquash time pointed to by r15, move *r1...
+*
+UNSQAS MOV  *R15,R14
+       ANDI R14,>001F
+       SLA  R14,1
+       MOV  R14,*R1+
+       CLR  *R1+
+       MOV  *R15,R14
+       ANDI R14,>07E0
+       SRL  R14,5
+       MOV  R14,*R1+
+       CLR  *R1+
+       MOV  *R15+,R14
+       SRL  R14,11
+       MOV  R14,*R1+
+       CLR  *R1+
+*
+       MOV  *R15,R14
+       ANDI R14,>001F
+       MOV  R14,*R1+
+       CLR  *R1+
+       MOV  *R15,R14
+       ANDI R14,>01E0
+       SRL  R14,5
+       MOV  R14,*R1+
+       JEQ  UNS2
+*
+       MOV  *R15,R14
+       SRL  R14,9
+       AI   R14,1900
+       CI   R14,1986
+       JGT  UNS2
+       AI   R14,100
+UNS2   CLR  *R1+
+       INCT R15
+       MOV  R14,*R1+
+       CLR  *R1+
+       RT
+*
+BADOZ5 B    @BADOP5
+*
+********************************************************************************
+* FIXED RECORD IO
+* handle i/o to a fixed record length data file
+*
+TESCHR5 DATA 0
+TESCHR8 DATA 0
+
+FIXFIL MOV  @RECNUM,R6        test record number
+       JLT  BADOZ5            illegal record number
+       CB   R2,@REDCOD        read?
+       JNE  FIX000            if write, no compare for existing record number
+       C    R6,R5             does record exist?
+       JHE  BADOZ5            error, trying to read non-existent record
+*
+FIX000 CLR  R5                   clear high word of divide
+       MOVB @FCB+LRECPA(R3),R8   @@ records/au _or_ au's/record
+       SRL  R8,8
+       DIV  R8,R5             calculate sector offset in file
+       INC  R5
+       MOV  R6,@PATHNM+4      convenient place to save record number in sector
+* 9.9.09 Start fix:
+* Routine does not write records in sequence. Call GETAUS twice to correct
+* Verify 1 sec/AU is still OK
+*      BL   @GETAUS           get physical sector number from offset
+*      DATA BADOPC            disk full, all clusters used...
+*
+       MOV  R5,@TESCHR5
+       MOV  R8,@TESCHR8
+       BL   @GETAUS
+       DATA BADOPC
+       MOV  @PATHNM+4,R6
+       MOV  @TESCHR5,R5
+       MOV  @TESCHR8,R8
+       BL   @GETAUS
+       DATA BADOPC
+* end fix   9.9.09
+       MOV  @FLOCDA(R3),R9    current data sector
+       MOV  R9,R8             save a copy
+       ANDI R9,>7FFF          mask data changed flag
+       C    R9,R1             sector already loaded?
+       JEQ  SASECT            yes...
+*
+       SLA  R8,1              check data changed flag
+       JNC  GSEC              not, changed, don't update the disk
+*
+       MOV  R9,@MYR3          sector number on disk
+       MOV  @VDPBUF,@MYR1     buffer address
+       BLWP @WSCPU2           write the changed sector back
+       DATA BADOPS            low-level error...
+*
+GSEC   BL   @GETDSC           get data sector from file
+*
+SASECT MOV  @PATHNM+4,R1        record number within sector
+       MOVB @FCB+RECLEN(R3),R5  @@record length
+       SRL  R5,8                @@
+       MPY  R5,R1               offset of record within sector
+*
+       MOVB @CPUFLG,@PASVDP   data location
+       MOV  @BUFADH,@PASADH
+       MOV  @BUFADR,@PASADL   user buffer address
+       MOV  R5,@PASCNT        number of bytes to move
+       MOV  @VDPBUF,@PASDSR
+       A    R2,@PASDSR        DSR record address
+*
+       INC  @RECNUM           update record number
+       CB   @OPCODE,@REDCOD   read?
+       JNE  WRT2              nope...go to write
+*
+       CLR  @PASRW            DSR --> user
+       BLWP @PASDAT
+WRT3   B    @SYSRTN           return to caller
+*
+WRT2   SOC  @H8000,@FLOCDA(R3)  sector changed
+       SETO @PASRW              user --> DSR
+       BLWP @PASDAT
+*
+       MOV  @FCB+LV3REC(R3),R6 current highest record number
+       SWPB R6
+       MOV  @RECNUM,R5         current record number + 1
+       C    R5,R6              higher?
+       JL   WRT3               nope
+STLV3R SWPB R5                 yes, update the highest record number info
+       MOV  R5,@FCB+LV3REC(R3) put it in its place
+       JMP  WRT3               return
+*
+* routine to get a data sector from a file
+*
+GETDSC MOV  R1,@MYR3
+       MOV  @VDPBUF,@MYR1
+       BLWP @RSCPU2
+       DATA BADOPS
+       MOV  R1,@FLOCDA(R3)    physical location of data sector on disk
+       RT
+*
+********************************************************************************
+*
+* handle i/o to variable record lengths
+*
+VARI   CB   R2,@REDCOD        read?
+       JNE WRTV1              no.
+*
+* read a record from variable file.
+*
+       C    @FLOFL2(R3),R5       test for EOF
+       JL   NOTEND               not EOF, not even in last sector
+       CB   *R3,@FCB+EOFOST(R3)  in last sector, test offset
+       JEQ  BADOZ5               error, we're at end of file already
+       MOVB @LRECLN,R1        test for extended records
+       JNE  EXTVRD            read a record from an extended file
+*
+NOTEND MOVB *R3,R1            go to next sector? (offset=0)
+       JEQ  NSECTR            yes.
+*
+       SRL  R1,8              make offset a word
+*
+VARI2  A    @VDPBUF,R1        point into data sector
+       MOVB *R1,R5            @@ fetch current record length
+       CB   @HFF,R5           is it end of sector mark?
+       JNE  THSSEC            nope
+*
+       C    R1,@VDPBUF        only if 1st byte of sector is >ff
+       JEQ  THSSEC            it must be variable 255
+*
+       MOVB @H00,*R3          go to next sector
+*
+NSECTR INC  @FLOFL2(R3)       increment internal offset
+       MOV  @FLOFL2(R3),R5    get sector offset in file
+       BL   @GETAUS           get sector number from clusters
+       DATA BADOP7            <<<shouldn't ever take this branch>>>
+       BL   @GETDSC           get a data sector
+       CLR  R1                offset is zero
+       JMP  VARI2             go back to get record length...
+*
+* move record from sector back to calling program
+*
+THSSEC MOVB @H00,@CHRCNH
+       CLR  @CHRCNT
+       MOVB R5,@CHRCNT+1      @@ return current record length
+       AB   @H0100,*R3        make it an offset to the data part of record
+       MOVB *R3,R2
+       SRL  R2,8              get offset of data record
+       AB   R5,*R3            bump pointer to next record
+*
+       SRL  R5,8
+       MOV  R5,@PASCNT        count of bytes to move       @@ we need a loop
+       MOV  @BUFADH,@PASADH                                @@ for multi-sector!
+       MOV  @BUFADR,@PASADL   user buffer address
+       MOV  @VDPBUF,@PASDSR   DSR sector buffer
+       A    R2,@PASDSR        offset of record in sector
+       CLR  @PASRW            DSR --> user
+       BLWP @PASDAT           move the data.
+EXTVWT
+EXTVRD B    @SYSRTN
+*
+* write a record to variable length file
+*
+WRTV1  MOVB @LRECLN,R5
+       JNE  EXTVWT            write a record into extended file
+*
+       MOVB *R3,R5            offset zero?
+       SRL  R5,8              make it a word
+       JEQ  UPDT00            advance to next sector--write back changed buffer
+*
+       MOV  @CHRCNT,R6        get record length
+       INC  R6                compensate for length byte
+       A    R6,R5             calculate offset in sector for end of record
+       CI   R5,256            out of sector?
+       JL   NOCARR            no, we're fine
+       JH   UPDT00            no way for it to fit
+*
+       C    @H00FF,@LRECLN    var 255 and record ends at end of sector?
+       JEQ  NOCARR            we'll write it with no end-of-sector mark...
+*
+UPDT00 MOV  @FLOCDA(R3),R5    updated data in sector?
+       JLT  UPDT01            yes, write it back
+       JMP  GNSEC             no <must be 1st sector in file...or last/append)
+*
+UPDT01 SZC  @H8000,@FLOCDA(R3)               kill data change flag
+       MOV  @FLOCDA(R3),@MYR3                get data sector #
+       MOV  @VDPBUF,@MYR1                    data sector address
+       BLWP @WSCPU2                          write it back out to disk
+       DATA BADOPS                           low-level error
+*
+GNSEC  MOVB @H00,*R3          start next sector
+       INC  @FLOFL2(R3)       increment internal sector offset
+       MOV  @FLOFL2(R3),R5    get internal sector offset
+       BL   @GETAUS           and change it into a physical sector number
+       DATA BADOPC            error, disk full...
+       MOV  R1,@FLOCDA(R3)    physical sector number
+*
+* move record from calling program into sector
+*
+NOCARR SOC  @H8000,@FLOCDA(R3) set changed data flag
+       MOVB *R3,R2            get offset into sector
+       SRL  R2,8              make it a word
+*
+       MOV  @VDPBUF,R15       sector address
+       A    R2,R15            r15 has address of record
+*
+       MOVB @CHRCNT+1,R5      @@ change for word record length
+       MOVB R5,*R15+          move the byte count into record
+       MOV  R15,@PASDSR       address of bytes in DSR memory
+*
+       SRL  R5,8
+       MOV  R5,@PASCNT        @@ count of bytes to move...need a loop for more
+       SETO @PASRW            user --> DSR
+       MOVB @BUFADH,@PASADH
+       MOV  @BUFADR,@PASADL   user buffer address
+       BLWP @PASDAT           move record into sector
+*
+       A    R5,R15            move pointer past current record
+       AB   @H01,*R3
+       AB   @CHRCNT+1,*R3     update internal offset in this sector
+       JNC  ENDS00            it all fits in sector
+       C    @H00FF,@LRECLN    if var 255, and end-of-sector,
+       JEQ  ENDS01               then no mark...
+*
+ENDS00 MOVB @HFF,*R15+        put an end-of-sector flag in to allow flush
+ENDS01 MOVB *R3,@FCB+EOFOST(R3) update offset in FCB
+       MOV  @FLOFL2(R3),R5    internal sector offset in file
+       B    @STLV3R           update number of sectors actually used
+*
+JGSR1  DATA 0
+JGSR9  DATA 0
+JGSR10 DATA 0

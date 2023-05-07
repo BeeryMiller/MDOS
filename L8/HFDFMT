@@ -1,0 +1,28 @@
+*
+* format code for hfdc floppies
+* must be in >4000 page
+*
+HFDFMT MOV  R2,R0
+       AI   R0,-9             calc drive # for call
+*
+       MOVB @MAP96+1,@PWRPAG
+       MOVB @MAP96+3,@PWRPAG+1
+       MOVB @PAGD5,@MAP96+1
+       MOVB @PAGD6,@MAP96+3
+*
+       C    @>6000,@WDS2TX    HFDC code not installed...
+       JNE  HFDFM9
+       BLWP @>600C
+*
+       MOV  R0,R0
+       JNE  HFDFM9
+*
+       MOVB @PWRPAG,@MAP96+1
+       MOVB @PWRPAG+1,@MAP96+3
+*
+       B    @HFDGD0
+*
+HFDFM9 MOVB @PWRPAG,@MAP96+1
+       MOVB @PWRPAG+1,@MAP96+3
+       B    @HFDBD6
+*

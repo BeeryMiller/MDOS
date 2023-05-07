@@ -1,0 +1,92 @@
+*****  FILE PLAY\FDC-SRC-P  *****
+; 2.6.2021  Added TIPI low level REFs for hdr1/hdr2/sect/etc use
+;
+;
+       UNL
+       DEF  PABD00
+       DEF  SET964
+       DEF  NUMFIL
+       DEF  PAGLST,PAGCNT
+       DEF  SYSRT1                           return point used by RS232
+       DEF  DRVMAP                           drive map for luser
+       DEF  INTMAP                           page list for ram_disk
+*
+
+       DEF  DSREN1,DSREN3
+
+       DEF  PASDAT
+       DEF  PASRW,PASVDP,PASADH,PASADL
+       DEF  PASCNT,PASDSR
+       DEF  WS4000
+*
+       DEF  OPCODE,FLGSTS,PABERR,BUFADH,BUFADR,RECNUM
+       DEF  LRECLN,CPUFLG,CHRCNH,CHRCNT,SCNOFF,OPTLN,PATHNM
+       DEF  FLPRT1
+*
+       REF  HFDBD6,HFDGD0
+       DEF  HFDFMT
+*
+       REF  LSTDRV
+       REF  MAP426
+*
+GRMRA  EQU  >9802
+GRMWA  EQU  >9C02
+*
+       REF  PIOTYP,STATAB
+       REF  PIOTY2
+
+       REF  TIPENA       tipi\header - device enable/disable
+       REF  TIPPWR       tipi\header - clear to trigger powerup
+       REF  TIPLV2       tipi\level2
+       REF  TIPLV3       tipi\level3
+
+       IDT  '>PaulC< '
+* THIS FILE IS FOR COPYING ALL THE SOURCE FILES FOR THE MPES ALGORITHM
+*
+*      DEF  PWRLNK,DSRLN,GPLLN
+*
+       COPY "\MDOS\HEAD\PAGENUMS"
+       COPY "\MDOS\L8\LAYOUT"                +hfdc,+subdir
+       COPY "\MDOS\HEAD\OSTASK"
+*
+       AORG HEAD4A
+*
+       COPY "\MDOS\L8\HDR1-P2"                +hfdc
+       AORG PG1COD
+       COPY "\MDOS\L8\HDR2-P2"                +hfdc
+       COPY "\MDOS\L8\SECT2-P"               +hfdc low level i/o
+       COPY "\MDOS\L8\HFDFMT"                 +hfdc
+       COPY "\MDOS\L8\VDPIO-P"
+       COPY "\MDOS\L8\PTRCON"
+       COPY "\MDOS\L8\FILEOP!"                +subdir
+       COPY "\MDOS\L8\PASDAT"
+       COPY "\MDOS\L8\OPEN&LS2"               +subdir
+       COPY "\MDOS\L8\SYSRTN-P"
+       COPY "\MDOS\L8\ILR"
+       COPY "\MDOS\L8\DSRMEM"                +hfdc
+       COPY "\MDOS\L8\MEMLST"                page list
+*
+WS4000 DATA 0,0,0,0,0,0,0,0                  this WS can't be paged out
+       DATA 0,0,0,0,0,0,0,0
+PASSAV BSS  12*2
+*
+       AORG  PG1CON                          after rs232 code in >6000 page
+       COPY "\MDOS\L8\LOADSAV-P"
+       COPY "\MDOS\L8\DELETE-P"               +subdir
+       COPY "\MDOS\L8\RW-P2"                  +subdir
+       COPY "\MDOS\L8\CLORESSTS"
+       COPY "\MDOS\L8\GETAUS-P4"             get sectors for file
+       COPY "\MDOS\L8\GETSEC-P3"             get a sector from BITMAP
+       COPY "\MDOS\L8\TIMES"
+       COPY "\MDOS\L8\GETVIB-P"              get the VIB to VIBBUF
+
+*      COPY "\MDOS\L8\SECMONS"               ;updated !MAKEfile 5.7.2022
+*
+DSREN3 EQU  $
+
+OPTLN  EQU  OPTLEN
+*
+DSRLN  EQU  DSRLNK
+GPLLN  EQU  GPLLNK
+       LIST
+       END

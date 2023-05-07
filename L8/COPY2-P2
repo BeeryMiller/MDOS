@@ -1,0 +1,30 @@
+       UNL
+*
+* Added CYASTP for inline SETDSK routine.  Referenced in DSRPASS-S, SECT3-P3
+       DEF  CYASTP,STPDRV,TRKDRV,VERWRT
+       DEF  CTLTYP,CTLBAS,LSTDRV
+*
+       REF  INTMAP,DRVMAP
+*
+       REF  HFDFMT
+       DEF  HFDBD6,HFDGD0
+*
+       COPY "\MDOS\HEAD\PAGENUMS"
+       COPY "\MDOS\L8\LAYOUT"
+*
+       AORG PG2VEC                           LOCATION ON 9640 IS +4K HIGHER . .
+*
+       COPY "\MDOS\L8\CFILES-P3"                   BECAUSE OF NOT PAGING.
+       COPY "\MDOS\L8\COMPAR-P2"
+ LIST
+       COPY "\MDOS\L8\FORMAT-P3"
+ UNL
+       COPY "\MDOS\L8\SECT3-P3"
+*
+       COPY "\MDOS\L8\DISK3-P3"
+       COPY "\MDOS\L8\CIF"                       STOLEN FROM MYARC DISK ROM
+*
+       LIST
+SCUM   DATA 0
+MACRO1 EQU  $
+       END

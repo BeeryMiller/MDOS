@@ -1,0 +1,565 @@
+* FILENAME: VX2B2CS
+*
+* PrintScreen
+*
+* R1x = 0 for shades, 1 for outline
+* R2x = 0 for normal density (double), 1 for hi density (quad)
+*
+EXTVEC  DATA    0,0
+PARMR1  DATA    0
+PARMR2  DATA    0
+X92BVS  DATA    X92BM0,X92BM0,X92BM2,X92BM0
+        DATA    X92BM4,X92BM4,X92BM6,X92BM6
+        DATA    X92BM6,X92BM6
+EIGHT   DATA    8
+X92BP0  DATA    >0092
+        BYTE    >00,0
+        DATA    >01B0,0,0
+        BYTE    >00
+        BYTE    0
+        DATA    0
+        BYTE    0
+        BYTE    9
+        TEXT    'PIO.CR'
+X92BP1  DATA    >0092
+        BYTE    >00,0
+        DATA    >01B0,0,64
+        BYTE    >00
+        BYTE    0
+        DATA    0
+        BYTE    0
+        BYTE    9
+        TEXT    'PIO.CR'
+X92BBF  BYTE    27,76,0,2
+X92BLS  BYTE    27,65,8,27,50,27,65,8
+X92BCR  BYTE    13,10
+X92BBY  BYTE    0
+X92BBN  BYTE    0
+PFLUSH  DATA    0
+PRADDR  DATA    >81B0
+PRDAT   DATA    0
+PRREM   DATA    0
+PRMAG   DATA    0
+PRMAG2  DATA    2
+PRMAG4  DATA    4
+PRMAG8  DATA    8
+LORESC  DATA    4
+HIRESC  DATA    8
+PXCNT   DATA    0
+PRDEN   DATA    0
+PRDEN2  DATA    76*256
+PRDEN4  DATA    90*256
+PRROWS  DATA    0
+MASK    DATA    >8040,>2010,>0804,>0201
+*
+SPACES TEXT '                    '
+        EVEN
+X92BVC
+X92BL1  MOV     @EXTVEC,R0
+        JEQ     X92BLZ
+        MOV     @2(R13),@PARMR1
+        MOV     @4(R13),@PARMR2
+        MOVB    @MAPPER+4,R1
+        MOVB    @EXTVEC,@MAPPER+4
+        MOVB    @H00,@STATE
+        MOVB    R1,@MAPPER+4
+        RT
+
+X92BLZ  MOVB    @PRDEN2,@PRDEN
+        MOV     @PRMAG4,@PRMAG          * Magnify * 4
+        MOV     @GXROWS,R1
+        SLA     R1,2
+        MOV     R1,@PRROWS
+        MOV     @4(R13),@4(R13)
+        JEQ     X92BL2
+        MOVB    @PRDEN4,@PRDEN
+        MOV     @PRMAG8,@PRMAG
+        MOV     @GXROWS,R1
+        SLA     R1,3
+        MOV     R1,@PRROWS
+X92BL2  MOVB    @PRDEN,@X92BBF+1
+        MOV     @VIDMOD,R2
+        SLA     R2,1
+        MOV     @X92BVS(R2),R9
+X92BL3  MOV     R11,@X900ST+10
+        BL      *R9
+        MOV     @X900ST+10,R11
+        RT
+*
+X92BM0  MOV     @CHCOLS,@X92BP0+8
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,@VDPWA
+        CLR     R0
+        MOVB    R0,@X92BP0
+        LI      R0,X92BP0
+        BLWP    @PABMV
+        LI      R0,>0180
+        XOP     @EIGHT,0
+        LI      R0,>0300
+        MOVB    R0,@>8180
+        MOV     @2(R13),@2(R13)
+        JEQ     X92B00
+*
+*       LI      R1,X92BBY
+*       LI      R2,2
+*       BLWP    @DATAMV
+        LI      R0,>0180
+        XOP     @EIGHT,0
+*
+X92B00  CLR     R5
+        MOV     @CHROWS,R6
+X92BN0  MOV     R5,R0
+        A       @SCRIMG,R0
+        MOV     @CHCOLS,@>8180+12
+*
+       MOV  @CHCOLS,R1
+       LI   R2,>81B0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        MOVB    R0,@VDPWA
+*
+X92BO0 MOVB @VDPRD,*R2+
+       DEC  R1
+       JNE  X92BO0
+*
+X92BR0 DEC  R2
+       CI   R2,>81B0
+       JL   X92BQ0
+*
+       CB   *R2,@SPACES
+       JEQ  X92BR0
+*
+X92BQ0 INC  R2
+       AI   R2,->81B0
+       MOV  R2,@>8180+12
+       JEQ  X92BS0
+*
+        LI      R0,>0180
+        XOP     @EIGHT,0
+*
+X92BS0  LI      R1,X92BCR
+        LI      R2,2
+        BLWP    @DATAMV
+        LI      R0,>0180
+        XOP     @EIGHT,0
+        A       @CHCOLS,R5
+        DEC     R6
+        JNE     X92BN0
+*
+        MOV     @2(R13),@2(R13)
+        JEQ     X92B01
+*       LI      R1,X92BBN
+*       LI      R2,2
+*       BLWP    @DATAMV
+        LI      R0,>0180
+        XOP     @EIGHT,0
+X92B01  LI      R0,>0100
+        MOVB    R0,@>8180
+        LI      R0,>0180
+        XOP     @EIGHT,0
+        RT
+*
+X92BM2
+X92BM4
+X92BM6  RT
+
+DATAMV  DATA    LOWWP0,$+2
+        LI      R3,>81B0
+        MOV     @2(R13),R2
+        MOV     @4(R13),R4
+        MOV     R4,@>8180+12
+DATAM1  MOVB    *R2+,*R3+
+        DEC     R4
+        JNE     DATAM1
+        RTWP
+
+PABMV   DATA    LOWWP0,$+2
+        LI      R3,>8180
+        MOV     *R13,R2
+        LI      R4,48
+PABMV1  MOV     *R2+,*R3+
+        DECT    R4
+        JNE     PABMV1
+        RTWP
+
+* HCharColor
+*
+* R1x = Row
+* R2x = Col
+* R3x = ASCII character to write to screen
+* R4x = Number of times to write character and color
+* R5h = Foreground color for character
+* R5l = Background color for character
+*
+* 93/04/10 - mod. for performance improvement  cp
+*
+X92CCC DATA 0            FGD/BGD COLOR
+X92CLS  DATA    X92CM0,X92CM1,X92CM2,X92CM3
+        DATA    X92CM4,X92CM4,X92CM6,X92CM6
+        DATA    X92CM6,X92CM6
+*
+X92CVC
+X92CL1
+       MOV  @10(R13),@X92CCC   GET FGD/BGD COLOR
+X92CXX MOV  @VIDMOD,R1         ENTRY FROM HCHAR
+        SLA     R1,1
+        MOV     @X92CLS(R1),R9
+        MOV     @8(R13),R10
+       JEQ  X92CL2
+       LI   R12,VDPWA          USE *R12 FOR VDPWA ACCESS
+       B    *R9
+X92CL2 RT
+*
+X92CM0 MOV  @X92CCC,R1         GET FGD/BGD COLOR
+        C       R1,@BRDCOL
+        JEQ     X92CN0
+        MOV     R1,R0
+        ANDI    R0,>F
+        ANDI    R1,>0F00
+        SRL     R1,4
+        SOC     R1,R0
+        ORI     R0,>0700
+        BLWP    @VWTR
+X92CN0  MOV     @6(R13),R1
+        MOV     @4(R13),R5
+        MOV     @2(R13),R6
+        SLA     R1,8
+*
+* at this point, r6=row r5=column r10 = count
+*
+       MOV  R6,R8
+       MPY  @CHCOLS,R8
+       A    R5,R9             r9 = screen cursor address
+*
+       MOV  R6,R7
+       MPY  @D80,R7
+       A    R5,R8             r8 = buffer cursor address
+       A    @SCROFF,R8
+       C    R8,@SCREND
+       JL   X2C000
+       S    @SCRADD,R8
+*
+X2C000 SWPB @SCRIMG+2
+       MOVB @SCRIMG+2,*R12
+       SWPB @SCRIMG+2
+       MOVB @SCRIMG+2,*R12
+*
+       MOV  R9,R0
+       A    @SCRIMG,R0
+       SWPB R0
+       MOVB R0,*R12
+       SWPB R0
+       ORI  R0,>4000
+       MOVB R0,*R12
+*
+X92CO0 MOVB R1,@VDPWD
+       MOVB R1,*R8+
+       INC  R5
+       C    R5,@CHCOLS
+       JL   X92CP0
+*
+* here, go to start of next row
+*
+       CLR  R5
+       INC  R6
+       AI   R8,40             this is the correct constant for text 40
+*
+       C    R6,@CHROWS
+       JL   X2C001
+*
+* reset to 0,0
+*
+       CLR  R6
+       CLR  R9
+       MOV  @SCROFF,R8
+       DEC  R10
+       JNE  X2C000
+       JMP  X92CQ0
+*
+X2C001 C    R8,@SCREND
+       JL   X92CP0
+       S    @SCRADD,R8
+*
+* one less character to process
+*
+X92CP0 DEC  R10
+       JNE  X92CO0
+X92CQ0 RT
+*
+X92CM1 MOV  @X92CCC,R2         GET FGD/BGD COLOR
+        MOV     R2,R1
+        ANDI    R1,>7FFF
+        C       R1,@BRDCOL
+        JEQ     X92CZ1
+        MOV     R1,R0
+        ANDI    R0,>F
+        ANDI    R1,>0F00
+        SRL     R1,4
+        SOC     R1,R0
+        ORI     R0,>0700
+        BLWP    @VWTR
+X92CZ1  MOV     @6(R13),R1
+        MOV     @4(R13),R5
+        MOV     @2(R13),R6
+        SLA     R1,8
+X92CN1  MOV     R6,R8
+        MPY     @CHCOLS,R8
+        MOV     R9,R0
+       A    R5,R0
+*
+       MOV  R6,R7             @@ pcmod (quick hack)
+       MPY  @D80,R7
+       A    R5,R8
+       A    @SCROFF,R8
+       C    R8,@SCREND
+       JL   X2C100
+       S    @SCRADD,R8
+X2C100 MOVB R1,*R8
+*
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,*R12
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,*R12
+        A       @SCRIMG,R0
+        SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,*R12
+        ANDI    R0,>BFFF
+        S       @SCRIMG,R0
+        MOVB    R1,@VDPWD
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,*R12
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,*R12
+        MOV     R0,R3
+        SRL     R0,3
+        A       @CTABLE,R0
+        SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        MOVB    R0,*R12
+        ANDI    R3,>7
+        MOVB    @VDPRD,R4
+        MOVB    R2,R2
+        JLT     X92CO1
+        SZCB    @BTMASK(R3),R4
+        JMP     X92CP1
+X92CO1  SOCB    @BTMASK(R3),R4
+X92CP1  SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,*R12
+        MOVB    R4,@VDPWD
+        INC     R5
+        C       R5,@CHCOLS
+        JL      X92CQ1
+        CLR     R5
+        INC     R6
+        C       R6,@CHROWS
+        JL      X92CQ1
+       CLR  R5
+       CLR  R6
+X92CQ1  DEC     R10
+        JNE     X92CN1
+        RT
+*
+X92CM2  RT
+*
+X92CM3  MOV     @6(R13),R1
+        MOV     @4(R13),R5
+        MOV     @2(R13),R6
+        CLR     R2
+       MOVB @X92CCC,R2         GET FGD COLOR
+       MOVB @X92CCC+1,R3       GET BGD COLOR
+        SLA     R2,4
+        SOCB    R3,R2
+        SLA     R1,8
+X92CN3  MOV     R6,R8
+        MPY     @CHCOLS,R8
+        MOV     R9,R0
+        A       R5,R0
+*
+       MOV  R6,R7             @@ pcmod (quick hack)
+       MPY  @D80,R7
+       A    R5,R8
+       A    @SCROFF,R8
+       C    R8,@SCREND
+       JL   X2C300
+       S    @SCRADD,R8
+X2C300 MOVB R1,*R8
+*
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,*R12
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,*R12
+        A       @SCRIMG,R0
+        SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,*R12
+        MOVB    R1,@VDPWD
+*       MOV     R1,R3
+*       SWPB    @CTABLE+2
+*       MOVB    @CTABLE+2,*R12
+*       SWPB    @CTABLE+2
+*       MOVB    @CTABLE+2,*R12
+*       SRL     R3,11
+*       A       @CTABLE,R3
+*       SWPB    R3
+*       MOVB    R3,*R12
+*       SWPB    R3
+*       ORI     R3,>4000
+*       MOVB    R3,*R12
+*       MOVB    R2,@VDPWD
+        INC     R5
+        C       R5,@CHCOLS
+        JL      X92CO3
+        CLR     R5
+        INC     R6
+        C       R6,@CHROWS
+        JL      X92CO3
+       CLR  R5
+       CLR  R6
+X92CO3  DEC     R10
+        JNE     X92CN3
+        RT
+*
+X92CM4  MOV     @6(R13),R1
+        MOV     @4(R13),R5
+        MOV     @2(R13),R6
+        ANDI    R1,>00FF
+        CLR     R2
+       MOVB @X92CCC,R2         GET FGD COLOR
+       MOVB @X92CCC+1,R3       GET BGD COLOR
+        SLA     R2,4
+        SOCB    R3,R2
+X92CN4  MOV     R6,R8
+        SLA     R8,8
+        MOV     R8,R0
+        MOV     R5,R7
+        SLA     R7,3
+        A       R7,R0
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,*R12
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,*R12
+        A       @PTABLE,R0
+        SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,*R12
+        LI      R3,CHDEFT
+        SLA     R1,3
+        A       R1,R3
+        SRL     R1,3
+        LI      R4,8
+X92CO4  MOVB    *R3+,@VDPWD
+        DEC     R4
+        JNE     X92CO4
+        S       @PTABLE,R0
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,*R12
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,*R12
+        A       @CTABLE,R0
+        SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,*R12
+        LI      R4,8
+X92CP4  MOVB    R2,@VDPWD
+        DEC     R4
+        JNE     X92CP4
+        INC     R5
+        C       R5,@CHCOLS
+        JL      X92CQ4
+        CLR     R5
+        INC     R6
+        C       R6,@CHROWS
+        JL      X92CQ4
+       CLR  R5
+       CLR  R6
+X92CQ4  DEC     R10
+        JNE     X92CN4
+        RT
+*
+X92CM6  MOV     @4(R13),R8
+        MOV     @2(R13),R9
+X92CZ6  MOV     @6(R13),R7
+        LI      R0,6
+        MPY     R8,R0
+        MOV     R1,R0
+*       AI      R0,5
+        A       @GRPHLF,R0
+        MOV     R9,R1
+        SLA     R1,3
+        A       @PAGEPX,R1
+        LI      R2,6
+        LI      R3,8
+        CLR     R4
+*       MOVB    @BTMASK+5,R4
+        SLA     R7,3
+        AI      R7,CHDEFT
+        MOVB    *R7+,R6
+        SLA     R6,1          *
+        JNC     X92CN6        *
+       MOVB @X92CCC,R4         GET FGD COLOR
+        SRL     R4,8
+        JMP     X92CO6
+X92CN6 MOV  @X92CCC,R4         GET BGD COLOR
+        ANDI    R4,>FF
+X92CO6  LI      R5,>B0
+*       ORI     R4,>0400       *
+        BLWP    @VDCMD1
+       MOVB @X92CCC,R1         FGD COLOR IN MSB R1
+       MOVB @X92CCC+1,R0       BGD COLOR IN MSB R0
+       LI   R2,8               ROW COUNT
+       LI   R4,5               COLUMN COUNT-1
+*       LI      R3,>8F02                * Read status register #2
+*       SWPB    R3
+*       MOVB    R3,*R12        *
+*       SWPB    R3
+*       MOVB    R3,*R12        *
+*       LI      R6,>AC00
+        JMP     X92CR6         *
+X92CP6 LI   R4,6               COLUMN COUNT
+        MOVB    *R7+,R6
+*X92CR6  MOVB    @BTMASK(R4),R3 *
+X92CR6
+*       SLA     R6,1           *
+       A    R6,R6
+        JNC     X92CS6         * IF PATTERN BIT NOT SET
+       MOVB R1,*R12      * FGD COLOR TO VDP
+       JMP  X92CV6
+X92CS6
+*X92CT6  MOVB    @VDPSTA,R5     *
+*       JGT     X92CT6
+       MOVB R0,*R12      * BGD COLOR TO VDP
+X92CV6 LI   R5,>AC00
+        MOVB    R5,*R12
+        DEC     R4
+       JNE  X92CR6             IF MORE PIXELS IN ROW
+       DEC  R2
+       JNE  X92CP6             IF MORE ROWS
+        INC     R8
+        C       R8,@CHCOLS
+        JL      X92CU6
+        CLR     R8
+        INC     R9
+        C       R9,@CHROWS
+        JL      X92CU6
+       CLR  R8
+       CLR  R9
+X92CU6  DEC     R10
+        JNE     X92CZ6
+       RT
+

@@ -1,0 +1,331 @@
+* 5/7/96    TAT, modifed TTYOUT for Psystem, changed >0c and >19
+*
+* 3.18.2021 Added comments to tables, routines
+*           Added TTYOUT to RS232/1 for test purposes (see rs232debug)
+*
+* 4.30.2023 Disable the TTYOUT terminal code for now. Retained RS23debug
+*           for the time being.
+*
+*==============================================================
+* WriteTTY
+*
+* R1x = CPU address of string
+* R2x = # of characters in string (0=NULL terminated)
+*
+SINGLE DATA 0            msb=char
+
+; Table for control 0-31
+X927LS  DATA    X92700,X92701,X92700,X92700  x,home,x,x
+        DATA    X92700,X92700,X92700,X92707  x,x,x,-
+        DATA    X92708,X92709,X9270A,X9270B  back,tab,lf,up
+        DATA    X9270C,X9270D,X92700,X92700  FF(cls),cr,x,x
+*               X92719
+        DATA    X92700,X92700,X92700,X92700  x,x,x,x
+        DATA    X92700,X92700,X92700,X92700  x,x,x,x
+        DATA    X92700,X92719,X9271A,X9271B  x,right,cls,ESC  ** 920916 hcp
+        DATA    X9271C,X9271D,X9271E,X92700  ClrLines,ClrEOL,ClrCL,x
+*               X92700 for psystem
+;command table
+X927TV  DATA    0,X927T0,X927T1              ;cursloc;color
+X927TX  TEXT    '=C'
+X927CT DATA 0                  CHARACTER COUNT
+        EVEN
+*
+X927VC
+X927L1
+;;     ABS  @INITFLG     4.30.2023, REMOVE RS232 OUTPUT
+;;     JNE  XMFFF        we an enable later if desired
+;;     BLWP @INITRS      This is for Geneve terminal mode
+;;     SETO @INITFLG
+;;
+XMFFF   MOV     @2(R13),R10
+        CI      R10,>A000
+        JHE     X927LZ
+        MOV     R10,R2
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,R10
+X927LZ  CLR     @X900ST
+       MOV  @4(R13),@X927CT        len
+        JNE     X927L2        defined
+        SETO    @X900ST       0, so print til null encountered
+
+X927L2  MOVB    *R10,R1  ;loop here
+        SRL     R1,8
+        MOV     @X900ST,@X900ST  ;null or len
+        JEQ     X927L3           ;len
+        MOV     R1,R1         ;null, so test and exit if ==0
+        JEQ     X927LA
+
+X927L3  MOV     @ESCSEQ,@ESCSEQ              are we in an escape sequence?
+        JEQ     X927L6
+        MOV     @ESCCNT,@ESCCNT
+        JEQ     X927L4
+        MOV     R11,@X900ST+2
+        MOV     @X927TV,R9    esc command via table
+        BL      *R9
+        MOV     @X900ST+2,R11
+        INC     @ESCCNT
+        CLR     R1
+        JMP     X927L9
+
+X927L4  MOV     R1,R2
+X927L5  LI      R1,27
+X927L6  CI      R1,32         printable?
+        JHE     X927L7        yep
+
+;;     SWPB R1
+;;     MOVB R1,@SINGLE        RS232 the control char
+;;     SWPB R1
+;;     BLWP @XMTEXT
+;;     DATA SINGLE
+
+        MOV     R11,@X900ST+2  no, save return
+        SLA     R1,1          table ref
+        MOV     @X927LS(R1),R9
+        BL      *R9
+        MOV     @X900ST+2,R11
+        JMP     X927L9
+X927L7
+X927L8
+;;     SWPB R1
+;;     MOVB R1,@SINGLE        RS232 the displayable ASCII
+;;     SWPB R1
+;;     BLWP @XMTEXT
+;;     DATA SINGLE
+
+       MOV  R10,@X92ASA
+       LI   R2,1
+       MOV  R2,@X92ANC
+       CLR  @X92ACF
+       MOV  R11,@X900ST+2
+       BL   @X92AL1            CALL WriteCharString
+       MOV  @X92ASA,R10
+       MOV  @X900ST+2,R11
+
+X927L9  INC     R10      ;esc drops here
+        DEC     @X927CT
+        JNE     X927L2
+X927LA  RT
+*
+X92700  RT
+*
+X92701  MOV     @CURXMN,@CURX
+        MOV     @CURYMN,@CURY
+        RT
+*
+X92707  RT
+*
+X92708  C       @CURX,@CURXMN
+        JH      X927A8
+        C       @CURY,@CURYMN
+        JH      X927B8
+        JMP     X927C8
+X927A8  DEC     @CURX
+        JMP     X927C8
+X927B8  MOV     @CURXMX,@CURX
+        DEC     @CURY
+X927C8  RT
+*
+X92709  MOV     @CURX,R0
+        MOV     @CURY,R1
+        MOV     @CURXMX,R2
+        S       R0,R2
+        INC     R2
+        CI      R2,8
+        JL      X927A9
+        AI      R0,8
+        ANDI    R0,>FFF8
+        JMP     X927B9
+X927A9  INC     R1
+        LI      R0,8
+        S       R2,R0
+        C       R1,@CURYMX
+        JLE     X927B9
+        MOV     R0,@CURX
+        MOV     R1,@CURY
+        DEC     @CURY
+        LI      R1,1
+        MOV     @CURYMN,R2
+        MOV     @CURXMN,R3
+        MOV     @CURYMX,R4
+        MOV     @CURXMX,R5
+        LI      R6,32
+        MOV     @STDCLR,R7
+        LWPI    >F080
+        MOV     @CURWS,R13
+        BL      @X906VC
+        DATA    >009D
+        JMP     X927C9
+X927B9  MOV     R0,@CURX
+        MOV     R1,@CURY
+X927C9  RT
+*
+X9270A  INC     @CURY
+        C       @CURY,@CURYMX
+        JLE     X927AA
+        DEC     @CURY
+        LI      R1,1
+        MOV     @CURYMN,R2
+        MOV     @CURXMN,R3
+        MOV     @CURYMX,R4
+        MOV     @CURXMX,R5
+        LI      R6,32
+        MOV     @STDCLR,R7
+        LWPI    >F080
+        MOV     @CURWS,R13
+        BL      @X906VC
+        DATA    >009D
+X927AA  RT
+*
+X9270B C    @CURY,@CURYMN
+       JLE  X927BX
+       DEC  @CURY
+X927BX RT
+*
+
+X92719
+       ABS  @PSYS        ** 5/7/96 TAT
+       JEQ  X927TT       ** 0=NORMAL; 1=psystem, pass through
+       B    @X92700      **
+
+X927TT
+       C       @CURX,@CURXMX             ** 920916 hcp
+       JL      X927AC
+       C       @CURY,@CURYMX
+       JL      X927BC
+       JMP     X927CC
+X927AC INC     @CURX
+       JMP     X927CC
+X927BC MOV     @CURXMN,@CURX
+       INC     @CURY
+X927CC RT
+*
+* Form Feed (>0C) & ^Z (>1A) clear screen ** 920916 hcp
+*
+X9270C
+       ABS  @PSYS        ** 5/7/96  psystem?
+       JEQ  X9271A       ** no, clear screen
+       JMP  X927TT       ** YES, do >19 instead
+
+X9271A  MOV     @CURXMN,@CURX   HOME CURSOR
+        MOV     @CURYMN,@CURY
+        CLR     R1
+        MOV     @CURYMN,R2
+        MOV     @CURXMN,R3
+        MOV     @CURYMX,R4
+        MOV     @CURXMX,R5
+        LI      R6,32
+        MOV     @STDCLR,R7
+        LWPI    >F080
+        MOV     @CURWS,R13
+        BL      @X906VC
+        DATA    >009D
+        RT
+*
+X9270D  MOV     @CURXMN,@CURX
+        C       @CURY,@CURYMX
+        JLE     X927AD
+        DEC     @CURY
+X927AD  RT
+*
+X9271C  MOV     @CURYMX,R1
+        S       @CURY,R1      number of lines to clear 2/8/91
+        JLT     X9271D
+        JEQ     X9271D
+*
+        MOV     @CURY,R2
+        INC     R2            clear all lines beneath current line
+*
+        MOV     @CURXMN,R3
+        MOV     @CURYMX,R4
+        MOV     @CURXMX,R5
+        LI      R6,32
+        MOV     @STDCLR,R7
+        LWPI    >F080
+        MOV     @CURWS,R13
+        BL      @X906VC
+        DATA    >009D
+*
+X9271D  LI      R1,1          clear to end of current line
+        MOV     @CURY,R2
+        MOV     @CURX,R3
+        MOV     @CURY,R4
+        MOV     @CURXMX,R5
+        LI      R6,32
+        MOV     @STDCLR,R7
+        LWPI    >F080
+        MOV     @CURWS,R13
+        BL      @X906VC
+        DATA    >009D
+        RT
+*
+X9271E  LI      R1,1          clear current line
+        MOV     @CURY,R2
+        MOV     @CURXMN,R3
+        MOV     @CURY,R4
+        MOV     @CURXMX,R5
+        LI      R6,32
+        MOV     @STDCLR,R7
+        LWPI    >F080
+        MOV     @CURWS,R13
+        BL      @X906VC
+        DATA    >009D
+        RT
+*
+X9271B  CLR     @ESCCNT
+        MOV     @ESCSEQ,@ESCSEQ
+        JEQ     X927CB
+        SLA     R2,8
+        LI      R3,X927TX
+        CLR     R4
+X927AB  CB      R2,*R3+
+        JEQ     X927BB
+        INC     R4
+        CI      R4,2                    * Number of active commands
+        JNE     X927AB
+        CLR     @ESCSEQ
+        JMP     X927DB
+X927BB  SLA     R4,1
+        MOV     @X927TV+2(R4),@X927TV
+        INC     @ESCCNT
+X927CB  SETO    @ESCSEQ
+X927DB  RT
+*
+X927T0  MOV     @ESCCNT,R2              * Change cursor location
+        CI      R2,1
+        JNE     X927U0
+        AI      R1,-32
+        MOV     R1,@ESCDAT
+X927U0  CI      R2,2
+        JNE     X927V0
+        CLR     @ESCSEQ
+        AI      R1,-32
+        MOV     R1,R2
+        MOV     @ESCDAT,R1
+        LWPI    LOWWP1
+        MOV     @CURWS,R13
+        BL      @X902VC
+        DATA    >009D
+X927V0  RT
+*
+X927T1  MOV     @ESCCNT,R2              * Change color
+        CI      R2,1
+        JNE     X927U1
+        AI      R1,-32
+        MOV     R1,@ESCDAT
+X927U1  CI      R2,2
+        JNE     X927V1
+        CLR     @ESCSEQ
+        AI      R1,-32
+        MOV     @ESCDAT,R0
+        SLA     R0,8
+        SOC     R1,R0
+        MOV     R0,@STDCLR
+X927V1  RT
+

@@ -1,0 +1,339 @@
+* FILENAME: KEY2S
+*
+* 05/04/96  TAT, brought SHIFT-SHIFT-CONTROL up to MDOS 4.00 for PFM devices
+*
+*
+********************************************************************************
+*
+*IF USER MODE=0 THEN MODE=LAST_MODE
+*              ELSE MODE=USER_MODE
+*IF MODE>5 THEN MODE=5
+*
+*MODE=1,2 DO JOYSTICK
+*         GET KEY
+*         IF KEY=LASY KEY THEN STAT=ON ELSE STAT=OFF
+*         RETURN SCAN1(KEY) <VALIDATE MODE>
+*
+*MODE=3   DO MODE 5 SCAN
+*         IF CODE>96 & CODE < 123 THEN ADD ->20
+*         IF CODE>126 THEN KILL IT
+*         IF CODE<32 & CODE>15 THEN KILL IT
+*
+*MODE=4   DO MODE 5 SCAN
+*         IF 0<= (CODE&>7F) <32 THEN TOGGLE 8TH BIT
+*
+*MODE=5   NOTHING TO DO
+*
+*
+* TABLE FOR MODES: 3,4,5
+* 5=MOST GENERAL MODE
+* 3,4 ARE BOTH FILTERED VERSIONS OF MODE 5
+*
+SCAN1  BYTE >FF,>9B,>31,>32     "12"
+       BYTE >33,>34,>35,>36   "3456"
+       BYTE >37,>38,>39,>30   "7890"
+       BYTE >2D,>3D,>08,>89   "-="
+*
+       BYTE >71,>77,>65,>72   "qwer"
+       BYTE >74,>79,>75,>69   "tyui"
+       BYTE >6F,>70,>5B,>5D   "op[]"
+       BYTE >0D,>F0,>61,>73     "as"  <CONTROL>
+*
+       BYTE >64,>66,>67,>68   "dfgh"
+       BYTE >6A,>6B,>6C,>3B   "jkl;"
+       BYTE >27,>60,>F1,>5C   "'` \"  <SHIFT1>
+       BYTE >7A,>78,>63,>76   "zxcv"
+*
+       BYTE >62,>6E,>6D,>2C   "bnm,"
+       BYTE >2E,>2F,>F1,>2A   "./ *"  <SHIFT2>
+       BYTE >F2,>20,>F3,>03   " "     <ALT = FCTN> <CAP LOCK>
+       BYTE >04,>07,>02,>0E
+*
+       BYTE >0C,>01,>06,>0F
+*      BYTE >BC,>F4,>F5,>FF           <NUMLOCK> <SCROLL LOCK>
+       BYTE >BC,>F4,>F5,>8C           <NUMLOCK> <SCROLL LOCK> <home>
+       BYTE >0B,>0C,>2D,>08
+*      BYTE >FF,>09,>2B,>FF
+       BYTE >FF,>09,>2B,>8A          <> <> <> <end>
+*
+       BYTE >0A,>02,>04,>03
+       BYTE >FF,>FF,>FF,>E0
+       BYTE >E1
+*
+* THIS TABLE COULD BE ELIMINATED AT THE EXPENSE OF SPEED
+* SCAN TABLE WITH SHIFT ACTIVE
+*
+SCAN1S BYTE >FF,>9B,>21,>40     "!@"
+       BYTE >23,>24,>25,>5E   "#$%^"
+       BYTE >26,>2A,>28,>29   "&*()"
+       BYTE >5F,>2B,>08,>89   "_+"
+*
+       BYTE >51,>57,>45,>52   "QWER"
+       BYTE >54,>59,>55,>49   "TYUI"
+       BYTE >4F,>50,>7B,>7D   "OP{}"
+       BYTE >0D,>F0,>41,>53     "AS"  <CONTROL>
+*
+       BYTE >44,>46,>47,>48   "DFGH"
+       BYTE >4A,>4B,>4C,>3A   "JKL;"
+       BYTE >22,>7E,>F1,>7C   ""~ |"  <SHIFT1>
+       BYTE >5A,>58,>43,>56   "ZXCV"
+*
+       BYTE >42,>4E,>4D,>3C   "BNM<"
+       BYTE >3E,>3F,>F1,>FF   ">?"    <SHIFT2>
+       BYTE >F2,>20,>F3,>03   " "     <ALT>   <CAP LOCK>
+       BYTE >04,>07,>02,>0E
+*
+       BYTE >0C,>01,>06,>0F
+       BYTE >BC,>F4,>F5,>FF           <NUMLOCK> <SCROLL LOCK>
+       BYTE >0B,>0C,>2D,>08
+       BYTE >FF,>09,>2B,>FF
+*
+       BYTE >0A,>02,>04,>03
+       BYTE >FF,>FF,>FF,>E0
+       BYTE >E1
+*
+* TABLE WITH <CONTROL>...PRETTY EASY TO DO IN PROGRAM...SPEED, SPACE
+*
+SCAN1C BYTE >FF,>9B,>B1,>B2     "12"
+       BYTE >B3,>B4,>B5,>B6   "3456"
+       BYTE >B7,>9E,>9F,>B0   "7890"
+       BYTE >FF,>9D,>08,>89   "-="
+*
+       BYTE >91,>97,>85,>92   "qwer"
+       BYTE >94,>99,>95,>89   "tyui"
+       BYTE >8F,>90,>FF,>FF   "op[]"
+       BYTE >0D,>F0,>81,>93     "as"  <CONTROL>
+*
+       BYTE >84,>86,>87,>88   "dfgh"
+       BYTE >8A,>8B,>8C,>9C   "jkl;"
+       BYTE >FF,>FF,>F1,>FF   "'` \"  <SHIFT1>
+       BYTE >9A,>98,>83,>96   "zxcv"
+*
+       BYTE >82,>8E,>8D,>80   "bnm,"
+       BYTE >9B,>BB,>F1,>FF   "./ *"  <SHIFT2>
+       BYTE >F2,>FF,>F3,>B1   " "     <ALT = FCTN> <CAP LOCK>
+       BYTE >B2,>B3,>B4,>B5
+*
+       BYTE >B6,>B7,>B8,>B9
+       BYTE >BA,>F4,>F5,>FF           <NUMLOCK> <SCROLL LOCK>
+       BYTE >0B,>0C,>2D,>88
+       BYTE >FF,>09,>2B,>FF
+*
+       BYTE >0A,>02,>04,>03
+       BYTE >FF,>FF,>FF,>E0
+       BYTE >E1
+       EVEN
+*
+* <FUNCTION> TABLE
+*
+SCAN1G BYTE >02,>0C,>00,>00  "asdf"
+       BYTE >1E,>15,>02,>0C  "qwer"
+       BYTE >00,>3A,>1E,>00  "hjk"
+       BYTE >02,>0C,>00,>28  "pfm5"
+       BYTE >1E,>00,>10,>00  "you."
+       BYTE >02,>0C,>F8,>FF  "zxcv"
+       BYTE >D8,>0C,>F1,>10  "bnml"
+       BYTE >04,>20,>00,>00
+
+
+SCAN1F BYTE >FF,>9B,>03,>04     "12"
+       BYTE >07,>02,>0E,>0C   "3456"
+       BYTE >01,>06,>0F,>BC   "7890"
+       BYTE >FF,>05,>08,>89    "="
+*
+       BYTE >C5,>7E,>0B,>5B   " ~ ["
+       BYTE >5D,>C6,>5F,>3F   "] _?"
+       BYTE >27,>22,>5B,>5D   "'"[]"
+       BYTE >0D,>F0,>7C,>08     "|"   <CONTROL>
+*
+       BYTE >09,>7B,>7D,>BF   " {}"
+       BYTE >C0,>C1,>C2,>BD
+       BYTE >27,>60,>F1,>5C   "'` \"  <SHIFT1>
+       BYTE >5C,>0A,>60,>7F   "\ '"
+*
+       BYTE >BE,>C4,>C3,>B8
+       BYTE >B9,>2F,>F1,>FF    "/ *"  <SHIFT2>
+       BYTE >F2,>20,>F3,>03   " "     <ALT = FCTN> <CAP LOCK>
+       BYTE >04,>07,>02,>0E
+*
+       BYTE >0C,>01,>06,>0F
+       BYTE >BC,>F4,>F5,>FF           <NUMLOCK> <SCROLL LOCK>
+       BYTE >0B,>0C,>2D,>08
+       BYTE >FF,>09,>2B,>FF
+*
+       BYTE >0A,>02,>04,>03
+       BYTE >FF,>FF,>FF,>E0
+       BYTE >E1
+*
+HD8    BYTE >D8
+HFF    BYTE >FF
+H20    BYTE >20
+H03    BYTE >03
+H04    BYTE >04
+HFC    BYTE >FC
+H00    BYTE >00
+H01    BYTE >01
+       EVEN
+       PAGE
+*
+* IS A KEYBOARD INTERRUPT, SO PUT IT IN THE BUFFER
+*
+KINT
+KEYTST STWP R12
+       MOV  R12,@CURWS
+*
+       LWPI KEYINT            USE THE WORKSPACE
+       CLR  R12
+       TB   8
+       JEQ  ZKEY00            @@ WAS ZAPKEY
+*
+       MOV  R4,R4             EMPTY?
+       JEQ  KBEMTY            YES
+       C    R2,R3             IS IT FULL?
+       JEQ  KBFULL            FULL
+KBEMTY SETO R4
+KBFLTR MOVB @KEYCOD,R1
+*------------------------------
+* Keyboard filter by Jeff White
+*
+       CB   R1,@HD8
+       JLE  KBFLT1
+       LI   R12,>1EF0
+       SBZ  1
+       SBO  1
+       CLR  R12
+KBWAIT TB   8
+       JEQ  KBWAIT
+       JMP  KBFLTR
+*-----------------------------
+KBFLT1 MOVB R1,*R2+
+       CI   R2,ENDKBF
+       JNE  NOTEKB
+       LI   R2,STRKBF
+NOTEKB SRA  R1,8
+       MOVB R1,R12
+       ANDI R1,>7F
+       INV  R12
+       MOVB R12,@KEYSDN(R1)
+       JEQ  KBFULL
+*
+       CLR  @CTLS->8000
+*
+KBFULL LI   R12,>1EF0
+       SBZ  1
+       SBO  1
+*
+ZKEY00 CLR  @DELON
+       MOVB @KEYSDN+>53,R12
+       JEQ  ZKEYBB
+       SETO @DELON
+*
+ZKEYBB MOVB @KEYSDN+>1D,R12   CTL
+       JEQ  ZKEY
+       MOVB @KEYSDN+>38,R12   ALT
+       JEQ  ZKEY
+       MOVB @KEYSDN+>53,R12   DEL
+       JEQ  ZKEY
+       BLWP @0                TILOAD CAN CHANGE THIS VECTOR
+*
+ZKEY   MOVB @KEYSDN+>38,R12   alt key
+       JEQ  ZKEY80
+       MOVB @KEYSDN+>54,R12   print screen key code if alt is on
+       JEQ  ZKEY80
+       MOV  @PRTFLG,R12       debounce
+       JEQ  OPRINT
+*
+ZKEY80 MOVB @KEYSDN+>37,R12   print screen key
+       JEQ  ZKEY98
+       MOV  @PRTFLG,R12       test debounce
+       JNE  ZKEY99            this one has already been processed
+*
+       MOVB @KEYSDN+>2A,R12   shift1
+       JNE  SPRINT
+       MOVB @KEYSDN+>36,R12   shift2
+       JNE  SPRINT
+       MOVB @KEYSDN+>38,R12   alt
+       JEQ  ZKEY99
+*
+*      code to call outline print
+*
+OPRINT LWPI LOWWP3            outline print
+       LI   R1,1
+       CLR  R2
+       BLWP @DUMPO
+       JMP  ZAPKE3
+*
+SPRINT LWPI LOWWP3
+       CLR  R1
+       CLR  R2
+       BLWP @DUMPS
+       JMP  ZAPKE3
+*
+DUMPS
+DUMPO  DATA LOWWP4,$+2
+       SETO @PRTFLG           for debouncing
+       BL   @X92BVC
+       RTWP
+*
+ZKEY98 CLR  @PRTFLG
+ZKEY99 MOVB @KEYSDN+>2A,R12   SHIFT1
+       JEQ  ZAPKEY
+       MOVB @KEYSDN+>36,R12   SHIFT2
+       JEQ  ZAPKEY
+       MOVB @KEYSDN+>1D,R12   CTL
+       JEQ  TSTDBG
+       BL   @SCAN1G
+
+       LI   R12,>F800
+       MOVB R12,@>F110
+       BLWP @0                reset computer from rom
+*
+TSTDBG MOVB @KEYSDN+>01,R12   SHIFT-SHIFT-ESC
+       JEQ  ZAPKEY
+
+       BLWP @>FFFC            CALL DEBUGGER
+       CLR  R12
+       MOVB R12,@KEYSDN+>01   clear the ESC key
+*
+ZAPKEY MOVB @KEYSDN+>1D,R12   CTL
+       JEQ  ZAPKE2
+       MOVB @KEYSDN+>2E,R12   C
+       JNE  ZAP
+       MOVB @KEYSDN+>46,R12   "BREAK"
+       JEQ  ZAP000
+*
+ZAP    MOV  @CFLAG,R12
+       JNE  ZAPKE3            debounce
+*
+       SETO @BREAK->8000
+       SETO @CFLAG
+       JMP  ZAPKE3
+*
+ZAP000 MOVB @KEYSDN+>1F,R12   S
+       JNE  ZAP001
+       MOVB @KEYSDN+>45,R12   "NUMLOCK"
+       JEQ  ZAP002
+ZAP001 MOV  @CFLAG,R12
+       JNE  ZAPKE3
+       SETO @CTLS->8000
+       SETO @CFLAG
+       JMP  ZAPKE3
+*
+ZAP002 MOVB @KEYSDN+>19,R12   P
+       JNE  ZAP003
+       MOVB @KEYSDN+>37,R12   "PRTSCN"
+       JEQ  ZAPKE2
+ZAP003 MOV  @CFLAG,R12
+       JNE  ZAPKE3
+       INV  @CTLP->8000
+       SETO @CFLAG
+       JMP  ZAPKE3
+*
+CFLAG  DATA 0
+PRTFLG DATA 0
+*
+ZAPKE2 CLR  @CFLAG
+ZAPKE3 MOV  @CURWS,R12
+       DATA >009C             LWP R12
+       RT
+*

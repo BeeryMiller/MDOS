@@ -1,0 +1,132 @@
+* FILENAME: VX2426S
+*
+* CharPatDefGet
+*
+* R1x = CPU address of character pattern definitions
+* R2x = # of character patterns to define or get
+* R3x = Starting pattern #
+* R4x = 0 if Def, >FFFF if Get
+*
+X924LS  DATA    X924M0,X924M0,X924M2,X924M0
+        DATA    X924M4,X924M4,X924M4,X924M4
+        DATA    X924M4,X924M4
+*
+X924VC
+X924L1  MOV     @2(R13),R2
+        CI      R2,>A000
+        JHE     X924LZ
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@2(R13)
+X924LZ  MOV     @VIDMOD,R1
+        SLA     R1,1
+        MOV     @X924LS(R1),R2
+        MOV     R11,R12
+        BL      *R2
+        MOV     R12,R11
+        RT
+*
+X924M0  SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        MOV     @4(R13),R10
+        MOV     @2(R13),R9
+        MOV     @6(R13),R1
+X924N0  MOV     R1,R0
+        SLA     R0,3
+        MOV     R0,R3
+        AI      R3,CHDEFT
+        A       @PTABLE,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        LI      R2,8
+        MOV     @8(R13),@8(R13)
+        JNE     X924P0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+X924O0  MOVB    *R9,@VDPWD
+        MOVB    *R9,*R3+
+        INC     R9
+        DEC     R2
+        JNE     X924O0
+        JMP     X924R0
+X924P0  MOVB    R0,@VDPWA
+X924Q0  MOVB    @VDPRD,*R9+
+        DEC     R2
+        JNE     X924Q0
+X924R0  INC     R1
+        DEC     R10
+        JNE     X924N0
+        RT
+*
+X924M2  RT
+*
+X924M4  MOV     @4(R13),R10
+        MOV     @2(R13),R9
+        MOV     @6(R13),R1
+X924N4  MOV     R1,R0
+        SLA     R0,3
+        AI      R0,CHDEFT
+        LI      R2,8
+        MOV     @8(R13),@8(R13)
+        JNE     X924P4
+X924O4  MOVB    *R9+,*R0+
+        DEC     R2
+        JNE     X924O4
+        JMP     X924R4
+X924P4
+X924Q4  MOVB    *R0+,*R9+
+        DEC     R2
+        JNE     X924Q4
+X924R4  INC     R1
+        DEC     R10
+        JNE     X924N4
+        RT
+
+* SetTextWindow
+*
+* R1x = Top row
+* R2x = Left column
+* R3x = Bottom row
+* R4x = Right column
+*
+X925VC
+X925L1  MOV     @PAGE,R1
+        SLA     R1,1
+        MOV     @2(R13),@CURYMN+2(R1)
+        MOV     @4(R13),@CURXMN+2(R1)
+        MOV     @6(R13),@CURYMX+2(R1)
+        MOV     @8(R13),@CURXMX+2(R1)
+        MOV     @2(R13),@CURY+2(R1)
+        MOV     @4(R13),@CURX+2(R1)
+        MOV     @CURYMN+2(R1),@CURYMN
+        MOV     @CURXMN+2(R1),@CURXMN
+        MOV     @CURYMX+2(R1),@CURYMX
+        MOV     @CURXMX+2(R1),@CURXMX
+        MOV     @CURY+2(R1),@CURY
+        MOV     @CURX+2(R1),@CURX
+        RT
+
+* GetTextWindow
+*
+* -----
+* R0x = Returned top row
+* R1x = Returned left column
+* R2x = Returned bottom row
+* R3x = Returned right column
+*
+X926VC
+X926L1  MOV     @PAGE,R1
+        SLA     R1,1
+        MOV     @CURYMN+2(R1),*R13
+        MOV     @CURXMN+2(R1),@2(R13)
+        MOV     @CURYMX+2(R1),@4(R13)
+        MOV     @CURXMX+2(R1),@6(R13)
+        RT

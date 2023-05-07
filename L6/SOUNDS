@@ -1,0 +1,215 @@
+*
+SCRX   DATA 0
+SCRY   DATA 0
+SCALE  DATA 1
+*
+*
+* SetMouse                    op 30
+*
+* R1x = new Xposition for mouse
+* R2x = new Yposition for mouse
+* R3x = scale factor for mouse speed  (0 to 7) 0=fastest
+* -----
+*
+X930VC MOV  @2(R13),@SCRX
+       MOV  @4(R13),@SCRY
+       MOV  @6(R13),@SCALE
+       JLT  X93001
+       MOVB @VIDREG+8,R0
+       SRL  R0,8
+       ORI  R0,>0888
+       BLWP @VWTR
+       SETO @MSEFLG
+       JMP  X93000
+X93001 MOVB @VIDREG+8,R0
+       SRL  R0,8
+       ANDI R0,>BF            leave mouse on -pc 9/23/89
+       ORI  R0,>0800
+       BLWP @VWTR
+       CLR  @MSEFLG
+X93000 INC  @SCALE
+       JEQ  X93000
+       RT
+*
+* GetMouse                    op 31
+*
+* -----
+* R1x = Returned Xposition for mouse
+* R2x = Returned Yposition for mouse
+* R3x = b1 b2 b3 0 xxxx xxxx xxxx   (highest bits)
+*       \          b1= left   1=down
+*          \       b2= middle 1=down
+*             \    b3= right  1=down
+*
+*
+X931VC MOV  @SCRX,R9
+       MOV  @SCRY,R10
+       JMP  GETINF
+*
+* GetMouseRel                 op 32
+*
+* -----
+* R1x = Returned X displacement since last call to GetMouse or GetMouseRel
+* R2x = Returned Y displacement since last call to GetMouse or GetMouseRel
+* R3x = b1 b2 b3 0 xxxx xxxx xxxx   (highest bits)
+*       \          b1= left   1=down
+*          \       b2= middle 1=down
+*             \    b3= right  1=down
+*
+X932VC CLR  R9
+       CLR  R10
+GETINF MOV  @SCRX,R7
+       MOV  @SCRY,R8
+*
+* get scaled X-displacement
+*
+       CLR  R0
+       MOV  @TRUEX,R1
+GETX00 MOV  R1,R2
+       ABS  R2
+       C    R2,@SCALE
+       JL   GETX99
+*
+       MOV  R1,R1
+       JLT  GETX10
+       INC  R0
+       S    @SCALE,R1
+       JMP  GETX00
+GETX10 DEC  R0
+       A    @SCALE,R1
+       JMP  GETX00
+GETX99 MOV  R1,@TRUEX
+       A    R0,R7
+       A    R0,R9
+*
+* get scaled Y-displacement
+*
+       CLR  R0
+       MOV  @TRUEY,R1
+GETY00 MOV  R1,R2
+       ABS  R2
+       C    R2,@SCALE
+       JL   GETY99
+*
+       MOV  R1,R1
+       JLT  GETY10
+       INC  R0
+       S    @SCALE,R1
+       JMP  GETY00
+GETY10 DEC  R0
+       A    @SCALE,R1
+       JMP  GETY00
+GETY99 MOV  R1,@TRUEY
+       A    R0,R8
+       A    R0,R10
+*
+* return displacements to user, update screen coordinate
+*
+       MOV  R7,@SCRX
+       MOV  R8,@SCRY
+       MOV  R9,@2(R13)
+       MOV  R10,@4(R13)
+*
+* now to get button info
+*
+       LI   R0,>018F
+       MOVB R0,@>F102         VDPWA
+       SWPB R0
+       MOVB R0,@>F102
+       MOVB @>F102,R1
+       LI   R0,>008F
+       MOVB R0,@>F102
+       SWPB R0
+       MOVB R0,@>F102
+       ANDI R1,>C000
+       SRL  R1,1
+       CLR  R12
+       TB   28
+       JEQ  BUTTON
+       ORI  R1,>8000
+BUTTON MOV  R1,@6(R13)
+       RT
+*
+* MakeSound                   op 33
+*
+* R1x = Generator 1 frequency in Hz
+* R2x = Generator 2 frequency in Hz
+* R3x = Generator 3 frequency in Hz
+* R4h = Attenuation for Generator 1 (0-15)
+* R4l = Attenuation for Generator 2 (0-15)
+* R5h = Attenuation for Generator 3 (0-15)
+* R6h = control for noise generator: bits= 0000 0w t1 t2
+*                                                |  +--+-- 00= 6991 Hz
+*                                                |         01= 3496 Hz
+*                                                |         10= 1738 Hz
+*                                                |         11= same Hz as Gen #3
+*                                                +--------- 0= periodic noise
+*                                                           1= white noise
+* R6l = Attenuation for Noise Generator
+* R7x = duration of noise in 60th seconds
+* -----
+*
+X933VC MOV  @14(R13),@SOUNDC  duration
+       LI   R1,SNDBYT
+       LI   R10,>F120
+*
+* set all attenuation and noise controls
+*
+SOUND0 MOVB *R1+,R2
+       SRL  R2,8
+       A    R13,R2
+       MOVB *R2,R0
+       SZCB *R1+,R0
+       SOCB *R1+,R0
+       MOVB R0,*R10
+       CI   R1,SNDBYU
+       JL   SOUND0
+*
+* set gen 1,2,3 freq
+*
+       MOV  R13,R2
+       MOV  R13,R3
+       INCT R2                point to gen 1 freq
+       AI   R3,6              point to gen 3 freq
+       LI   R4,FREQ00         point to freq bit table
+*
+SOUND1 LI   R0,>0001
+       LI   R1,>B4F5
+       DIV  *R2+,R0           turn freq into count for divider
+       MOV  R0,R1
+       SWPB R0
+       ANDI R0,>0F00
+       SOCB *R4+,R0
+       MOVB R0,*R10
+*
+       SLA  R1,4
+       ANDI R1,>3F00
+       MOVB R1,*R10
+*
+       C    R2,R3
+       JLE  SOUND1
+*
+       RT
+*
+SNDBYT BYTE >8,>F0,>90
+       BYTE >9,>F0,>B0
+       BYTE >A,>F0,>D0
+       BYTE >C,>F8,>E0
+       BYTE >D,>F0,>F0
+SNDBYU
+FREQ00 BYTE >80,>A0,>C0
+*
+* SoundStatus                 op 34
+*
+* -----
+* EQ bit set if no sound is in progress
+*
+X934VC ORI  R15,>2000
+       MOV  @SOUNDC,R0
+       JEQ  X934RT
+*
+       SZCB @H20,R15
+X934RT RT
+*
+*      END
+*

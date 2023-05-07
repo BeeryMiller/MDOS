@@ -1,0 +1,247 @@
+       UNL
+**************************************************************************
+*
+*  WRITTEN: 06/05/1987
+*  UPDATED: (too many times...) PaulC
+*
+*  FILE:    HDS1.MDOS.L10.MATHS
+*
+*  NAME:    TRINSIC FUNCTIONS
+*           & FLOATING POINT
+*
+**************************************************************************
+*
+*      COPY "WDS1.OS2.OSTASK"                caller's task block
+SYS1   EQU  >F0A0
+SYS2   EQU  >F0C0
+INTREG EQU  >F080
+MAPPER EQU  >F110
+TSKMAP EQU  >8114
+SYSREG EQU  >F0E0
+*
+*    DEF'S IN THIS COMPILE
+*
+       DEF  FCOMP
+       DEF  FADD
+       DEF  FSUB
+       DEF  FMULT
+       DEF  FDIV
+       DEF  CNS
+       DEF  CSN
+       DEF  CSINT
+       DEF  CFI
+       DEF  CIF
+       DEF  ATN$$
+       DEF  COS$$
+       DEF  EXP$$
+       DEF  LOG$$
+       DEF  SIN$$
+       DEF  SQR$$
+       DEF  TAN$$
+       DEF  GRI$$
+       DEF  PWR$$
+*
+*    NOW FOR SOME EQUATES
+*
+PAD    EQU  >F000
+FAC    EQU  INTREG            FLOATING POINT ACCUMULATOR
+FDVSR  EQU  FAC+>000A         FLOAT DIVISOR
+*ARG    EQU  SYSREG+6          ARGUMENT
+ARG    EQU  SYS2+6            ARGUMENT
+EXP    EQU  ARG+16
+SIGN   EQU  EXP+2
+
+* NEED 16 BYTES IN THE ABOVE
+WSG    EQU  SYS1              FLOATING POINT WORKSPACE
+
+ERROV  EQU  >03               INTEGER OVERFLOW CODE
+SGNBIT EQU  >8000
+X3000  EQU  >3000
+XPLUS  EQU  >2B00
+XMINUS EQU  >2D00
+X3900  EQU  >3900
+XDOT   EQU  >2E00
+
+
+*      AORG >2000
+*      AORG >A000             FOR TEST PURPOSES
+       RT
+       B    @MATHIN
+*
+MATHIN STWP R0
+       CI   R0,SYS1
+       JEQ  MATHOK
+BADM1  SETO *R13              can't be called except by user task
+       RTWP
+*
+MATHOK MOV  *R13,R1
+       JNE  MATH2             this is status from the mov *r13,r1
+*
+       PAGE                   do a floating compare pretty quick
+*
+OCOMP  MOV  @4(R13),R5
+       MOV  @6(R13),R7
+       MOV  R5,R4
+       SRL  R4,13
+       MOVB @TSKMAP(R4),@MAPPER+2
+       INC  R4
+       ANDI R4,>0007
+       MOVB @TSKMAP(R4),@MAPPER+3
+*
+       MOV  R7,R4
+       SRL  R4,13
+       MOVB @TSKMAP(R4),@MAPPER+5
+       INC  R4
+       ANDI R4,>0007
+       MOVB @TSKMAP(R4),@MAPPER+6
+
+       ANDI R5,>1FFF
+       ANDI R7,>1FFF
+       AI   R5,>4000
+       AI   R7,>A000
+*
+       C    *R7,*R5+          COMPARE THE FIRST WORDS
+       JNE  OCOMRT            DONE COMPARING IF NOT EQUAL
+       MOV  *R7+,R6           SIGN OF THE NUMBERS
+       JEQ  OCOMRT            NUMBERS ARE ZERO AND EQUAL
+       JGT  OCOM01            BOTH NEGATIVE
+       MOV  R5,R6
+       MOV  R7,R5
+       MOV  R6,R7
+OCOM01 C    *R7+,*R5+         BOTH POSITIVE
+       JNE  OCOMRT            CONTINUE COMPARING UNITL UNEQUAL
+       C    *R7+,*R5+         OR END OF NUMBER
+       JNE  OCOMRT
+       C    *R7,*R5           THE LAST !
+OCOMRT STST R15               EXIT AS SPECIFIED
+       RTWP
+*
+       PAGE
+*
+MATH2  CLR  *R13              ZERO OUT ERROR CODE
+       CLR  @FAC+10
+       CI   R1,18
+       JH   BADM1             invalid opcode
+       SLA  R1,1
+       MOV  @MATH##(R1),R2
+       CI   R1,14*2
+       JH   DOIT              conversions...
+*
+       MOV  @4(R13),R3        arg1
+       MOV  R3,R4
+       SRL  R4,13
+       MOVB @TSKMAP(R4),@MAPPER+5
+       INC  R4
+       ANDI R4,>0007
+       MOVB @TSKMAP(R4),@MAPPER+6
+       ANDI R3,>1FFF
+       AI   R3,>A000
+*
+       LI   R4,FAC            put in fac
+       MOV  *R3+,*R4+
+       MOV  *R3+,*R4+
+       MOV  *R3+,*R4+
+       MOV  *R3,*R4
+       CI   R1,5*2
+       JH   DOIT              monadic function
+*
+       MOV  @6(R13),R3
+       MOV  R3,R4
+       SRL  R4,13
+       MOVB @TSKMAP(R4),@MAPPER+5
+       INC  R4
+       ANDI R4,>0007
+       MOVB @TSKMAP(R4),@MAPPER+6
+       ANDI R3,>1FFF
+       AI   R3,>A000
+*
+       LI   R4,ARG            put in arg
+       MOV  *R3+,*R4+
+       MOV  *R3+,*R4+
+       MOV  *R3+,*R4+
+       MOV  *R3,*R4
+*
+DOIT   BL   *R2
+*
+TRINRT MOVB @FAC+10,@1(R13)   return error code
+       STST R15               routines do an RT to return float from FAC
+       MOV  @2(R13),R3
+       MOV  R3,R4
+       SRL  R4,13
+       MOVB @TSKMAP(R4),@MAPPER+5
+       INC  R4
+       ANDI R4,>0007
+       MOVB @TSKMAP(R4),@MAPPER+6
+       ANDI R3,>1FFF
+       AI   R3,>A000
+*
+       LI   R4,FAC
+       MOV  *R4+,*R3+
+       MOV  *R4+,*R3+
+       MOV  *R4+,*R3+
+       MOV  *R4,*R3
+*
+       RTWP                   return to caller...
+*
+*      dispatch table for opcodes
+*
+MATH## DATA OCOMP,FSUB,FADD,FMULT,FDIV,PWR$$
+       DATA EXP$$,LOG$$,SQR$$,COS$$,SIN$$,TAN$$
+       DATA ATN$$,GRI$$
+       DATA CFI$$,CIF,CSINT$,CSN,CNS
+*
+*  NOW FOR SOME REQUIRED DATA
+*
+CW03   DATA 3
+CBH08  EQU  $+1
+CW08   DATA 8
+CW128  DATA 128
+CW16   DATA 16
+CW100  DATA 100
+ERRNIP DATA >0520
+ERRLOG DATA >06A0
+ERRSQR DATA >0460
+CBHA   BYTE >0A
+CBH80  BYTE >80
+CBD50  BYTE 50
+       EVEN
+*
+*  NOW FOR SOME REQUIRED AREAS IN MEMORY
+*
+EXTRTN DATA 0
+SAVCSN DATA 0
+SAVR12 DATA 0
+SAVR13 DATA 0
+WSM6   DATA 0
+WSM8   DATA 0
+WSM10  DATA 0
+P$     DATA 0
+OE$    DATA 0
+Q$     DATA 0
+STK1   DATA 0,0,0,0
+STK2   DATA 0,0,0,0
+STK3   DATA 0,0,0,0
+STK4   DATA 0,0,0,0
+FORBUF
+PLYBUF DATA 0,0,0,0
+PLWBUF DATA 0,0,0,0
+*
+*   FOR EASE OF DEBUGGING
+*
+       COPY "\MDOS\L10\FLOAT"
+       PAGE
+       COPY "\MDOS\L10\CNS"
+       PAGE
+       LIST
+       COPY "\MDOS\L10\CSNN"
+       UNL
+       PAGE
+       COPY "\MDOS\L10\CFI"
+       PAGE
+       COPY "\MDOS\L10\CIF"
+       PAGE
+       COPY "\MDOS\L10\TRINSIC1"
+       PAGE
+       COPY "\MDOS\L10\TRINSIC2"
+       LIST
+       END

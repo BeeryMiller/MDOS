@@ -1,0 +1,319 @@
+*-------------------------------------------------------------------------------
+*
+*      WRITTEN: 05/06/1987
+*
+*      FILE:    WDS1.NEW.CSN
+*
+*      NAME:    CONVERT STRING TO NUMBER
+*                STRING IN CPU RAM
+*-------------------------------------------------------------------------------
+
+
+*======?========================================================================
+*
+*    NAME:  CSN
+*
+*    WHAT:  CONVERT STRING TO NUMBER
+*
+*    REG:   DESCRIPTION
+*     0     POINTER                CURRENT PGM CHAR
+*     1     EXPONENT SIGN
+*     2     POINTER TO CHACTER AFTER REQ POSITION OF FIRST CHARACTER
+*     3     ADDRESS OF GETCH
+*     4     ACCUMULATOR FOR
+*     5     ACCUMULATOR FOR
+*     6     TEXT POINTER
+*     7     RELATIVE POSITION
+*     8     CURRENT PGM CHAR
+*     9     PROGRAM STACK
+*     10    LENGTH OF STRING
+*     11
+*     12    POINTER TO FIRST NON-ZERO CHARACTER
+*
+*    ENTRY: BL   @CSN
+*
+*    INPUT: R1 = ADDRESS OF STRING (WORD)
+*           R2 = LENGTH OF STRING  (WORD)
+*           R3 = POINTER TO DESTINATION OF NUMBER
+*   OUTPUT: R0  CONTAINS 0 IF NO ERROR, ELSE CONTAINS ERROR
+*
+*===============================================================================
+CSN    MOV  R11,@SAVCSN
+       CLR  @FAC+10
+       MOV  @4(R13),R6        INITIALIZE TEXT POINTER
+       MOV  @6(R13),R3        GET LENGTH OF STRING
+       JEQ  CSNZER            ZERO LENGTH STRING CONVERTS TO 0
+*
+* 12/29/1987 map the string into our address space...
+*
+       MOV  R6,R1
+       SRL  R1,13
+       MOVB @TSKMAP(R1),@MAPPER+5
+*      INC  R1
+*      ANDI R1,>0007
+*      MOVB @TSKMAP(R1),@MAPPER+6
+       MOVB @TSKMAP+1(R1),@MAPPER+6          ASSUME NO WRAP AROUND
+       ANDI R6,>1FFF
+       AI   R6,>A000
+*
+* end patch
+*
+       SETO R7                START OF RELATIVE EXPR
+       CLR  R8                ZERO OUT LSB OF R8
+       CLR  R4                ZERO OUT EXP
+       CLR  @SIGN             ASSUME POSITIVE NUMBER
+       MOV  R6,R12            ASSUME NUMBER STARTS HERE
+       MOVB *R6+,R8           GET CHARACTER
+       MOV  R6,R2
+       CI   R8,XPLUS          IS CHARACTER A PLUS
+       JEQ  CSN02             YES IGNORE
+       CI   R8,XMINUS         IS CHARACTER A MINUS
+       JNE  CSN04             YES IGNORE
+       SETO @SIGN             NUMBER IS NEGATIVE
+CSN02  INC  R2
+CSN03  DEC  R3                ONE LESS TO GET
+       JEQ  CSNZER            ALL ZERO'S
+       MOVB *R6+,R8           MSB OF R8
+CSN04  CI   R8,X3000          NOW EAT UP ALL LEADING 0'S
+       JEQ  CSN03
+
+       CI   R8,XDOT           DO WE START WITH A "." ?
+       JEQ  CSN09             IT IS THE START OF A DECIMAL
+       MOV  R6,R12
+       DEC  R12               NOW R12 POINTS TO START
+       JMP  CSN06
+
+
+CSN10  DEC  R7                EXP IS ONE LESS
+CSN09  DEC  R3
+       JEQ  CSNZER            IT IS ALL ZERO'S
+       MOV  R6,R12            START RIGHT AFTER THE "."
+       MOVB *R6+,R8
+       CI   R8,X3000          NOW GET THE RELATIVE EXP OF THE NUMBER
+       JEQ  CSN10             SO ELIMINATE LEADING 0'S AFTER DPT
+       JL   CSNG16            WE MUST BE DONE, SO DIDN'T CONVERT ENTIRE #
+CSN11  CI   R8,X3900
+       JH   CSNG              TEST FOR E PWR
+       DEC  R3
+       JEQ  CSNG1
+       MOVB *R6+,R8
+       CI   R8,X3000
+       JHE  CSN11
+       JMP  CSNG16            IMPROPER TYPE NUMBER HERE
+
+
+CSN05  INC  R7
+       DEC  R3
+       JEQ  CSNG1
+       MOVB *R6+,R8
+CSN06  CI   R8,X3000          LESS THAN ZERO
+       JL   CSN07             YES
+       CI   R8,X3900          LESS THAN NINE
+       JLE  CSN05             YES
+CSN07  CI   R8,XDOT           END OF INTEGER WHOLE NUMBER PART
+       JNE  CSNG
+*
+*    CONVERT A FLOATING POINT NUMBER
+*    THE NUMBER HAS A DECIMAL POINT
+*
+CSNF04 DEC  R3                GET NEXT CHAR IF ANY
+       JEQ  CSNG1
+       MOVB *R6+,R8
+       CI   R8,X3000
+       JL   CSNG              TOO SMALL FOR DIGIT
+       CI   R8,X3900
+       JLE  CSNF04            IN RANGE KEEP LOOKING
+*
+*    LOOK FOR EXPONENT OR END OF NUMBER
+*
+CSNG   MOV  R6,R2             SAVE IN R2 ONE PAST THE END
+       DEC  R2
+       CI   R8,>4500          IS CHARACTER AN 'E' ?
+       JNE  CSNHM6            NO EXPONENT DEFAULT = ZERO
+       BL   @CSINT            GET INTEGER VALUE (USES R0,R1,R3-R6,R8)
+*
+*   NOW ON RETURN TEST IF MANTISSA IS 0
+*
+       C    R12,R2
+       JEQ  CSNZER
+       MOV  R0,R0             OVERFLOW?
+       JEQ  CSNH              NO
+CSNH11 MOV  R4,@EXP           MAKE THE EXP THE CORRECT SIGN
+       BL   @OVEXP1           NUMBER IS SIMPLY TOO LARGE
+       JMP  CSNH07            ALL DONE
+
+CSNZER CLR  @FAC
+       CLR  @FAC+2
+       JMP  CSNH07
+
+
+
+CSNG16 DEC  R6                COMPENSATE FOR THE ERRORED CHARACTER
+CSNG1  MOV  R6,R2
+       JMP  CSNH
+
+*
+*    PACK MANTISSA INTO FAC
+*
+CSNHM6 DEC  R6                ADJUST R6
+CSNH   C    R12,R2
+       JEQ  CSNZER
+CSNG2  S    @4(R13),R6        GET THE LENGTH USED
+       MOV  R6,@4(R13)        RETURN IT
+       MOV  R4,R9             SAVE SIGN FOR LATER USE
+       AI   R9,128
+       JNO  CSNH10            IF NO CARRY, CONTINUE
+       JMP  CSNH11            OVERFLOW
+
+CSNH10 CLR  R1
+       A    R7,R9
+       JNO  CSNH09
+       JMP  CSNH11
+
+CSNH09 MOV  R9,R7
+       SRA  R9,1              BASE 100
+       MOV  R9,@EXP
+       SRC  R7,1
+       LI   R5,8              INITIALIZE LOOP
+       LI   R0,FAC+1
+       MOV  R12,R6
+CSNH01 C    R6,R2            END OF FRACTION
+       JEQ  CSNH03
+       MOVB *R6+,R8           GET THENEXT CHARACTER
+       CI   R8,XDOT
+       JEQ  CSNH01
+       SRL  R8,8
+       AI   R8,-'0'           ASCII TO BINARY
+       INV  R7
+       JLT  CSNH02
+       MPY  @LW10,R8          ZEROS OUT R8
+       SWPB R9
+       MOVB R9,R1
+       JMP  CSNH01
+
+CSNH02 SWPB R8                ZEROS OUT LSB OF R8
+       AB   R8,R1             ADD ONES AND TENS DIGIT
+       MOVB R1,*R0+
+       CLR  R1                IN CASE NUMBER ENDS
+       DEC  R5                MORE ?
+       JNE  CSNH01            YES
+CSNH04 BL   @ROUN1            JUST ROUND IT FROM HERE
+CSNH07 MOV  @SAVCSN,R11
+       RT
+*
+CSNH03 MOVB R1,*R0+
+       DEC  R5
+       JEQ  CSNH04
+       CLR  R1
+CSNH05 MOVB R1,*R0+
+       DEC  R5
+       JNE  CSNH05
+CSNH06 BL   @PACKUP           SET SIGN, ETC
+       JMP  CSNH07
+       PAGE
+*===============================================================================
+*
+*    NAME:  CSINT
+*
+*    WHAT:  CONVERT STRING INTO INTEGER
+*
+*    REG:   DESCRIPTION       REG:   DESCRIPTION
+*     0 SIGN                   8     USED TO STORE DATA GOTTEN
+*     1 CHARS USED             9
+*     2                        10
+*     3 TEXT LENGTH            11    RETURN
+*     4 OUTPUT INTEGER         12
+*     5 USED                   13
+*     6 POINTER TO TEXT        14
+*     7                        15
+*
+*    ENTRY: BL   @CSINT
+*
+*    INPUT: R2 - STRING ADDRESS
+*           R3 - STRING LENGTH
+*   OUTPUT: R1 - 16 BIT SIGNED INTEGER
+*           R0 - ERROR CODE IF NON ZERO  (IE OVERFLOW)
+*           R2 - LENGTH OF STRING USED
+*===============================================================================
+CSINT$ MOV  @4(R13),R6                       string address
+       MOV  @6(R13),R3                       string length
+       JEQ  CSI$00
+       MOV  R6,R4
+       SRL  R4,13
+       MOVB @TSKMAP(R4),@MAPPER+5
+*      INC  R4
+*      ANDI R4,>0007
+*      MOVB @TSKMAP(R4),@MAPPER+6
+       MOVB @TSKMAP+1(R4),@MAPPER+6          REPLACES ABOVE 3 STATMENTS
+       ANDI R6,>1FFF
+       AI   R6,>A000
+       BL   @CSINT
+       MOV  R4,@2(R13)        RETURN THE NUMBER
+       MOV  R1,@4(R13)        RETURN THE # OF DIGITS USED
+       MOV  R0,R0             ERROR?
+       JEQ  CSGDRT            NO
+       MOVB @ERROVF,@1(R13)   YES, SO MOVE ERROR OVERFLOW CODE
+CSGDRT STST R15
+       RTWP                   ALL DONE
+*
+CSI$00 CLR  @2(R13)           IS ZERO
+       CLR  @4(R13)           ZERO LENGTH USED
+       JMP  CSGDRT            RETURN
+*
+*CSINT  MOV  R11,R9            USE THIS RETURN THIS TIME
+CSINT  CLR  R4                clear out MULTIPLIER
+       CLR  R1                CHARACTER COUNTER FOR EXPONENT
+       CLR  R0                SIGN IS POSITIVE
+       CLR  R8                ZERO OUT R8 LSB
+       MOVB *R6+,R8           GET NEXT CHAR
+       CI   R8,XPLUS          IS IT POSITIVE?
+       JEQ  CSI02             YES
+       CI   R8,XMINUS         IS IT MINUS?
+       JNE  CSI08             NO, MUST BE A NUMBER
+       SETO R0                SIGN IS NEGATIVE
+       JMP  CSI02
+
+CSI01  MPY  @LW10,R4
+       MOV  R4,R4             TEST FOR OVERFLOW
+       JNE  CSI05
+       SRL  R8,8
+       A    R8,R5
+       MOV  R5,R4             IS INTEGER > 32767
+       JLT  CSI05A            YES - TOO BIG
+CSI02  INC  R1                COUNT THE CHARACTER
+       DEC  R3                GET NEXT CHARACTER IF ANY EXISTS
+       JEQ  CSI07             ALL TAKEN
+       MOVB *R6+,R8
+CSI08  AI   R8,>D000          ASCII TO BINARY
+       CI   R8,>0A00          COMPARE TO TEN
+       JL   CSI01             OK GOOD NUMBER 0-9
+
+       DEC  R6                THIS DIGIT NOT USED
+
+*  TO BE HERE, NOT AN ASCII NUMBER, SO ALL DONE
+
+CSI07  MOV  R0,R0             IS THE RESULT NEGATIVE?
+       JEQ  CSINTR            NO
+       NEG  R4                YES
+       CLR  R0                NO ERROR
+CSINTR RT                     RETURN TO CALLER
+
+CSI05A
+* IS > 32767 SO TEST IF 8000 NEGATIVE
+       MOV  R0,R0             SO SIGN NEGATIVE?
+       JEQ  CSI05             NO, SO OVERFLOW ERROR
+       CI   R4,>8000          IS IT -32768?
+       JEQ  CSI02             YES, SO CONTINUE
+       LI   R4,>8000
+       RT                     R0 IS >FFFF ALREADY
+
+CSI05  LI   R4,>7FFF          GET THE ERRORR ADDRESS IN A REG
+       SETO R0                OVERFLOW ERROR
+       RT
+
+
+*
+*
+*
+*CSNOFL SETO R0                OVERFLOW ERROR
+*      B    *R9               RETURN TO CALLER

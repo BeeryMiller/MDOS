@@ -1,0 +1,584 @@
+* File: MANAGE2T
+*
+* 05/08/96  tat, Changed memory count to reflect fast ram at >c0-ef
+*                2 of 3 changes in this file, the other is in MANAGE2S
+*
+*
+*02.03.2021 tat, 25 years later, proved pages >c0-e7 are NOT fast ram.
+*                one wait state is in effect. See M.Zapf test routine
+*
+*01.28.2022 tat, fix to Opcode 7 Share Memory Use
+*      Note: See MDOS 731 PM for information about the memory leak
+*
+********************************************************************************
+*
+*  opcode #6, release shared pages (type)
+*      pass:             r1=type
+*      return:           r0=error code
+*      also have to check their current execution map
+*
+MEMOP6 MOV  @2(R13),R1
+       JEQ  OP6ER6
+       CI   R1,>FF
+       JHE  OP6ER6
+*
+       SLA  R1,8              entry for REMOVE TASK
+CALOP6 LI   R3,COMNOD         check to see if type is already defined
+       MOV  R3,R4             pointer to previous link, in case of delete
+OP6L1  MOV  *R4,R5
+       JEQ  OP6ER6            doesn't yet exist...
+       MOV  R4,R3             pointer to previous link
+       MOV  R5,R4             point at this header
+       MOV  @2(R4),R5         point at node with REF COUNT
+       MOV  *R5,R5            point at node with 1st PAGE in it...
+       CB   R1,@MEMTYP(R5)    are they the same?
+       JNE  OP6L1             nope
+*
+       CLR  @TRIMF            can't trim until we find some
+       MOV  @MEMLST,R6
+OP6L2  MOV  *R6,R6            note that we don't check first node
+       JEQ  OP6J1
+       CB   @MEMTYP(R6),R1    is it the right type?
+       JNE  OP6L2             nope, try next node
+*
+* check current execution map, see if it needs deleting from there
+*
+       LI   R7,TSKMAP
+OP6L2A CI   R7,TSKMAP+8
+       JEQ  OP6J0
+       CB   @MEMPAG(R6),*R7+
+       JNE  OP6L2A
+       MOVB @NULLP,@-1(R7)
+       JMP  OP6L2A
+*
+OP6J0  SETO @TRIMF            we might have to trim...
+       MOV  @NULLP,@2(R6)     this one becomes unused
+       JMP  OP6L2
+*
+OP6J1  MOV  @TRIMF,R0
+       JEQ  MEM6RT            this guy didn't have any of that type page
+       MOV  @2(R4),R5         point at the type node with REFCNT
+       DEC  @2(R5)            one less ref to this type...
+       JGT  MEM6RT            still some other references to it...
+*
+* here, delete shared type from overall typed list...
+*
+       MOV  *R4,*R3           remove this list from chain
+       MOV  @NODFRE,*R4       \
+       MOV  R4,@NODFRE         \ link this one to free list
+OP6L3  MOV  *R5,R4            save link to next one
+       MOV  @NODFRE,*R5       \
+       MOV  R5,@NODFRE         \ link it to free list
+       MOV  @2(R5),R12
+       JEQ  OP6J2             this was the node with REFCNT in it
+       SLA  R12,8
+       MOV  R11,R10
+       BL   @FRESUB
+       MOV  R10,R11
+*
+OP6J2  MOV  R4,R5             point to next node
+       JNE  OP6L3             if not NIL, then go back to delete it...
+       JMP  MEM6RT
+*
+OP6ER6 MOV  @H0006,*R13
+MEM6RT B    @TRIM
+*
+********************************************************************************
+*
+*  opcode #7, get shared pages
+*      pass:             r1=type
+*                        r2=local page number for start of shared area
+*      return:           r0=error code
+*
+MEMOP7 MOV  @2(R13),R1
+       JEQ  OP7ER6
+       CI   R1,>FF
+       JHE  OP7ER6
+       MOV  @4(R13),R2
+       JEQ  OP7ER2
+*
+       CLR  R0
+       MOV  @MEMLST,R6
+       CLR  @TRIMF
+*
+OP7L1  C    R0,R2             scanned enough yet?
+
+
+*      JHE  OP7J3             yes, now go to try overlaying the shared space
+
+       JHE  TESCHFIX          1.28.2022 FIX
+
+       INC  R0                one more node
+       MOV  *R6,R7            point at next one
+       JNE  OP7J2             jump if it exists
+*
+       SETO @TRIMF            might need to trim later, if error
+       MOV  @NODFRE,R7        get a free node
+       JNE  OP7J1             jump if a free node is available
+       MOV  @H0008,*R13       ERROR!
+       JMP  MEM7RT
+*
+OP7J1  MOV  *R7,@NODFRE       make free list a bit shorter
+       CLR  *R7               it points to NIL
+       MOV  @NULLP,@2(R7)
+OP7J2  MOV  R7,R6             point to it
+       JMP  OP7L1             go back and test this one
+*
+* find list for this shared type
+*
+
+TESCHFIX
+       SLA  R1,8
+       LI   R4,COMNOD         check to see if type is already defined
+OP7L2  MOV  *R4,R5
+       JEQ  OP7ER6            doesn't yet exist...
+       MOV  R5,R4             point at this header
+       MOV  @2(R4),R5         point at node with REF COUNT
+       MOV  R5,R9             save node with REFCNT
+       MOV  *R5,R5            point at node with 1st PAGE in it...
+       CB   R1,@MEMTYP(R5)    are they the same?
+       JNE  OP7L2             nope
+*
+* now to start overlaying them.
+* when we start r6=r7= 1st to overlay  r4=type header r5=1st to use
+*
+OP7L3  C    @2(R7),@NULLP     is it a node we can overlay?
+       JEQ  OP7J3             yes, go to it!
+*
+OP7L4  C    R6,R7             no, so we have to blank the ones already done
+       JEQ  OP7ER7            we've patched all of them
+       MOV  @NULLP,@2(R6)     blank this one
+       MOV  *R6,R6            go to next
+       JMP  OP7L4
+*
+OP7J3  MOV  @2(R5),@2(R7)     copy the page ref to user's list
+       MOV  *R5,R5            point at next one to copy over
+       JNE  OP7J5             more to copy...go do it
+*
+       INC  @2(R9)            bump REFCNT
+       JMP  MEM7RT            all done
+*
+OP7J5  MOV  *R7,R8            next place to put one
+       JNE  OP7J4             no need to fetch one from NODFREes
+*
+       MOV  @NODFRE,R8
+       JEQ  OP7ER8            no more free nodes!
+*
+       SETO @TRIMF            we would trim if there is an error
+       MOV  *R8,@NODFRE       make free list shorter
+       CLR  *R8               \
+       MOV  @NULLP,@2(R8)      \ initialize this node
+       MOV  R8,*R7            link it on to end of list
+*
+OP7J4  MOV  R8,R7
+       JMP  OP7L3
+*
+OP7ER2 MOV  @H0002,*R13
+       JMP  MEM7RT
+OP7ER6 MOV  @H0006,*R13
+       JMP  MEM7RT
+OP7ER7 MOV  @H0007,*R13
+       JMP  MEM7RT
+*
+OP7ER8 C    R6,R7             no, so we have to blank the ones already done
+       JEQ  OP7E8A            we've patched all but last one of em
+       MOV  @NULLP,@2(R6)     blank this one
+       MOV  *R6,R6            go to next
+       JMP  OP7ER8
+*
+OP7E8A MOV  @NULLP,@2(R7)     this one must also go
+MEM7RT B    @TRIM
+*
+********************************************************************************
+*
+*  opcode #8, return size of shared page group
+*      pass:             r1=type
+*      return:           r0=error code
+*                        r1=number of pages in shared group
+*
+MEMOP8 MOV  @2(R13),R1
+       JEQ  OP8ER6
+       CI   R1,>FF
+       JHE  OP8ER6
+*
+       SLA  R1,8
+       LI   R4,COMNOD         check to see if type is already defined
+OP8L1  MOV  *R4,R5
+       JEQ  OP8ER6            doesn't yet exist...
+       MOV  R5,R4             point at this header
+       MOV  @2(R4),R5         point at node with REF COUNT
+       MOV  *R5,R5            point at node with 1st PAGE in it...
+       CB   R1,@MEMTYP(R5)    are they the same?
+       JNE  OP8L1             nope
+*
+       CLR  R0
+*
+OP8L2  INC  R0                one more node in this shared group
+       MOV  *R5,R5            go to next node
+       JNE  OP8L2             if pointer is not NIL
+       MOV  R0,@2(R13)        return the count to the user
+       JMP  MEM8RT
+*
+OP8ER6 MOV  @H0006,*R13
+MEM8RT RT
+*
+********************************************************************************
+*
+* privileged system XOPS for memory management
+*
+********************************************************************************
+*
+* opcode #9 : release task    in: nil        (task header at >8000)
+*                             out: nil
+*
+SYSOPT MOV  R11,@MEM9RT+2
+*
+       MOV  @MEMLST,R2
+       MOV  *R2,R2            point to next node, if there is one.
+       JEQ  MEM9RT            no nodes in page list
+*
+       CLR  R1                last type = private
+*
+MEM910 MOV  R1,R1
+       JEQ  MEM912            last type was private...do full check
+*
+       CB   R1,@MEMTYP(R2)
+       JEQ  MEM925            this node is continuation of shared...release it
+*
+       CLR  R1
+MEM912 MOVB @MEMTYP(R2),R1    get page type
+       JEQ  MEM920
+*
+       CB   R1,@NULLP
+       JNE  MEM930            release a shared node
+*
+       CLR  R1                unused nodes are considered private
+       JMP  MEM925            add the node to the free list
+*
+MEM920 CLR  R12               release private page
+       MOVB @MEMPAG(R2),R12
+*
+       BL   @FRESUB
+*
+MEM925 MOV  @NULLP,@MEMTYP(R2)       make the node use an undefined page
+       MOV  *R2,R2
+       JNE  MEM910
+       JMP  MEM9RT
+*
+MEM930 MOV  R1,@MEM9R1
+       MOV  R2,@MEM9R2
+       MOV  *R2,@MEM9PN
+*
+       BL   @CALOP6           release the shared page group
+*
+       MOV  @MEM9R1,R1
+       MOV  @MEM9R2,R2
+*
+       C    *R2,@MEM9PN       if pointer changed, then
+       JNE  MEM9RT            shared group got trimmed off...done.
+*
+       JMP  MEM925            release node from page list
+*
+MEM9R1 DATA 0
+MEM9R2 DATA 0
+MEM9PN DATA 0
+*
+MEM9RT LI   R11,0
+       SETO @TRIMF
+       B    @TRIM
+*
+********************************************************************************
+*
+* opcode #A :  page get  in:  r0=>000A
+*                             r1=page number to get,
+*                                 if r1h <> 0, get first available
+*                             r2=speed flag   <>0 means fast
+*                       out:  r0=error code
+*                             r1=pointer to node
+*                             r2=page number from node
+*
+SYSOP0 CLR  R2
+       MOV  @FRECNT,R0
+       JNE  SY0#J#
+       B    @SY0ER1
+*
+SY0#J# MOV  @2(R13),R1
+       MOVB R1,R1
+       JNE  SOP0J1
+*
+       SLA  R1,8
+       LI   R3,FREPAG
+*
+SY0#L1 MOV  *R3,R2
+       JNE  SY0#J0
+       B    @SY0ER1
+*
+SY0#J0 CB   @MEMPAG(R2),R1
+       JEQ  SY0#J1
+       MOV  R2,R3
+       JMP  SY0#L1
+*
+* take care of FAST#0,FAST#L,SLOW#0,SLOW#L
+*
+SY0#J1 MOV  *R2,*R3      always remove this node
+       C    R2,@FAST#0
+       JNE  SY0#J3
+       C    R2,@FAST#L
+       JNE  SY0#J2
+       CLR  @FAST#0
+       CLR  @FAST#L
+       JMP  SY0#J7
+*
+SY0#J2 MOV  *R2,@FAST#0
+       JMP  SY0#J7
+*
+SY0#J3 C    R2,@FAST#L
+       JNE  SY0#J4
+       MOV  R3,@FAST#L
+       JMP  SY0#J7
+*
+SY0#J4 C    R2,@SLOW#0
+       JNE  SY0#J6
+       C    R2,@SLOW#L
+       JNE  SY0#J5
+       CLR  @SLOW#0
+       CLR  @SLOW#L
+       JMP  SY0#J7
+*
+SY0#J5 MOV  *R2,@SLOW#0
+       JMP  SY0#J7
+*
+SY0#J6 C    R2,@SLOW#L
+       JNE  SY0#J7
+       MOV  R3,@SLOW#L
+*
+* now to see if FSTCNT should be decremented
+*
+SY0#J7 CI   R1,>F000
+       JHE  SOP0RT
+
+*      CI   R1,>C000     TAT, 5/8/96         CHANGE 2/3
+       CI   R1,>E800     tat, 3-2-2021,revert code
+       JHE  SY0#J8
+
+       CI   R1,>8000
+       JHE  SOP0RT
+       MOV  @MEGFLG,R0
+       JEQ  SOP0RT
+*
+SY0#J8 DEC  @FSTCNT
+       JMP  SOP0RT
+*
+SOP0J1 MOV  @FAST#0,R2             are there any fast pages?
+       JEQ  SOP0J6                 no, allocate slow pages
+*                                  slow always pointed by FREPAG if using
+       C    @MEGFLG,@HFFFF         do we have lots of fast memory?
+       JEQ  SOP0J2                 YES, allocate fast pages
+*
+       MOV  @SLOW#0,@SLOW#0        are there any slow pages?
+       JEQ  SOP0J2                 no, allocate fast pages
+*
+       MOV  @4(R13),R10            does user want fast pages?
+       JEQ  SOP0J6                 NO, give him some slow pages
+*
+* allocate a fast page...
+*
+SOP0J2 DEC  @FSTCNT                update count of fast pages free
+       JNE  SOP0J3                 any left? (if there are, we're ok)
+*
+       CLR  @FAST#0                make fast list empty
+       CLR  @FAST#L                "
+       MOV  @SLOW#0,@FREPAG        scan slow list first...
+       JMP  SOP0J4                 go to put the node into the free node list
+*
+SOP0J3 MOV  *R2,@FAST#0            bump pointer
+SOP0J4 MOV  @MEGFLG,R3             meg?
+       JNE  SOP0J5                 yes, don't fix slow list
+       MOV  @SLOW#L,R3             slow list there?
+       JEQ  SOP0J5                 no, can't patch it
+       MOV  @FAST#0,*R3            patch slow list
+       JMP  SOP0RT
+*
+SOP0J5 MOV  @FAST#0,@FREPAG        update FREPAG
+       JMP  SOP0RT                 check for more pages to allocate
+*
+* allocate a slow page...
+*
+SOP0J6 MOV  @SLOW#0,R2
+       C    @SLOW#0,@SLOW#L        any slow pages left after this?
+       JNE  SOP0J7                 yes, we're ok
+*
+       CLR  @SLOW#0                make slow list empty
+       CLR  @SLOW#L                "
+       MOV  @FAST#0,@FREPAG        scan fast list first...
+       JMP  SOP0J8                 put the node away
+*
+SOP0J7 MOV  *R2,@SLOW#0            bump pointer
+SOP0J8 MOV  @SLOW#0,@FREPAG        update FREPAG
+       JMP  SOP0RT
+*
+***************************
+*
+SY0ER1 MOV  @H0001,*R13
+       JMP  SOP0R2            move SOP0R2 to the RT 2/20/1988 (bug fix)
+*
+SOP0RT DEC  @FRECNT
+       MOV  R2,@2(R13)             one less page to give to user
+       CLR  *R2
+       MOVB @H00,@MEMTYP(R2)
+       CLR  @4(R13)
+       MOVB @MEMPAG(R2),@4(R13)
+SOP0R2 RT
+*
+********************************************************************************
+*
+* opcode #B : add page to free pages in system
+*               in:      r0=>000B
+*                        r1=page number
+*              out:      r0= error if no free nodes available
+*
+SYSOP1 MOV  @2(R13),R12
+       SLA  R12,8
+       MOV  R11,R10
+       BL   @FRESUB
+       MOV  R10,R11
+       RT
+*
+********************************************************************************
+*
+* opcode #C : add a node to the list of free nodes
+*               in:      r0=>000C
+*                        r1=pointer to node
+*              out:   no errors
+*
+SYSOP2 MOV  @2(R13),R1
+       MOV  @NODFRE,*R1
+       MOV  R1,@NODFRE
+       CLR  @2(R1)
+       RT
+*
+********************************************************************************
+*
+* opcode #D : link a node to the specified node
+*               in:      r0=>000D
+*                        r1=pointer to node
+*                        r2=pointer to node to link to
+*              out:   no errors
+*
+SYSOP3 MOV  @2(R13),R1
+       MOV  @4(R13),R2
+       MOV  *R2,*R1           link to rest
+       MOV  R1,*R2            wedge it in
+       MOVB @H00,@MEMTYP(R1)
+       RT
+*
+********************************************************************************
+*
+*  opcode #E, get address map  (system)
+*      return:           R0= count of valid pages
+*
+SYSOP4 MOV  @MEMLST,R3
+       LI   R1,>1EFE
+       SETO *R1+
+       CLR  R0
+*
+SYS4L1 MOVB @MEMPAG(R3),*R1+
+       INC  R0
+       MOV  *R3,R3
+       JEQ  SYS4RT
+       JMP  SYS4L1
+*
+SYS4RT MOV  R0,*R13
+       MOV  R0,@>1FFE
+       RT
+*
+********************************************************************************
+*
+* FRESUB, take page number in r12 msb and return it to proper free list...
+*
+*
+FRESUB MOV  R12,R9
+       SRL  R9,8
+       MOV  @NODFRE,R8             get a free node
+       JEQ  FERR#8
+*
+       MOV  *R8,@NODFRE            remove it from the free list
+       MOV  R9,@MEMTYP(R8)
+*
+       CI   R9,128                 in the low 1 meg of ram?
+       JHE  FREE1                  no, check to see if it's in expansion
+*
+       MOV  @MEGFLG,R12            do we have 1meg?
+       JEQ  FREE4                  no, must be 512k of slow memory
+       JMP  FREE2                  add this node to the fast list
+*
+; mod 3 of 3 for 384K ram ;3-2-2021,reverted
+* FREE1  CI   R9,>C0            TAT, 5/8/96, change 3/3
+FREE1  CI   R9,>E8                 is it lower than static rams?
+       JL   FREE4                  yes, slow external expansion
+       CI   R9,>F0                 higher than statics pages?
+       JHE  FREE4        ;(technically, shouldn't add ram if in eprom space)
+*
+FREE2  MOV  @FAST#0,*R8            add the page to the fast list
+       JNE  FREE3
+       MOV  R8,@FAST#L
+*
+FREE3  MOV  R8,@FAST#0
+       INC  @FSTCNT
+       JMP  FREE6
+*
+FREE4  MOV  @SLOW#0,*R8            add the page to the slow list
+       JNE  FREE5
+       MOV  R8,@SLOW#L
+FREE5  MOV  R8,@SLOW#0
+FREE6  INC  @FRECNT
+*
+       MOV  @SLOW#0,R7        get head of slow list
+       MOV  @SLOW#L,R8        get tail of slow list
+       MOV  @FAST#0,R9        get head of fast list
+*
+       MOV  @MEGFLG,R12       check for 1 meg option
+       JEQ  FREE7             option not installed
+*
+       MOV  @FAST#0,R7        get head of fast list
+       MOV  @FAST#L,R8        get tail of fast list
+       MOV  @SLOW#0,R9        get head of slow list
+*
+FREE7  MOV  R7,@FREPAG
+       JEQ  FRERTN            the first list does not exist, can't link
+       MOV  R9,*R8            link the two lists in order
+       JMP  FRERTN
+*
+FREE8  MOV  R9,@FREPAG
+       JMP  FRERTN
+*
+FERR#8 MOV  @H0008,*R13
+FRERTN RT
+*
+********************************************************************************
+*
+* TRIM unused nodes from end of list..
+*
+TRIM   ABS  @TRIMF
+       JEQ  NOTRIM
+       MOV  @MEMLST,R1
+       MOV  R1,R4                            pointer to last good node
+*
+TRIM2  C    @2(R1),@NULLP
+       JEQ  TRIM3                            go to next node, this is blank
+       MOV  R1,R4                            this becomes last valid node
+*
+TRIM3  MOV  *R1,R1                           point at next node
+       JNE  TRIM2                            if more, test them too
+*
+       MOV  *R4,R1
+       JEQ  NOTRIM
+*
+TRIM4  CLR  *R4
+TRIM5  MOV  *R1,R4                           save pointer to next node
+       MOV  @NODFRE,*R1                      this node points to free list
+       MOV  R1,@NODFRE                       this becomes first in free list
+       MOV  R4,R1
+       JNE  TRIM5                            if it exists, can it too...
+NOTRIM RT
+*

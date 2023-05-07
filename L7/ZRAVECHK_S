@@ -1,0 +1,33 @@
+*
+*
+* CHECK for existance of RAVE memory card at CRU >1700
+*
+*
+       CLR  @RAVFLG
+       MOV  R12,@SAVR12
+       LI   R12,>1700
+
+       LI   R1,>B900     First map page of Rave's 32K
+       MOVB R1,@>F116    Let's access the rave at >C000 if present
+       LI   R1,>0100     enable the FIRST bank of Rave memory
+       LDCR R1,8
+       MOV  @>C000,R2    save contents of first word
+       LI   R1,>0300     enable second page
+       LDCR R1,8
+       C    @>C000,R2    compare
+       JNE  GOTRAV       if not equal, this MUST be a rave!
+
+
+
+NORAVE
+
+       JMP  RAVOFF
+
+*
+GOTRAV SETO @RAVFLG
+RAVOFF LI   R1,>0100
+       LDCR R1,8
+       SBZ  0
+       MOV  @SAVR12,R12
+
+

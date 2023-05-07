@@ -1,0 +1,519 @@
+* FILENAME: KEY1S
+*
+*   KEYBOARD BUFFER INFORMATION
+*
+*
+* 3.6.94    Modified the joystick routine.  After making fixes in GPL,
+*   TAT     discovered that MDOS used the same old routines.  So, took my
+*           patches from GPL and put them in here.  Fire buttons are separately
+*           processed and the joystick CRU select was reversed to select the
+*           correct joystick.
+*
+* 7/4/96    Moved PSYS flag to location AFTER the following keyboard tables.
+*           UNFORTUNATELY, some programs are hardcoded to look at the below
+*           tables...
+*
+*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+* WARNING: Do not move these tables or some programs will fail
+*
+*          XOPS-S has the beginning of this information
+*
+*
+KEYVAL DATA 0            2032
+KEYINT DATA 0,0,STRKBF,STRKBF,0,0,0,0  2034...2042
+       DATA 0,0,0,0,0,0,0,0   2044.. 2052
+STRKBF BSS  >A4          2054
+ENDKBF BSS  2            20F8
+KEYSDN DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0  20FA
+       DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0  211A
+       DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0  213A
+       DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0  215A
+*
+KEYFLG DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0  217A
+       DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0  219A
+       DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0  21BA
+       DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0  21DA
+ENDZAP
+MODEIN BYTE 0                 21FA
+RETCOD BYTE 0                 21FB
+       EVEN
+JOYX   BYTE 0                 21FC
+JOYY   BYTE 0                 21FD
+KSTAT  DATA 0                 21FE
+PSYS   DATA 0      >2200  Used for PSYSTEM; tells TTYOUT to handle codes
+*                        for standard mode or Psystem mode 0=off; 1=on
+*
+*
+* R0= TEMP
+* R1= TEMP
+* R2= NEXT PLACE TO PUT A KEYSTROKE
+* R3= NEXT PLACE TO GET A KEYSTROKE
+* R4= FLAG FOR USE WHEN R2=R3 ZERO MEANS EMPTY BUFFER
+* R5= USED FOR KEY TRANSLATION
+* R6= LAST_USER_MODE
+* R7= LAST_SCAN_CODE USED <HIGH BYTE>
+* R8=
+* R9=  CAPLOC
+* R10= NUMLOC
+* R11=
+* R12=CRU BASE
+* R13=
+* R14=
+* R15=
+*
+*
+KEYPWR MOV  @KEYVAL,R1
+*      JNE  KEYP2        NOT A COLD RESET OF SYSTEM why did I do this?
+*
+       SETO @KEYVAL
+       MOVB @KEYSDN+>53,R10
+*
+       LI   R1,STRKBF
+KEYP1  CLR  *R1+
+       CI   R1,ENDZAP
+       JL   KEYP1
+*
+       MOVB R10,@KEYSDN+>53
+*
+* KEYP2  CLR  R12
+*
+       CLR  R12
+       SBO  8                 turn interrupts on
+       RT
+*
+ATABLE DATA KEYS0,KEYS0,KEYS0,KEYS0
+       DATA KEYS0,KEYS0,KEYS6,KEYS7
+       DATA KEYS8
+*
+XOPA   MOVB @HANDL0,R12
+       JNE  XOPA3             this task doesn't own the keyboard
+*
+       STWP R12
+       MOV  R12,@CURWS
+       MOVB @1(R13),@MODEIN
+       MOV  *R13,R1
+       CI   R1,8
+       JH   XOPA2             bad scan code ...
+*
+       SLA  R1,1
+       MOV  @ATABLE(R1),R2
+       B    *R2
+XOPART MOV  @CURWS,R12
+       DATA >009C
+       MOVB @MODEIN,@1(R13)
+XOPA1  CLR  @2(R13)
+       MOVB @RETCOD,@2(R13)
+       MOV  @JOYY,@4(R13)
+       MOVB @KSTAT,R15
+KEYS6
+XOPA2  RTWP
+*
+XOPA3  MOVB @H01,@STATE       put this task into wait mode
+       RTWP                   since it doesn't own keyboard
+*
+*
+*      CHECK FOR BREAK KEY...MODE 7
+*
+KEYS7  BL   @KEYTST
+       MOVB @KEYSDN+>3E,R12  "F4"
+       JNE  KEYS1A
+       MOVB @KEYSDN+>38,R12  ALT
+       JEQ  KEYS1B
+       MOVB @KEYSDN+>05,R12  "4"
+       JEQ  KEYS1B
+*
+KEYS1A LI   R15,>2000
+*
+H2000  EQU  $-2
+*
+       JMP  XOPA2
+KEYS1B CLR  R15
+       JMP  XOPA2             RETURN TO WHOEVER CALLED US
+*
+************************************************************************8
+*
+KEYS8  LWPI KEYINT
+       MOVB @HFF,@RETCOD
+       MOV  R4,R4        ANY NEW KEYS?
+       JEQ  KEYS8C       NOPE.
+       MOVB *R3+,R1      GET THE NEW CODE
+*
+       CI   R3,ENDKBF
+       JNE  KEYS8B
+       LI   R3,STRKBF
+*
+KEYS8B C    R2,R3
+       JNE  KEYS8A
+       CLR  R4           NO MORE KEYS IN BUFFER
+*
+KEYS8A MOVB R1,@RETCOD
+       SRA  R1,8
+       MOVB R1,R12
+       INV  R12
+       ANDI R1,>007F
+       MOVB R12,@KEYFLG(R1)
+*
+KEYS8C MOVB @H00,@KSTAT
+       CLR  @JOYY
+       JMP  XOPART       ** FIX MODE 8 HANG                  920829 hcp
+*
+************************************************************************
+*
+KEYS0  BL   @KEYTST           CHECK FOR KEYS WHICH DIDN'T INTERRUPT
+*
+       LWPI KEYINT
+       CLR  @KSTAT
+*
+       CLR  R0
+       MOVB @MODEIN,R0
+       JEQ  KE1
+*
+       CB   R0,@H03
+       JL   KMODE1
+       MOVB R0,R6
+       MOVB @H00,@MODEIN
+*
+* KEY MODES 3,4,5
+*
+* GET SCAN CODE...INTO R1
+*
+KE1    BL   @GETQ        PARSES SHIFT STATES, SETS KEY DOWN FLAGS
+       MOV  R8,R8
+       JNE  KILLIT
+*
+       LI   R5,SCAN1F
+       MOVB @KEYFLG+>38,R0    IS ALT ON?
+       JNE  TRANS5
+*
+       LI   R5,SCAN1C
+       MOVB @KEYFLG+>1D,R0    IS CTL ON?
+       JNE  TRANS5
+*
+
+       LI   R5,SCAN1S
+       MOVB @KEYFLG+>2A,R0    IS SHIFT1 ON?
+       JNE  TRANS5
+       MOVB @KEYFLG+>36,R0    IS SHIFT2 ON?
+       JNE  TRANS5
+*
+* HERE, NO SHIFT KEYS DOWN, TEST NUMLOCK...
+*
+       LI   R5,SCAN1
+       MOV  R10,R10      TEST NUMLOCK
+       JEQ  NONUML
+*
+* NUMLOCK IS DOWN, TRANSLATE NUMERIC.
+*
+       CI   R1,>46
+       JLE  NONUML       NOT KEYPAD
+       CI   R1,>53
+       JH   NONUML       NOT KEYPAD
+       MOVB @KEYPAD->47(R1),R1
+       SRL  R1,8
+       JMP  TRANS5
+*
+NONUML MOV  @SCROLF,@SCROLF
+       JEQ  TRANS5
+       CI   R1,>3B
+       JL   TRANS5            not f1 - f10
+       CI   R1,>44
+       JH   TRANS5            not f1 - f10
+       AI   R1,>E2->3B
+       SLA  R1,8
+       JMP  MODE5
+*
+TRANS5 A    R1,R5
+       CLR  R1
+       MOVB *R5,R1
+*
+       MOV  R9,R9             TEST CAP LOCK
+       JEQ  FILTER
+*
+       MOV  R1,R0
+       ANDI R0,>DF00
+       CI   R0,'A'*256
+       JLT  FILTER
+       CI   R0,'Z'*256
+       JGT  FILTER
+       LI   R0,>2000
+       XOR  R0,R1             toggle shift state...
+*
+* NOW, TIME TO FILTER FOR MODES 3,4
+*
+FILTER CB   R6,@H04
+       JGT  MODE5
+       JEQ  MODE4
+*
+       CI   R1,>7E00
+       JGT  KILLIT
+       CI   R1,>1000
+       JLT  MODE5
+*
+       CI   R1,'a'*256
+       JLT  MODE3A
+       CI   R1,'z'*256
+       JGT  MODE5
+*
+       ANDI R1,>DF00
+*
+MODE3A CI   R1,>2000
+       JHE  MODE5
+       CI   R1,>0D00
+       JEQ  MODE5
+*
+KILLIT LI   R1,>FF00
+       JMP  MODE5
+*
+MODE4  MOV  R1,R0
+       ANDI R0,>7F00
+       CI   R0,>2000
+       JHE  MODE5
+       CI   R0,>0D00
+       JEQ  MODE5
+       AI   R1,>8000
+MODE5  MOVB R1,@RETCOD
+       CB   R1,@HFF
+       JNE  MODE5A
+       CLR  @KSTAT
+MODE5A MOV  @SCROLF,@SCROLF
+       JEQ  MODE5B
+       SOCB @H04,@KSTAT
+MODE5B B    @XOPART
+*
+********************************************************************************
+*
+KMODE1 SWPB R6
+       MOVB R0,R6
+*
+ZMODE1 MOV  R4,R4
+       JEQ  K1A
+       BL   @GETQ
+       JMP  ZMODE1       LOOP TO EMPTY QUEUE TO UPDATE STATUS TO CURRENT TIME
+*
+K1A    LI   R5,KES#1
+       CLR  @MODE2FLAG   TAT 3.6.94
+       CI   R6,>0200
+       JL   K1B
+       SETO @MODE2FLAG   TAT 3.6.94
+       LI   R5,KES#2
+*
+K1B    SLA  R6,8
+       LI   R12,>24
+       CLR  @JOYY
+       LDCR *R5+,1            selects either joystick #1 or #2 using a CRU bit
+       TB   -14
+       JEQ  JRIGHT
+       MOVB @HFC,@JOYX
+       JMP  J1A
+*
+JRIGHT TB   -13
+       JEQ  J1A
+       MOVB @H04,@JOYX
+*
+J1A    TB   -12
+       JEQ  JUP
+       MOVB @HFC,@JOYY
+       JMP  J2A
+*
+JUP    TB   -11
+       JEQ  J2A
+       MOVB @H04,@JOYY
+*
+J2A    TB   -15
+       JEQ  NOFIRE
+
+*
+* Below routine sparates the firebuttons so each is tested independently.
+*      Results are then stored, and the status for each  joystick set/reset.
+*
+       INC  R5
+       MOVB *R5+,R1
+
+       CLR  @KSTAT            CLEAR THE Status
+       ABS  @MODE2FLAG        MODE 1 OR 2?
+       JEQ  CHECKFIRE1        1, CHECK BUtton 1
+       ABS  @FIREBUT2         2, HAS FIREbutton been pressed already?
+       JNE  MODE5             YES, SO SENd back the code, but dont update STATUS
+       SETO @FIREBUT2         SET THE FLAg for next time through
+FIRE0  MOVB @H2000,@KSTAT     SET NEWKEY flag (used for firebutton via KSCAN)
+       JMP  MODE5             RETURN
+
+CHECKFIRE1
+       ABS  @FIREBUT1         DO THE SAME thing for joystick #1
+       JNE  MODE5
+       SETO @FIREBUT1
+       JMP  FIRE0
+
+FIRERP DATA 0
+MODE2FLAG   DATA 0
+FIREBUT1    DATA 0       HOLDS STATUS FOR joystick #1
+FIREBUT2    DATA 0       HOLDS STATUS FOR joystick #2
+
+NOFIRE ABS  @MODE2FLAG
+       JNE  NARF2
+       CLR  @FIREBUT1
+       JMP  SKIPFR
+NARF2  CLR  @FIREBUT2
+*
+SKIPFR MOVB *R5,R1
+       JEQ  KLDONE
+*
+       SRL  R1,8
+       MOVB @KEYFLG(R1),R1
+       JNE  KLDONE
+*
+       INCT R5
+       JMP  NOFIRE
+*
+KLDONE INC  R5
+       MOVB *R5,R1
+       JMP  MODE5
+*
+KES#1  BYTE 1            WAS 0, NOW WE WIll set the correct joystick line
+       BYTE 16,18
+       BYTE 71,18
+       BYTE 18,5
+       BYTE 72,5
+       BYTE 31,2
+       BYTE 75,2
+       BYTE 32,3
+       BYTE 77,3
+       BYTE 45,0
+       BYTE 80,0
+*
+       BYTE 2,19
+       BYTE 3,7
+       BYTE 4,8
+       BYTE 5,9
+       BYTE 6,10
+*
+       BYTE 17,4
+       BYTE 19,6
+       BYTE 20,11
+*
+       BYTE 30,1
+       BYTE 33,12
+       BYTE 34,17
+*
+       BYTE 44,15
+       BYTE 46,14
+       BYTE 47,13
+       BYTE 48,16
+*
+       BYTE 0,>FF
+*
+*
+*
+KES#2  BYTE 0            WAS 1, REVERSES the other joystick by fixing SLCT line
+*
+       BYTE 21,18
+       BYTE 23,5
+       BYTE 36,2
+       BYTE 37,3
+       BYTE 50,0
+*
+       BYTE 7,19
+       BYTE 8,7
+       BYTE 9,8
+       BYTE 10,9
+       BYTE 11,10
+*
+       BYTE 22,4
+       BYTE 24,6
+       BYTE 25,11
+       BYTE 26,16
+*
+       BYTE 35,1
+       BYTE 38,12
+       BYTE 39,17
+*
+       BYTE 49,15
+       BYTE 51,14
+       BYTE 52,13
+       BYTE 53,16
+*
+       BYTE 0,>FF
+*
+KEYPAD BYTE 8,9,10,74
+       BYTE 5,6,7,78
+       BYTE 2,3,4,11
+       BYTE 52
+*
+********************************************************************************
+*
+* RETURN AN INDEX IN R1
+*
+GETQ   CLR  R8
+       MOV  R4,R4        ANY NEW KEYS?
+       JEQ  GETQ1        NOPE...TRY OLD SCAN CODE
+*
+* HERE IF NEW CODE HAS COME IN
+*
+       MOVB *R3+,R1      GET THE NEW CODE
+*
+       CI   R3,ENDKBF
+       JNE  GETQ2A
+       LI   R3,STRKBF
+*
+GETQ2A C    R2,R3
+       JNE  GETQ2B
+       CLR  R4           NO MORE KEYS IN BUFFER
+*
+GETQ2B CLR  R0
+       SRA  R1,8
+       MOVB R1,R12
+       INV  R12
+       ANDI R1,>007F
+       MOVB R12,@KEYFLG(R1)
+       JEQ  GETQ         it was a break code, get next one from queue
+*
+       CI   R1,>38       ALT KEY?
+       JEQ  GETQ
+       CI   R1,>1D       CTL KEY?
+       JEQ  GETQ
+       CI   R1,>2A       SHIFT1 KEY?
+       JEQ  GETQ
+       CI   R1,>36       SHIFT2 KEY?
+       JEQ  GETQ
+       CI   R1,>45       NUMLOCK KEY?
+       JNE  TSTCAP
+       MOVB @KEYFLG+>1D,R1
+       JNE  GETQ              no numlock toggle if CTL is down
+*
+       INV  R10          INVERT NUMLOCK FLAG
+       JMP  GETQ
+*
+TSTCAP CI   R1,>3A       CAPS LOCK KEY?
+       JNE  NOTCAP
+       LI   R12,>1EEE
+       SBZ  0
+       INV  R9           INVERT CAPLOC FLAG
+       JEQ  GETQ
+       SBO  0
+       JMP  GETQ
+*
+* now, we have a useful scan code in R1...put it into R7, set new key status
+*
+NOTCAP CI   R1,>46            scroll lock?
+       JNE  NOTSCR
+       INV  @SCROLF
+       JMP  GETQ
+*
+SCROLF DATA 0                 this should always agree with LED on KB
+*
+NOTSCR MOV  @H2000,@KSTAT
+       MOV  R1,R7
+       JMP  GETQRT
+*
+*
+* HERE IF NO NEW KEYS, CHECK TO SEE IF LAST KEY IS *STILL* DOWN...
+*
+*
+GETQ1  MOV  R7,R1
+       JEQ  QSHIT
+       MOVB @KEYFLG(R1),R0    IS THE KEY DOWN?
+       JNE  GETQ1A
+QSHIT  CLR  R7                IT'S NOT STILL DOWN
+       SETO R8
+GETQ1A MOV  R7,R1
+GETQRT RT

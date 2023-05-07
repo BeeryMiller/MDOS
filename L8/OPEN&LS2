@@ -1,0 +1,560 @@
+; File: OPEN&LS
+* Modified on 8.24.93 to fix sector 0 i/o problem on bread/bwrite causing
+* the LABEL CLI command to fail and other problems associated with it.
+*
+;
+; 2.16.2021 Fix ISNOPN routine to jump to BADNFB, bypass CLR *3 (>0000)
+;           Fixes crash after exit GPL or ABASIC, perhaps other prgs.
+********************************************************************************
+*
+*      OPEN,LOAD,SAVE ROUTINES START HERE
+*
+********************************************************************************
+*
+RENA96 CLR  @LRECLN           pass one for rename
+       JMP  RENA97
+*
+* test for bad open attribute...fixed-append
+*
+OPEN   MOV  @OPCODE,R6
+*
+       COC  @H0006,R6         is it append?
+       JNE  OPEN02            nope
+       COC  @H0010,R6
+       JEQ  OPEN02            ok if variable
+*
+BAD2   B    @BADOP2           bad open attributes
+*
+OPEN02
+LOAD
+SAVE
+BINWRT
+BINRED
+PROT96
+RENA97 CI   R2,ENDBUF         was file found in a buffer?
+       JEQ  ISNOPN            nope...we're plenty ok.
+BAD7$  B    @BADOP7           file already open @@ check for compatible open
+*
+ISNOPN MOV  R3,R3             is there a free buffer?
+       JNE  BUFOK             yep, we can open the file
+;;     B    @BADOP4       2.16.2021, NO! Returning here executes CLR *R3 !
+       B    @BADNFB           added new jump point to skip the clear.
+
+
+*
+PNTSEC DATA 1                 address on disk of pointer sector
+FSUBAD DATA 0                 address in vib of empty directory entry
+*
+BUFOK  MOV  R3,R6             clear FDR info...clean slate for new file
+       CLR  *R6+
+       CLR  *R6+
+       CLR  *R6+
+       CLR  *R6+
+*
+       MOV  @H0001,@PNTSEC    start with root directory always
+       CLR  @SUBDIR(R3)       start by assuming file is in root directory
+*
+       MOVB @OPTLEN,R0        number of chars in entire pathname
+       SRL  R0,8              make it a word
+       LI   R6,PATHNM+1       offset to skip 1st period in filename
+       A    @DEVLEN(R4),R6    point to 1st char after period
+       S    @DEVLEN(R4),R0    number of chars left to parse...including period
+       JLE  BAD2              bad pathname "DSK" or "DSKX"
+*
+       MOVB @VOLUME,R2        volume access?
+       JNE  PARSE             yep, avoid fetching VIB twice
+*
+NPARSE BL   @GETVIB           get VIB for this drive
+       DATA BADOP
+*
+********************************************************************************
+*
+*      PARSE filename, check for validity, make sure correct VIB is loaded
+*
+PARSE  LI   R7,COMBUF         start name search...
+       MOV  R7,R2
+*
+PARS00 MOVB @BLANK,*R2+       blank out the buffer
+       CI   R2,COMBUF+10
+       JNE  PARS00
+*
+       MOV  R7,R2             cursor to buffer start
+PARS01 DEC  R0                one less character to scan
+*      JEQ  ALPARD            all done...    [range error]
+       JNE  PARS02
+       B    @ALPARD
+*
+PARS02 CB   *R6,@BLANK
+       JEQ  BAD2              blanks are not legal in names
+*
+       CB   *R6,@DPT
+       JEQ  PARSDP            handle a period
+*
+       CB   *R6,@H80          handle special period <volume drive number>
+       JH   PARSVO
+*
+       CI   R2,COMBUF+10      more than 10 chars before delimiter?
+       JEQ  BAD2              yep, bad name...
+       MOVB *R6+,*R2+         copy the character...it's ok!
+       JMP  PARS01            more parsing
+*
+* here, "DSK.[vol+>80]" or "DSK.<str>[vol+>80]"
+* this entry only used for volume sector i/o, since all other access
+* has a previous OPEN which was trapped out by COMPAR
+*
+PARSVO C    R2,R7
+       JEQ  BAD2              "DSK.[vol+>80]" --bad syntax
+*
+       MOVB @VOLUME,R7        do we already have a volume?
+       JEQ  BAD2               yup, so this is garbage.
+*
+       MOVB *R6+,R7
+       ANDI R7,>0F00
+       SRL  R7,8
+       MOV  R7,@VOLUME
+       JMP  NPARSE
+*
+* test for "DSK1.<str>." or "DSK.." or DSK.XX.<str>."
+*
+PARSDP C    R2,R7             compare to start of COMBUF
+       JEQ  BAD2               null file/directory name is garbage...
+*
+       MOVB @VOLUME,R5        volume access?
+       JNE  VOLSCH             yes, so go lookin' for the drive
+*
+* search the currently loaded VIB for this subdirectory...
+*
+       LI   R7,FDIRN1+VIBBUF  point to name of first subdirectory
+       CLR  @FSUBAD           flag indicating no free directory entries
+DIRSR1 MOV  @10(R7),R1        get AU number of pointer record
+       JEQ  DIRSR4             not existant directory...
+       LI   R1,COMBUF
+       MOV  R7,R13
+DIRSR3 CB   *R1+,*R13+
+       JNE  DIRSR5
+       CI   R1,COMBUF+10      done?
+       JNE  DIRSR3            nope.
+       MOV  @10(R7),@PNTSEC   save pointer to this pointer record...
+       MOV  R7,@FSUBAD        save point to actual subdirectory info
+       INC  R6                skip past the period for more parsing..
+*                             copy directory name into fileinfo...
+       MOV  R3,R1
+       AI   R1,SUBDIR
+       MOV  *R7+,*R1+
+       MOV  *R7+,*R1+
+       MOV  *R7+,*R1+
+       MOV  *R7+,*R1+
+       MOV  *R7,*R1
+       JMP  PARSE             and continue to parse filename
+*
+DIRSR4 MOV  R7,@FSUBAD        save pointer to available directory entry
+DIRSR5 AI   R7,12             point to next subdirectory entry
+       CI   R7,BITMAP+VIBBUF  finished?
+       JNE  DIRSR1             no, try next one...
+*      directory not found: could be a create directory request
+       CB   @OPCODE,@SAVCOD   is it create directory?
+       JNE  BAD7$              nope. error.
+*
+* mkdir ...
+*
+       DEC  R0                skip period...
+       JNE  BAD7$             if anything left, then die
+       MOV  @FSUBAD,R4        get address of possible new directory
+       JNE  DIRCR3             one is available
+       MOVB @H80,@PABERR      error 4 (out of space)
+       B    @SYSR11            and get out..
+*
+DIRCR3 LI   R0,2
+       BL   @GETSEC           get a sector to use
+       DATA BADOP
+       MOV  R0,@10(R4)        store number of sector in R0 -pc 11/25/88
+       MOV  R0,@MYR3          get number for writing sector
+       MOV  @VDPBUF,R1
+       MOV  R1,@MYR1
+       LI   R0,128
+DIRCR4 CLR  *R1+              null out the new sector
+       DEC  R0
+       JNE  DIRCR4
+       BLWP @WSCPU2           write out the nulled directory sector
+       DATA BADOP
+*
+       LI   R0,COMBUF
+*      AI   R4,-10            removed -pc 11/25/88
+DIRCR5 MOV  *R0+,*R4+         copy directory name into sector 0
+       CI   R0,COMBUF+10
+       JNE  DIRCR5
+       JMP  SRTD00            get out and write out changed VIB
+*
+* volume search...search VIBs for diskname
+*
+VOLSCH CLR  R7                search starting at drive 1
+NXTVIB INC  R7
+       CI   R7,8
+       JNE  NXTVI1            search failed...
+       B    @BAD7$
+*
+NXTVI1 MOV  R7,@VOLUME
+       BL   @GETVIB
+       DATA NXTVIB
+*
+       LI   R2,COMBUF
+       LI   R5,VIBBUF
+CVNAM  C    *R5+,*R2+
+       JNE  NXTVIB
+       CI   R2,COMBUF+10
+       JNE  CVNAM
+*
+       SLA  R7,8              pab will have "DSK.volume filename"
+       AI   R7,>8000                                   ! >80 plus drive #
+       MOV  R6,R1
+       MOVB R7,*R6+           <flag the pathname>
+*
+       AI   R1,-OPCODE        offset within 9640 PAB
+       A    @PABLOC,R1
+       MOVB @MODE4A,R13
+       JNE  CN00
+       AI   R1,-6             adjust to offset in /4a PAB
+       BL   @VDPWAD           /4a name update
+       DATA >4000
+       MOVB R7,@VDP0
+       JMP  CN01
+*
+CN00   MOV  R1,R2             9640 name update
+       SRL  R1,13
+       MOVB @SAVMAP+4,@MAP96+4
+       MOVB @TSKMAP(R1),@MAP96+6
+       ANDI R2,>1FFF
+       MOVB R7,@>C000(R2)
+CN01   B    @PARSE
+*
+********************************************************************************
+*
+* PARSING COMPLETE; TEST IF VOLUME WAS FOUND
+*
+ALPARD MOVB @VOLUME,R5        volume flag still set?
+       JEQ  ALPAR2            no...
+       B    @BADOP2           yep, must be "DSK.<str>"
+*
+ALPAR2 CI   R2,COMBUF         "DSKx." or "DSK.<name>."
+       JEQ  DIRP1             special disk access name...
+       B    @FILEOP           otherwise, it's a normal file
+*
+* special name means directory access or direct sector i/o
+* trap out binary read/write to disk here (sector i/o)
+*
+DIRP1  CB   @OPCODE,@H0A
+       JEQ  DIRT00            sector read
+       CB   @OPCODE,@H0B
+       JNE  DIRP1A            [range error]
+       B    @BSECW1           sector write
+DIRT00 B    @BSECR1
+*
+DIRP1A CB   @OPCODE,@STACOD   status call to not OPENed directory device?
+       JNE  DIRP2             nope
+*
+       LI   R6,>5400          return status= exist,protected,0,internal,
+       MOVB R6,@SCNOFF        put it in place
+       B    @SYSRTN           and return it to the user
+*
+DIRP2  CB   @OPCODE,@DELCOD   delete directory?
+       JNE  DIRP4
+*
+* delete directory!
+*
+       MOV  @FSUBAD,R7
+       MOV  @10(R7),R1        we need to check if deleting is OK..
+       MOV  R1,@MYR3          -pc 11/25/88 (yajphfu -> myr1)
+       MOV  @VDPBUF,@MYR1
+       BLWP @RSCPU2           read sector of file pointers
+       DATA BADOP
+       MOV  @VDPBUF,R0
+       MOV  *R0,R0            is there any file in this directory?
+       JEQ  DELDR5             no, so delete it
+BDDIR1 MOVB @H20,@PABERR      return an error 1 (file protected..)
+       JMP  RENDRX             and get out
+*
+DELDR5 CLR  @10(R7)           directory pointer is 0...that's deleted...
+       BL   @FRESEC           de-allocate sector # that's in R1
+SRTD00 B    @SRTDIR            and get out...(FRESEC marked VIB as changed)
+*
+DIRP4  CB   @OPCODE,@H0D      rename directory?
+       JNE  DIRP5              no
+*
+* rename directory!
+*
+       MOVB @BUFADH,@PASADH
+       MOV  @BUFADR,@PASADL
+       MOVB @CPUFLG,@PASVDP
+       SETO @PASRW            moving data into DSR area
+       MOV  @GBGSEC,@PASDSR   get new name for testing
+       MOV  @D10,@PASCNT      always is 10 bytes
+       BLWP @PASDAT           do it....
+*
+* code added -pc 11/25/88 to see if new name already exists
+*
+       LI   R7,FDIRN1+VIBBUF  point to name of first subdirectory
+RDIR00 MOV  @10(R7),R1        is this a valid directory?
+       JEQ  RDIR80            nope, try next one
+*
+       LI   R1,NULSEC
+       MOV  R7,R6
+RDIR10 CB   *R1+,*R6+
+       JNE  RDIR80            not the same, try next one
+*
+       CI   R1,NULSEC+10      done?
+       JNE  RDIR10            nope.
+*
+       B    @BADOP2
+*
+RDIR80 AI   R7,12             point to next subdirectory entry
+       CI   R7,BITMAP+VIBBUF  finished?
+       JNE  RDIR00            no, try next one...
+*
+       LI   R1,NULSEC
+       MOV  @FSUBAD,R6
+*
+RDIR90 MOV  *R1+,*R6+         move new name into VIB
+       CI   R1,NULSEC+10
+       JL   RDIR90
+*
+RENDR9 MOVB @RENDR9,@VIBCHG   indicate VIB has been changed
+       JMP  SRTD00            sort dir, and exit
+*
+RENDRX B    @SYSRTN
+*
+DIRP5  MOV  @OPCODE,R5
+*      ANDI R5,>FFFE          don't care if relative or sequential
+*                             ALSO don't care about parse flag 8-26-89
+       ANDI R5,>FF7E          don't care if relative or sequential
+       CI   R5,>000C          open, fixed, internal, input ?
+       JNE  B2JMP             nope...
+*
+OPNDIR LI   R6,146
+       MOV  @LRECLN,R5
+       JEQ  OPDIRX            assume new directory info
+       C    R6,R5
+       JEQ  OPDIRY            they want new directory info
+*
+       CI   R5,38             do they want old directory info?
+D38    EQU  $-2
+*
+       JNE  B2JMP             nope...bad open
+       JMP  OPDIRY
+*
+OPDIRX MOV  R6,@LRECLN        give them the info count
+*
+OPDIRY BL   @GETPNT
+       MOV  @VOLUME,*R3       move drive number to FCB
+       B    @SYSRTN           exit
+*
+B2JMP  B    @BAD2
+*
+********************************************************************************
+*
+* binary sector read
+*
+BSECR1 MOV  @GBGSEC,@MYR1     dummy buffer
+       CLR  @PASRW            DSR -> USER
+       MOVB @CPUFLG,@PASVDP
+       MOVB @BUFADH,R0
+       MOV  @BUFADR,R1
+       INC  @CHRCNT
+*
+BSECR2 MOVB R0,@BUFADH
+       MOV  R1,@BUFADR
+*
+       DEC  @CHRCNT           one less sector to read
+       JEQ  BSECR9            done
+*
+       MOV  @RECNUM,@MYR3     start sector
+*
+       C    @RECNUM,@H0001    normal sector access?
+       JH   BSECR4            yes.
+
+
+*      JMP  BSECR4            BWM ADDED 8.24.93
+
+       JL   BSECR6            sector zero access...check in-memory vib
+*HEY, LETS LOOK HERE          WIPED OUT 8.23.93 BY BWM
+
+
+*
+       MOV  @PNTSEC,@MYR3
+       JMP  BSECR4            read it.
+*
+BSECR6 CB   @DRIVID,@VIBID
+
+       JMP  BSECR4            BWM ADDED 9.12.93
+       JNE  BSECR4            vib not in memory...read it.
+
+*
+* vib in memory, copy it.
+*
+       CLR  R5                copy vib to user's buffer
+BSECR7 MOV  @VIBBUF(R5),@NULSEC(R5)
+       INCT R5
+       CI   R5,256
+       JL   BSECR7
+       JMP  BSECR5            data in buffer now
+*
+BSECR4 BLWP @RSCPU2
+       DATA BADOP             error trap
+*
+BSECR5 MOV  @RECNUM,R5
+       JNE  BSECR3            not sector zero, don't change anything
+*
+       C    @PNTSEC,@H0001
+       JEQ  BSECR3            not a subdirectory access, don't change anything
+*
+* subdir sector zero access, wipe out subdir pointers
+*
+       LI   R5,NULSEC+FDIRN1
+BSECR8 CLR  *R5+              subdirs can't have more subdirs...
+       CI   R5,NULSEC+BITMAP
+       JL   BSECR8
+*
+BSECR3 INC  @RECNUM
+*
+       MOV  @GBGSEC,@PASDSR
+       MOVB R0,@PASADH
+       MOV  R1,@PASADL
+       MOV  @H0100,@PASCNT    @@ seclen
+       BLWP @PASDAT
+*
+       AI   R1,>0100          @@ seclen
+       JNC  BSECR2
+       AI   R0,>0100
+       JMP  BSECR2
+*
+BSECR9 B    @SYSRT1
+
+*BSECR9 B    @SYSRT1           MODIFIED BY BWM 8.23.93
+
+
+*
+********************************************************************************
+*
+* binary sector write
+*
+BSECW1 C    @PNTSEC,@H0001    accessing a subdir?
+       JEQ  BSECW4            nope, ok
+*
+       B    @BDDIR1           write protect error!
+*
+BSECW4 MOV  @GBGSEC,@MYR1     dummy buffer
+       SETO @PASRW            USER - > DSR
+       MOVB @CPUFLG,@PASVDP
+       MOVB @BUFADH,R0
+       MOV  @BUFADR,R1
+       INC  @CHRCNT
+*
+BSECW2 MOVB R0,@BUFADH
+       MOV  R1,@BUFADR
+*
+       DEC  @CHRCNT           one less sector to write
+       JEQ  BSECR9            done
+*
+       MOV  @GBGSEC,@PASDSR
+       MOVB R0,@PASADH
+       MOV  R1,@PASADL
+       MOV  @H0100,@PASCNT    @@ seclen
+       BLWP @PASDAT
+*
+       MOV  @RECNUM,@MYR3     start sector
+       JNE  BSECW3
+
+       BL   @COPVIB
+
+       MOVB @H0001,@VIBCHG    BWM ADDED 9.8.93
+
+
+*
+BSECW3 BLWP @WSCPU2
+
+       DATA BADOP             error trap
+*                             ABOVE LINE MAY NOT BE CORRECT RETURN
+
+*
+       INC  @RECNUM
+*
+       AI   R1,>0100          @@ seclen
+       JNC  BSECW2
+       AI   R0,>0100
+UPDT1  EQU  $-2               constant sector length
+       JMP  BSECW2
+*
+********************************************************************************
+*
+* copy user's vib to vibbuf when appropriate
+*
+COPVIB CB   @DRIVID,@VIBID
+       JEQ  COPV00
+       MOVB @VIBCHG,R5
+       JNE  COPV99
+*
+COPV00 LI   R4,NULSEC
+       LI   R5,VIBBUF
+COPV10 MOVB *R4+,*R5+
+       CI   R4,NULSEC+256
+       JL   COPV10
+*
+       MOVB @DRIVID,@VIBID
+
+       MOVB @HFF,@VIBCHG
+
+COPV99 RT
+*
+**************************************************************************
+*
+*   get pointers and zero out record number in PAB
+*
+GETPNT MOV  @PNTSEC,@MYR3
+       MOV  @VDPBUF,@MYR1
+       BLWP @RSCPU2           read sector 1
+       DATA BADOP             bad open
+       CLR  @RECNUM           zero this out for call dir, directory file
+       RT
+*
+***************************************************************************
+*
+*      sort directory entries in VIB, then exit
+*
+SRTDIR BL   @SRTD80
+       DATA VIBBUF+FDIRN1,VIBBUF+FDIRN2      1,2
+*
+       BL   @SRTD80
+       DATA VIBBUF+FDIRN1,VIBBUF+FDIRN3      1,3
+*
+       BL   @SRTD80
+       DATA VIBBUF+FDIRN2,VIBBUF+FDIRN3      2,3
+*
+       B    @SYSRTN
+*
+SRTD80 MOV  *R11+,R4
+       MOV  *R11+,R5
+*
+       MOV  @10(R4),R0        test if this entry is used
+       JEQ  SRTD85            nope, swap it to a higher location
+*
+       LI   R1,10
+       MOV  R4,R6
+       MOV  R5,R7
+*
+SRTD82 C    *R6+,*R7+
+       JH   SRTD85            swap them
+       JL   SRTD90            they're already in correct order
+       DECT R1
+       JNE  SRTD82
+       JMP  SRTD90
+*
+SRTD85 MOV  @10(R5),R0
+       JEQ  SRTD90            empty, already correct order
+       LI   R1,12             swap the two entries
+SRTD86 MOV  *R4,R0
+       MOV  *R5,*R4+
+       MOV  R0,*R5+
+       DECT R1
+       JNE  SRTD86
+*
+SRTD90 RT
+*

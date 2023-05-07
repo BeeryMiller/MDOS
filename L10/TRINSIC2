@@ -1,0 +1,504 @@
+*-------------------------------------------------------------------------
+*
+*      WRITTEN: 07/13/1985
+*
+*      FILE:    WDS1.133.TRINSIC2
+*
+*      NAME:    TRINSIC PART TWO FUNCTIONS
+*
+*
+*-------------------------------------------------------------------------
+; 5.7.2022  Added label MATHEN to evaluate segment space
+;
+;
+       DEF  MATHEN
+
+SQR$$  MOV  R11,@EXTRTN       SAVE RETURN
+       MOV  @FAC,R12
+       JEQ  SQR03
+       JLT  SQR02
+       MOVB @CBH3F,@FAC
+       AI   R12,>C100
+       SRA  R12,8
+       SLA  R12,1
+       LI   R1,FAC
+       LI   R2,STK1      SAVE A COPY OF FAC
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @POLY
+       DATA SQRP
+       LI   R1,FAC       SAVE P(A) TO STK2
+       LI   R2,STK2      MOVE STK1 (or A) TO FAC
+       LI   R3,STK1
+       MOV  *R1,*R2+
+       MOV  *R3+,*R1+
+       MOV  *R1,*R2+
+       MOV  *R3+,*R1+
+       MOV  *R1,*R2+
+       MOV  *R3+,*R1+
+       MOV  *R1,*R2
+       MOV  *R3,*R1
+       LI   R1,SQRQ+8
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FADD
+       LI   R1,STK2
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FDIV
+       MOV  @CW03,@P$
+SQR01  LI   R1,STK1
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       LI   R1,FAC
+       LI   R2,STK2
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FDIV
+       LI   R1,STK2
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FADD
+       LI   R2,ARG
+       MOV  @FHALF,*R2+
+       CLR  *R2+
+       CLR  *R2+
+       CLR  *R2
+       BL   @FMULT
+       DEC  @P$
+       JNE  SQR01
+       B    @EXPSQT
+
+SQR02  MOVB @ERRSQR,@FAC+10
+SQR03  RT
+       PAGE
+*=========================================================================
+*
+*
+COS$$  BL   @COS$$$
+SIN$$1 B    @TRINRT           ALL DONE, RETURN NUMBER
+
+COS$$$ MOV  R11,@EXTRTN
+       LI   R1,PI2
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FADD
+       JMP  SIN$$2
+*
+*
+*
+SIN$$  BL   @SIN$$$
+       JMP  SIN$$1
+
+SIN$$$ MOV  R11,@EXTRTN
+SIN$$2 CLR  @FAC+8
+       LI   R1,RPI2
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+       MOVB @FAC,R12
+       ABS  @FAC
+       CB   @FAC,@CBH44
+       JGT  TRIERR
+       LI   R1,FAC
+       LI   R2,STK1
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @GRINT
+       CLR  R1
+       CLR  R0
+       MOVB @FAC,R0
+       JEQ  SIN02
+       AI   R0,>BA00
+*
+*
+*
+       JGT  SIN01
+       AI   R0,FAC+7-PAD*256  (FAC+7-PAD)*256
+       SRL  R0,8
+       AI   R0,PAD
+       MOVB *R0,R1
+       SWPB R1
+SIN01  ANDI R1,3
+SIN02  MOV  R1,@Q$
+       LI   R1,STK1
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FSUB
+       MOV  @Q$,R1
+       SRL  R1,1
+       MOV  R1,@Q$
+       JNC  SIN03
+       LI   R2,ARG
+       MOV  @FLTONE,*R2+
+       CLR  *R2+
+       CLR  *R2+
+       CLR  *R2
+       BL   @FSUB
+SIN03  MOV  @Q$,R1
+       JEQ  SIN04
+       INV  R12
+SIN04  LI   R1,FAC
+       LI   R2,PLWBUF
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @POLYX
+       DATA SINP
+       LI   R1,PLWBUF
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+       INV  R12
+       JLT  SINRTN
+       NEG  @FAC
+SINRTN MOV  @EXTRTN,R11
+       RT
+
+TRIERR MOVB @CBH7,@FAC+10
+       JMP  SINRTN
+
+       PAGE
+*=========================================================================
+*
+*
+*
+TAN$$  LI   R1,FAC
+       LI   R2,STK2
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @SIN$$$
+       LI   R1,FAC       EXCHANGE FAC AND STK2
+       LI   R2,STK2
+       MOV  *R1,R3
+       MOV  *R2,*R1+
+       MOV  R3,*R2+
+       MOV  *R1,R3
+       MOV  *R2,*R1+
+       MOV  R3,*R2+
+       MOV  *R1,R3
+       MOV  *R2,*R1+
+       MOV  R3,*R2+
+       MOV  *R1,R3
+       MOV  *R2,*R1
+       MOV  R3,*R2
+       BL   @COS$$$
+       LI   R1,STK2
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       CB   @FAC+10,@CBH7
+       JEQ  TANRTN
+       MOV  @FAC,R0
+       JEQ  TAN01
+       BL   @FDIV
+TANRTN B    @TRINRT
+
+TAN01  MOVB @ARG,@SIGN
+       BL   @OVEXP
+       JMP  TANRTN
+       PAGE
+*=========================================================================
+*
+*    NAME:  ARC TANGENT
+*
+*=========================================================================
+ATN$$  MOVB @FAC,R12
+       CLR  @FAC+8
+       ABS  @FAC
+       CLR  @Q$
+       LI   R7,TANPI8
+       BL   @FCOMP7
+       JEQ  ATN02
+       JGT  ATN02
+       LI   R7,TAN3P8
+       BL   @FCOMP7
+       JGT  ATN01
+       LI   R1,ARG
+       MOV  @FNEG1,*R1+
+       CLR  *R1+
+       CLR  *R1+
+       CLR  *R1
+       BL   @FDIV
+       LI   R3,PI2
+       JMP  ATN02A
+
+ATN01  BL   @FORMA
+       LI   R3,PI4
+ATN02A MOV  R3,@Q$
+ATN02  LI   R1,FAC
+       LI   R2,PLWBUF
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @POLYX
+       DATA ATNP
+       LI   R1,PLWBUF
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+       MOV  @Q$,R1
+       JEQ  ATNSGN
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FADD
+*
+*
+*
+ATNSGN INV  R12
+       JLT  ATNSG3
+       NEG  @FAC
+ATNSG3 B    @TRINRT
+       PAGE
+*=========================================================================
+*
+*    NAME:  GRINT
+*
+*    WHAT:  GREATEST INTEGER FUNCTION
+*
+*=========================================================================
+GRI$$  BL   @GRINT
+       B    @TRINRT
+
+GRINT  MOV  R11,R10           SAVE RETURN
+       MOVB @FAC,@SIGN
+       ABS  @FAC
+       MOVB @FAC,R5
+       SRL  R5,8
+       MOV  R5,@EXP
+       CI   R5,>0040
+       JLT  BITINT
+       CI   R5,>0045
+       JGT  INT02
+       AI   R5,->0046
+*      SWPB R5
+*      MOVB R5,@FAC10
+*      SWPB R5
+       MOV  R5,R1          REPLACES ABOVE 3 INSTRUCTIONS
+       CLR  R2
+       LI   R3,FAC+8
+       A    R5,R3
+INT01  SOCB *R3,R2
+       SWPB R2
+       MOVB R2,*R3+
+       SWPB R2
+       INC  R5
+       JNE  INT01
+       MOVB @SIGN,R0
+       JGT  INT03
+       MOVB R2,R2
+       JEQ  INT02
+       AI   R1,7
+       BL   @ROUNUP
+       JMP  INT03
+*
+*
+*
+INT02  MOVB @SIGN,R0
+       JGT  INT03
+       NEG  @FAC
+INT03  CLR  @FAC+10
+       B    *R10
+
+BITINT LI   R0,FAC
+       LI   R1,>BFFF          DEFAULT TO A MINUS ONE
+       MOVB @SIGN,R2
+       JLT  INT04
+       CLR  R1
+INT04  MOV  R1,*R0+
+       CLR  *R0+
+       CLR  *R0+
+       CLR  *R0
+       JMP  INT03
+       RTWP
+       PAGE
+CNSTIN CLR  R0
+       MOVB @FAC,R0
+       AI   R0,>C000
+       SLA  R0,1
+       SRA  R0,8
+       CLR  R3
+       CB   @FAC+1,@CBHA
+       JLT  CNST10
+       INC  R0
+       INC  R3
+CNST10 MOV  R0,@EXP
+       MOV  R3,R3
+       RT
+       PAGE
+*
+*    MISCELLANEOUS CONSTANTS
+*
+*
+FNEG1  DATA >BFFF             FLOATING POINT -1 FIRST WORD
+CBH411 EQU  $
+EXC127 BYTE >41,1,27,0        127
+       BYTE 0,0,0,0
+NXC127 DATA ->4101,27*256,0,0
+FHALF  BYTE >3F,50            .5
+ZER3   BYTE 0,0,0,0,0,0
+SQRTEN BYTE >40,3,16,22
+       BYTE 77,66,01,69
+LOG10E BYTE >3F,43,42,94
+       BYTE 48,19,03,25
+LN10   BYTE >40,2,30,25
+       BYTE 85,09,29,94
+CBH7   EQU  $+3
+PI2    BYTE >40,1,57,7
+       BYTE 96,32,67,95
+RPI2   BYTE >3F,63,66,19
+       BYTE 77,23,67,58
+PI4    BYTE >3F,78,53,98
+       BYTE 16,33,97,45
+CBH3F  EQU  $
+TANPI8 BYTE >3F,41,42,13
+       BYTE 56,23,73,10
+TAN3P8 BYTE >40,2,41,42
+       BYTE 13,56,23,73
+*
+*    SQR POLYNOMINALS
+*
+SQRP   BYTE >3F,58,81,22
+       BYTE 90,00,00,00
+       BYTE >3F,52,67,87
+       BYTE 50,00,00,00
+       BYTE >3E,58,81,20
+       BYTE 00,00,00,00
+       DATA SGNBIT
+SQRQ   BYTE >40,01,00,00
+       BYTE 00,00,00,00
+       BYTE >3F,09,99,99
+       BYTE  80,00,00,00
+       DATA SGNBIT
+EXPP   BYTE >40,18,31,23
+       BYTE 60,15,92,75
+       BYTE >41,08,31,40
+       BYTE  67,21,29,37
+       BYTE >41,51,78,09
+       BYTE  19,91,51,62
+       DATA SGNBIT
+EXPQ   BYTE >40,01,00,00
+       BYTE  00,00,00,00
+       BYTE >41,01,59,37
+       BYTE  41,52,36,03
+       BYTE >41,27,09,31
+       BYTE  69,40,85,16
+       BYTE >41,44,97,63
+       BYTE  35,57,40,58
+       DATA SGNBIT
+LOGP   BYTE >3F,35,67,05
+       BYTE  10,30,88,44
+       BYTE >BF,>F5,98,30
+       BYTE  33,31,36,88
+       BYTE >40,63,77,54
+       BYTE  82,28,86,17
+       BYTE >BE,>FF,08,83
+       BYTE  71,22,35,58
+       BYTE >40,57,94,73
+       BYTE  81,38,44,44
+       DATA SGNBIT
+LOGQ   BYTE >40,01,00,00
+       BYTE  00,00,00,00
+       BYTE >BF,>F3,13,25
+       BYTE  97,72,88,46
+       BYTE >40,47,45,18
+       BYTE  22,36,02,61
+       BYTE >BF,>C0,07,64
+       BYTE  58,07,52,56
+       BYTE >40,28,97,36
+       BYTE  90,69,22,22
+       DATA SGNBIT
+*
+*    SIN POLYNOMIAL
+*
+*SINP   BYTE >C4,>FA,44,62    THIS IS THE OLD POLYNOMIAL USED
+*      BYTE  13,67,49,00
+SINP   BYTE >C4,>FA,44,73
+       BYTE  16,00,00,00
+CBH44  EQU  $+2
+       BYTE >3C,05,68,82
+       BYTE  03,33,26,88
+       BYTE >C2,>FD,59,88
+       BYTE  09,11,70,31
+       BYTE >3E,01,60,44
+       BYTE  11,68,46,98
+       BYTE >C1,>D2,81,75
+       BYTE  41,31,06,02
+       BYTE >3F,07,96,92
+       BYTE  62,62,45,62
+       BYTE >C0,>C0,59,64
+       BYTE  09,75,06,22
+       BYTE >40,01,57,07
+       BYTE  96,32,67,95
+       DATA SGNBIT
+*
+*    ATN POLYNOMIAL
+*
+ATNP   BYTE >C0,>FE,53,57
+       BYTE  18,79,88,20
+       BYTE >3F,05,02,79
+       BYTE  13,84,38,85
+       BYTE >C0,>FA,50,69
+       BYTE 99,94,01,40
+       BYTE >3F,07,67,37
+       BYTE  12,43,91,64
+       BYTE >C0,>F7,08,95
+       BYTE  47,91,96,72
+       BYTE >3F,11,11,10
+       BYTE  49,92,50,53
+       BYTE >C0,>F2,28,57
+       BYTE  12,69,75,96
+       BYTE >3F,19,99,99
+       BYTE  99,97,89,96
+       BYTE >C0,>DF,33,33
+       BYTE  33,33,32,25
+
+FLTONE BYTE >40,01,00,00      A CONVIENT FLOATING ONE
+       BYTE 00,00,00,00
+       DATA SGNBIT
+MATHEN EQU $             ;5.7.2022, for eval, bwm
+*
+*
+*

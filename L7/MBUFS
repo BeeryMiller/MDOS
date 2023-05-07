@@ -1,0 +1,14 @@
+*
+       DEF  NODES,NODEND
+*
+       COPY "\MDOS\L7\MEMPTRS"
+*
+* uninitialized storage...can be used for overlays in system/sys image
+*
+       RORG 0
+*
+NODES  BSS  480*NODLEN   we're in real trouble if all of these nodes get used
+NODEND EQU  $            right after end of node list
+*
+       END
+*

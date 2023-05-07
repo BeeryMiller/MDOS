@@ -1,0 +1,236 @@
+; File: RSA2-P
+;
+; 4.30.2023 DSRPASS-S does not correctly reference the STATAB entries. See
+;           See dsrpass:PWRUP8 and R5 offset.
+;           Also see HDR2-P2 for /4a interrupt; similar problem .
+;           Parity is set to 1.5 stop bits in STATBL. Change to >8300?
+;
+       DATA DEVX,INTROU       entry vectors
+
+PIOTYP DATA 1                 0=MYARC,1=TI,2=CC
+PIOTY2 DATA 1
+CRU    DATA >1340,>1380,>9300 rs1,rs2,pio1
+       DATA >1540,>1580,>9500 rs3,rs4,pio2
+BUFNUM DATA 0                 remember almost what buffer to use
+DELETE BYTE 7
+HC0    BYTE >C0
+*
+* register usage:
+* 1) Interrupt routine may not use R9 and if R8 is used it
+*    must be cleared before the return is done.
+* 2) Interrupt routine may use only registers R1 to R10.
+* 3) DSR proper may not use R0 to R2 when deciding if
+*    it is the proper DSR.
+* 4) DSR proper may use R0 to R10.
+*
+MYPIO  SBZ  0
+       SBO  0
+       SBZ  1
+       SBO  1
+       SBZ  2
+       SBO  2
+       TB   0
+       TB   1
+       TB   2
+*
+TIPIO  SBZ  2
+       SBO  2
+       SBZ  2
+       SBO  2
+       SBZ  1
+       SBO  1
+       TB   2
+       TB   2
+       TB   1
+*
+CCPIO  SBZ  2
+       SBO  2
+       SBZ  2
+       SBO  2
+       NOP                    no direction bit on 9901
+       NOP
+       TB   >16
+       TB   2
+       TB   1
+*
+TABPIO DATA MYPIO,TIPIO,CCPIO
+*
+HSINOF EQU  0
+HSINON EQU  2
+HSOUOF EQU  4
+HSOUON EQU  6
+IOMOOF EQU  8
+IOMOON EQU  >A
+HSINTB EQU  >C
+HSOUTB EQU  >E
+IOMOTB EQU  >10
+*
+SW4    EQU  7     7/8 data bit switch (hardware option)
+PIOREG EQU  >1000+>C000 pio 8 bit register <OFFSET .  . >
+*
+RCVERR EQU   9    receiver err (in)
+RPER   EQU  10    parity err (in)
+ROVER  EQU  11    overrun err (in)
+RFER   EQU  12    framing err (in)
+LDIR   EQU  13    interval timer load (out)
+RBINT  EQU  16    reciever interrutp acctive (in)
+XBIENB EQU  19    transmit buffer interrupt enable (out)
+TIMENB EQU  20    timer interrupt
+RBRL   EQU  21    receive buffer reg. loaded (in)
+XBRE   EQU  22    transmit buffer reg. empty (in)
+DSR    EQU  27    data set ready
+INT    EQU  31    interrupt
+*
+SKIPIR EQU  13    skip interval reg. (out)
+RTSON  EQU  16    transmitter control (out)
+RIENB  EQU  18    receiver interrupt enable (out)
+RESET  EQU  31    reset (out)
+*----------------------->default
+OPNCTL EQU  >B200        open control reg=
+*----------------------->7 data bits, 1 odd parity, 1 stop bit
+LSCTL  EQU  >8300        load/save control reg=
+*----------------------->8 data bits, no parity, 1 stop bit
+* load/save control/handshake codes
+*----------------------->
+ACK    EQU  >0600        positive acknowledge char
+NAK    EQU  >1500        negative acknowledge char
+SYN    EQU  >1600        synchronization char
+DEL    EQU  >7F00        delete char
+ECHBAK EQU  >1200        ctrl-r char
+*
+       PAGE
+*
+* port status flags . . each port gets 12 words . .
+*  first 12 words are last status stuck in buffer
+*  2nd words are current port characteristics
+*
+; 4.30.2023 Both powerup routines uses the 2nd row, first two words, to
+;           initialize the RS232 ports. Unfortunately, the powerup doesn't
+;           skip STAP1 so RS232/3 uses STAP1; RS232/4 uses STAR3. Fix this
+;           after reviewing further. Problem is compounded if >1300 is empty
+;           as redirection may override settings. Must analyze.
+;
+; Standard baud rates: >34=9600; >0D=38.4k
+; Parity >0300 is 1.5 stop bits; >8300 is 1 stop bit. Update?
+
+
+STATAB DATA STAR1,STAR2,STAP1,STAR3,STAR4,STAP2
+STAR1  DATA >0300,>01A1,0,0,0,0
+       DATA >0300,>000D,0,0,0,0      ;>0300 01A1 default 300baud
+STAR2  DATA >0300,>01A1,0,0,0,0
+       DATA >0300,>0034,0,0,0,0      ;>0300 0034 9600 baud
+STAP1  DATA >0300,>01A1,0,0,0,0
+       DATA >0300,>01A1,0,0,0,0
+STAR3  DATA >0300,>01A1,0,0,0,0
+       DATA >0300,>01A1,0,0,0,0
+STAR4  DATA >0300,>01A1,0,0,0,0
+       DATA >0300,>01A1,0,0,0,0
+STAP2  DATA >0300,>01A1,0,0,0,0
+       DATA >0300,>01A1,0,0,0,0
+*
+*----------------------->circular buffer pointers
+CBUFST EQU  >8300        vdp start addr (word)
+CBUFLN EQU  >8302        length of buffer (byte)
+CBUFRO EQU  >8303        read offset (dsr read only)
+CBUFOF EQU  >8304        write offset (byte)
+*----------------------->cpu ram usage
+*
+RSMAP  DATA 0,2,4,6,8,10
+*
+*----------------------->
+* all dsr >8 calls start here
+*----------------------->
+*
+DEVX   MOV  @RSMAP(R3),R3     do low-level redirection
+       CI   R3,6              check user call #
+       JL   DEVY              trying for 1st card
+       MOV  @PIOTYP,R1        test for 1st card
+       JLT  BADNAM            can't address >1500 card as PIO/2, etc
+       MOV  @PIOTY2,R1
+       JLT  BADNAM            there is no 2nd card
+       JMP  DEVZ              buffer number is ok
+*
+DEVY   MOV  @PIOTYP,R1
+       JGT  DEVZ
+       JEQ  DEVZ              card is ok
+*
+       AI   R3,6              try to address these on 2nd card
+       MOV  @PIOTY2,R1
+       JLT  BADNAM            no card in system!
+*
+DEVZ   MOV  R3,@BUFNUM        save the buffer number . . . . .
+       MOV  @CRU(R3),R12      get the cru base address
+       MOV  R12,@INTWS+24
+       JLT  DEVZ2
+       MOV  R12,R3
+       JMP  DEVZ3
+*
+DEVZ2  SETO R3
+       SLA  R1,1              into an offset
+       MOV  @TABPIO(R1),R14   and get table base address
+*
+       X    @IOMOON(R14)      set PIO to input mode
+*
+DEVZ3  LI   R6,CLRRAM         clear flags before starting
+CLRLP  CLR  *R6+
+       CI   R6,CLRRST
+       JNE  CLRLP
+*
+       CB   @H80,@OPCODE      special op?
+       JNE  CONTIN            jmp no
+       SOCB @HFF,@CIFLG       set circular interrupt on
+       SZCB @H80,@OPCODE      clear special op bit
+CONTIN CB   @OPCODE,@DELETE   delete buffer?
+       JNE  CONTIM            nope.
+       MOV  @BUFNUM,R15
+       BL   @BUFABT           abort the buffer
+       B    @EXIT             get out
+BADNAM B    @DEVERR
+*
+CONTIM CB   @OPCODE,@H03      valid op?
+       JLE  OPOK              jmp yes
+OPBAD  B    @BADOP            jmp no, bad op
+*
+OPOK   MOVB @MODE4A,R0
+       JEQ  PARSEM            /4a mode...always parse
+*
+       MOVB @FLGSTS,R0
+
+
+       JLT  PARSEM            9640 mode...parse since special bit is set
+*      THE ABOVE LINE FOR MCCANN SUPPORT, COMMENT OUT FOR CLINT PULLEY
+
+       JMP  STAOK
+*
+PARSEM BL   @PARSE            parse option string
+*
+* now that string is parsed see if user has changed parameters since list call
+*
+       MOV  @BUFNUM,R5        get buffer number
+       MOV  @STATAB(R5),R5    get buffer pointer
+*
+       LI   R0,CLRRAM         start of table .  .
+STACHK C    *R5+,*R0+         compare
+       JNE  STACHG            not equal, port status has changed
+       CI   R0,CLRRST         done?
+       JNE  STACHK            no, keep checking ,. , .
+       JMP  STAOK             no change, continue on with DSR call
+*
+STACHG MOVB @FLGCHR,R6        get the flag character
+       BL   @PUTLP0           stick it in output buffer
+*
+       LI   R7,CLRRAM         pointer to new parameters
+       MOV  @BUFNUM,R5
+       MOV  @STATAB(R5),R5    get buffer pointer to "last" parameters
+STACH0 MOVB *R7,*R5+          stick it into buffer
+       MOVB *R7+,R6           get it again
+       BL   @PUTLP0           stick it into output buffer . . . .
+       CI   R7,CLRRST         done?
+       JNE  STACH0
+*
+STAOK  MOVB @OPCODE,R5        get the op code
+       SRL  R5,8              right justify and clear MSbyte
+       SLA  R5,1              make it an offset
+       MOV  @OPTBL(R5),R5     get the routine addr
+       B    *R5               go to processing routine
+       PAGE

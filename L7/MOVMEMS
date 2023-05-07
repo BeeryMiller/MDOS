@@ -1,0 +1,86 @@
+********************************************************************************
+*
+*  opcode #9, move memory from LOCAL1 to LOCAL2 with LENGTH (high speed)
+*      pass:             r1=MSB of 21 bit local destination address
+*                        r2=LSW of 21 bit local destination address
+*                        r3=MSB of 21 bit local source      address
+*                        r4=LSW of 21 bit local source      address
+*                        r5=byte count
+*                        r6=flag for move up, move down    0=up
+*      return:           r0=error code
+*
+MEMOP9 MOV  @10(R13),R1
+       DEC  R1           count of zero means 65536
+*
+       MOV  @2(R13),R2
+       MOV  @4(R13),R3
+       MOV  R2,R4        \
+       MOV  R3,R5         \   used to determine number of pages to copy
+       DIV  @PAGSIZ,R2    r2 has page number, r3 has offset <destination>
+*
+       A    R1,R5        r4 will have local page number, r5 has end offset
+       JNC  OP9J1
+       INC  R4
+OP9J1  DIV  @PAGSIZ,R4
+*
+       CLR  R0           index to pages as we scan
+       MOV  @MEMLST,R10
+       LI   R12,DSTMAP
+OP9L1  C    R0,R2        have we scanned enough pages yet?
+       JHE  OP9J2
+       INC  R0
+       MOV  *R10,R10
+       JNE  OP9L1
+       JMP  OP9ER3       page not defined
+*
+OP9J2  C    @HFFFF,@2(R10)
+       JEQ  OP9ER3            page not defined
+       MOVB @MEMPAG(R10),*R12+
+       C    R0,R4             checked them all yet?
+       JEQ  OP9J3             yes, they're all o.k.
+       INC  R0
+       MOV  *R10,R10
+       JNE  OP9J2
+       JMP  OP9ER3
+*
+***************************
+*
+OP9J3  MOV  @6(R13),R6
+       MOV  @8(R13),R7
+       MOV  R6,R8        \
+       MOV  R7,R9         \   used to determine number of pages to copy
+       DIV  @PAGSIZ,R6    r6 has page number, r7 has offset <source>
+*
+       A    R1,R9        r4 will have local page number, r5 has end offset
+       JNC  OP9J4
+       INC  R8
+OP9J4  DIV  @PAGSIZ,R8
+*
+       CLR  R0           index to pages as we scan
+       MOV  @MEMLST,R10
+       LI   R12,SRCMAP
+OP9L2  C    R0,R6        have we scanned enough pages yet?
+       JHE  OP9J5
+       INC  R0
+       MOV  *R10,R10
+       JNE  OP9L2
+       JMP  OP9ER3       page not defined
+*
+OP9J5  C    @HFFFF,@2(R10)
+       JEQ  OP9ER3            page not defined
+       MOVB @MEMPAG(R10),*R12+
+       C    R0,R8             checked them all yet?
+       JEQ  OP9J6             yes, they're all o.k.
+       INC  R0
+       MOV  *R10,R10
+       JNE  OP9J5
+       JMP  OP9ER3
+*
+* here, all pages needed checked out, their entries are in the page maps
+*
+
+
+
+OP9ER3 MOV  @H0003,*R13
+OP9J6
+MEM9RT RT

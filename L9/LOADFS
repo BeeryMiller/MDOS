@@ -1,0 +1,256 @@
+       DEF  LOADF
+       DEF  ENDLOD
+       REF  CONTEX
+       REF  HEAD#T,TAIL#T,TASK#C
+       COPY "\MDOS\HEAD\OSTASK"
+       RORG
+*
+* load a task from disk using chained program image files
+*      only can load from >0400 to >ff80 in task's VM
+*      other segments must be loaded by task itself
+*
+REACH1 B    @MEMER1
+REACH2 B    @MEMER2
+*
+LOADF  MOVB @MAPPER+4,@PARENT
+*
+       LI   R0,10
+       LI   R1,>FF00
+       SETO R3                try to get a fast page for task header
+       XOP  @SEVEN,0          get a free page for a task header
+       MOV  R0,R0
+       JNE  REACH1            insufficient memory
+*
+       MOVB R2,@MAPPER+4      map the task header into memory
+       MOVB R2,@TSKMAP        for DSR to use to find PAB
+       MOV  R1,@MEMLST        just enough for memory management routines to work
+       MOV  R1,@HEADER
+       CLR  @>8400            program loaded flag
+*
+       LI   R0,1
+       LI   R1,2              get some memory pages to load into 1st
+       LI   R2,8
+       CLR  R3
+       XOP  @SEVEN,0
+       MOV  R0,R0
+       JNE  REACH2            release all we have, re-link header into free list
+*
+       LI   R1,XOPCAL         area to place PAB into on this task
+       LI   R2,NULPAB
+LOAD00 MOVB *R2+,*R1+
+       CI   R2,NULPAB+15
+       JL   LOAD00
+*
+       MOVB @PARENT,@MAPPER+5 we need to get the filename now
+       MOV  @2(R13),R2        user name string address
+       MOV  R2,R3
+       SRL  R2,13             execution page address
+       ANDI R3,>1FFF          offset in page
+       MOVB @TSKMAP+>2000(R2),@MAPPER+6
+       AI   R3,>C000
+       MOVB *R3,R4
+       JEQ  DEVERR            bad name, release memory etc.
+       SRL  R4,8
+       INC  R4                include the length byte
+LOAD01 CI   R3,>E000
+       JL   LOAD02
+       INC  R2
+       ANDI R2,>0007
+       LI   R3,>C000
+       MOVB @TSKMAP+>2000(R2),@MAPPER+6
+LOAD02 MOVB *R3+,*R1+
+       DEC  R4
+       JNE  LOAD01
+*
+* time to load the PAB file into our temporary area
+*
+LOAD03 LI   R0,14
+       XOP  @SEVEN,0          prerequisite to call DSR from system
+*
+       LI   R0,XOPCAL->8000
+       XOP  @EIGHT,0
+       MOVB @XOPCAL+2,R1
+       JNE  DEVER2            real i/o error, (hardware,not found,wrong type)
+*
+       C    @XOPCAL+8,@H0006  did we even load a header on the file?
+       JLE  DEVER3            nope.
+*
+* file loaded, now to transfer to user memory
+*
+       MOVB @>1F08,@MAPPER+5  our load area
+*
+       CLR  R3                fast page flag
+       CB   @>A001,@G
+       JEQ  LOAD04            Geneve tag on the pgm image, slow page tag
+*
+       CB   @>A001,@F
+       JNE  DEVER3            this is not a Geneve pgm image
+       SETO R3                this image should go on a fast page
+*
+LOAD04 LI   R7,>A002
+       MOV  *R7+,R5           length of this file
+       MOV  *R7+,R4           load address
+*
+       MOV  R4,R6
+       A    R5,R6             calc ending address
+       JOC  DEVER3            too high
+*
+       CI   R4,>0400
+       JL   DEVER3            start address is too low
+*
+       MOV  R4,R2
+       SRL  R2,13             calc start page number
+       MOV  R6,R1
+       SRL  R1,13             calc end page number
+       S    R2,R1
+       INC  R1                calc number of pages to fetch
+*
+       LI   R0,1
+       XOP  @SEVEN,0          r3 has flag set in header of file
+       MOV  R0,R0
+       JNE  MEMER2            release all we've gotten so far
+*
+       LI   R0,14
+       XOP  @SEVEN,0          get a fresh map into >1f00
+*
+* move the bytes over now
+*
+       MOV  R4,R3
+       SRL  R3,13
+       MOVB @>1F00(R3),@MAPPER+6
+       ANDI R4,>1FFF
+       AI   R4,>C000
+*
+MOVE00 MOVB *R7+,*R4+
+       CI   R4,>E000
+       JL   MOVE01
+       INC  R3
+       MOVB @>1F00(R3),@MAPPER+6
+       LI   R4,>C000
+*
+MOVE01 CI   R7,>C000
+       JL   MOVE02
+       MOVB @>1F09,@MAPPER+5
+       LI   R7,>A000
+MOVE02 DEC  R5
+       JNE  MOVE00            more to move
+*
+       MOVB @>1F08,@MAPPER+5
+       MOVB @>A000,R1         check more to load flag
+       JEQ  DONE00            all done, successful!
+*
+       MOVB @XOPCAL+15,R1
+       SRL  R1,8
+       AI   R1,XOPCAL+15
+       AB   @H01,*R1          update filename
+       JMP  LOAD03            go back and load another!
+*
+MEMER1 LI   R12,1
+       JMP  CALLRT
+*
+MEMER2 LI   R12,1
+       JMP  DUMP00
+*
+DEVERR LI   R12,2
+       JMP  DUMP00
+*
+DEVER2 LI   R12,4
+       JMP  DUMP00
+*
+DEVER3 LI   R12,3
+       JMP  DUMP00
+*
+DUMP00 LI   R0,2
+       LI   R1,9
+       LI   R2,1
+       XOP  @SEVEN,0          release pages 1-9
+       LI   R0,11
+       MOVB @MAPPER+4,R1
+       SRL  R1,8
+       XOP  @SEVEN,0          release header page
+       JMP  CALLRT
+*
+DONE00 MOV  @>8400,R1
+       JEQ  DEVER3            no entry point!
+*
+       LI   R0,2
+       LI   R1,2
+       LI   R2,8              release pages 8,9
+       XOP  @SEVEN,0
+*
+       MOVB @PARENT,@MAPPER+5
+       LI   R1,>8000
+       LI   R2,>A000
+DONE01 MOV  *R2+,*R1+         copy environment over
+       CI   R1,>8400
+       JL   DONE01
+*
+       LI   R1,SAVPAD         clear out their pad when loading file
+DONE02 CLR  *R1+
+       CI   R1,SAVPAD+>80
+       JL   DONE02
+*
+       MOVB @MAPPER+4,@TSKTBL
+       MOVB @H00,@STATE
+       INC  @PNAME+6          change task name
+       MOV  @HF000,@UWP
+       MOV  @H0400,@UPC
+       MOV  @H0002,@UST
+       MOV  @HEADER,@MEMLST
+       CLR  @BREAK            don't inherit control-C either
+*
+* need to pass handles down to child from parent parsing...
+*      use ">" for output
+*      use "<" for input
+*
+       LI   R0,14
+       XOP  @SEVEN,0
+       MOV  @>1F00,@TSKMAP
+       MOV  @>1F02,@TSKMAP+2
+       MOV  @>1F04,@TSKMAP+4
+       MOV  @>1F06,@TSKMAP+6
+       MOVB @MAPPER+7,@TSKMAP+7              @@ debug!
+*
+* now to link it into the task table
+*
+       MOV  @TAIL#T,R1
+       MOV  @TASK#C,R2
+       MOV  *R2,*R1           copy link to next task
+       MOVB @2(R2),@2(R1)     copy timeslice info
+       MOVB @MAPPER+4,@3(R1)  header page for this new task
+*
+       CLR  @2(R13)
+       MOVB @MAPPER+4,@3(R13) return child page to parent
+       CLR  @COTASK
+       MOVB @PARENT,@COTASK+1 return parent page to child
+*
+       A    @H0004,@TAIL#T    move tail pointer to next empty spot
+       MOV  R1,*R2            and link the new one in as next to execute
+       CLR  R12               code for no error during load
+*
+CALLRT MOVB @PARENT,@MAPPER+4
+       MOV  R12,*R13
+       STST R15
+       B    @CONTEX
+*
+NULPAB DATA >0500,>0001,>0000,>0000
+       DATA >0000,>0000,>3F80,>0000
+*
+G      BYTE 'G'
+F      BYTE 'F'
+H00    BYTE >00
+H01    BYTE >01
+PARENT BYTE 0
+DEAD   BYTE >B8
+H0002  DATA >0002
+H0004  DATA >0004
+H0400  DATA >0400
+HF000  DATA >F000
+HEADER DATA 0
+H0006  DATA >0006
+SEVEN  DATA 7
+EIGHT  DATA 8
+ENDLOD EQU  $
+*
+       END
+*

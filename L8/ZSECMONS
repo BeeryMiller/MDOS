@@ -1,0 +1,72 @@
+SECWS  BSS  32
+PASMON DATA SECWS,PASMO1
+SECMON DATA SECWS,$+2
+       RTWP
+PASMO1 MOV  @14(R13),R2       number of bytes to move
+       LI   R0,'P '
+       JMP  SECM00
+*
+       MOV  @6(R13),R2        get sector #
+       LI   R0,'R '
+       MOV  *R13,R1
+       JNE  SECM00
+       LI   R0,'W '
+SECM00 BL   @SECBYT
+*
+       MOV  R2,R1
+       SRL  R1,12
+       BL   @SECHEX
+*
+       MOV  R2,R1
+       SRL  R1,8
+       BL   @SECHEX
+*
+       MOV  R2,R1
+       SRL  R1,4
+       BL   @SECHEX
+*
+       MOV  R2,R1
+       BL   @SECHEX
+       LI   R0,'  '
+       BL   @SECBYT
+       BL   @SECBYT
+       BL   @SECBYT
+       RTWP
+*
+OPDUMP DATA SECWS,OPDU00
+*
+OPDU00 MOVB @OPCODE,R0
+       ANDI R0,>0F00
+       AI   R0,'0 '
+       BL   @SECBYT
+       LI   R0,'  '
+       BL   @SECBYT
+*
+       LI   R1,OPTLEN
+       MOVB *R1+,R2
+       JEQ  OPDU90
+       SRL  R2,8
+*
+OPDU20 MOVB *R1+,R0
+       BL   @SECBYT
+       DEC  R2
+       JNE  OPDU20
+*
+OPDU90 LI   R0,>0D0A
+       BL   @SECBYT
+       SWPB R0
+       BL   @SECBYT
+       RTWP
+*
+SECHEX ANDI R1,>000F
+       MOVB @MONCHR(R1),R0
+SECBYT LI   R12,>1380
+       SBO  16
+SECBY2 TB   22
+       JNE  SECBY2
+       LDCR R0,8
+       SBZ  16
+       RT
+*
+MONCHR TEXT '0123456789ABCDEF'
+*

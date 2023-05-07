@@ -1,0 +1,466 @@
+* File:  SECT2-P
+*
+* 05/07/96  TAT, Added support for PFM Flashdisk
+*
+* 3.20.2018 Experimental change to pfm/ramdisk/internal ramdisk
+*           to make all sector copies word operations (success)
+*
+* 1.18.2021 Force 16-bit ramdisk at 1401/1601 for drives 6,7 | 8,9
+*           Completed removal of RAVE ramdisk code (remap 8)
+*           Reserved TIPI remaps 23,24,25,26 for DSK1-4
+*
+*01.23.2021 Level 3 DSK0-4 TIPI code added to HDR2-P2 and NEWCMDS updated
+* (feb)     Level 2 enabled early Feb here and hdr2-p2
+;          $IOCM96 why is R5 tested w/17? fixed with equate to max entries.
+;
+;1.31.2021 $Review NULLP for flash/internal ram test - is this ok?
+;           Cleaned up HFDC floppy routine
+;           Consolidated pfm/internalram/horizon read/write loops (RWUNROLLED)
+;
+; 2.9.2021  Cleanup PFM CRU code: removed extra cru ops/r12 save
+;           SECT90 - traced to badop/sysrtn; 8350 is set there (good)
+;           Will Genmod support the Ramdisk word transfers to the bus? YES
+;           Added comments
+;           Commented out RSVDP and WSVDP vectors and code - not used
+;
+; 5.14.2022 Removed RSVDP/WSVDP vdp io vectors; R12 is used to determine c/v
+;           Cleaned up remap table DRVMAP information
+;           Removed horizon remaps for >1800,>1900. Not supported by hardware
+;
+; 7.25.2022 Added CYA reference for REMAP table with CYAMP7 label
+; 8.06.2022 Removed CYAMP7, placed in wrong position
+;
+
+********************************************************************************
+*  Note: this information is partially incorrect/outdated. Review. 5.14.2022
+*      READ SECTOR ROUTINE --- LINK TO BANK #1
+*
+*           THERE ARE MANY ENTRIES
+*           1) FROM GPL FOR ITS DIRECT SECTOR I/O ROUTINE
+*           2) FROM BLWP FOR CPU I/O TO BUFFER AT R3
+*           3) FROM BLWP FOR CPU I/O TO VIBBUF
+*           4) FROM BLWP FOR VDP I/O TO VDPBUF
+*           5) FROM BLWP FOR VDP I/O GIVEN BY R1
+*
+*      REGISTER USAGE IMPORTANT              Note: some set before blwp
+*           R0   READ<>0, WRITE=0
+*           R1   BUFFER ADDRESS
+*           R3   SECTOR # TO BE READ
+*
+********************************************************************************
+* DSK1-9 are mapped to internal drive numbers represented below:
+*
+*      1,2,3,4                MYARC,TI,CC drives #1 - #4
+*      5                      internal ramdisk
+*      6                      8 bit horizons at >1400
+*      7                      8 bit horizons at >1600
+*      8                      OPEN
+*      9                      HFDC card emulate DRIVE
+*      10,11,12,13            HFDC card drives #1 - #4
+*      14                     16-bit horizons at >1400
+*      15                     16-bit horizons at >1600
+*      16                     16-bit horizons at >1000
+*      17                     16-bit horizons at >1700
+*      18                     OPEN (was hrd @>1800 which is impossible)
+*      19                     OPEN (was hrd @>1900 which is impossible)
+*      20,21                  PFM+/PFM512, reserved
+*      22                     OPEN (DSK0 for TIPI?)
+*      23,24,25,26            TIPI DSK1,2,3,4    0x1800
+*
+; DSRPASS-S:REMAP, Sets DSK1-4 based on powerup (hfdc/fdc/tipi) and no longer
+;                  modifies DSK5-9, which are persistent during warm reset
+;                  We could make 1-4 persistent but this and CYA introduce
+;                  some complications.
+; NEWCMDS:REMAP, sets DRVMAP based on CLI input
+;
+DRVMAPENTRIES EQU 9           base 0. See IOCM96
+
+DRVMAP BYTE 0            ;for emulation shift,deprecated. Check for usage
+       BYTE 1,2,3,4      ;DSK1-4: default FDC config, updated w/HFDC or TIPI
+       BYTE 5            ;DSK5  : internal ramdisk
+       BYTE 14           :DSK6  : 16-bit ramdisk CRU 1400 [required for boot]
+       BYTE 15           :DSK7  : 16-bit ramdisk CRU 1600
+       BYTE 14           repeat for dsk8/dsk9
+       BYTE 15           until we think of something better
+;
+; 2.9.2021 The TIPI entries are deliberately disabled here.
+;      HDR2-P2 handles the remap; there is no sector IO for TIPI devices.
+;
+DRVTBL DATA UDFSEC
+       DATA FLPSEC,FLPSEC,FLPSEC,FLPSEC      1,2,3,4
+       DATA INTSEC                           5
+       DATA HORSE1,HORSE2                    6,7
+       DATA UDFSEC  ;rave removed 1.18.2021  8
+       DATA EMUSEC                           9
+       DATA HFDSEC,HFDSEC,HFDSEC,HFDSEC      10,11,12,13
+       DATA HORSE3,HORSE4                    14,15
+       DATA HORSE5,HORSE6                    16,17
+       DATA UDFSEC,UDFSEC                    18,19 was hrd 1800/1900; removed
+       DATA PFMSEC,PFMSEC                    20,21
+       DATA UDFSEC,UDFSEC,UDFSEC,UDFSEC,UDFSEC  22,23,24,25,26 [TIPI]
+*
+* Vectors for floppy-based IO entry
+*
+RSCPU  DATA WRKREG,RSC        READ SECTOR FROM FLP TO CPU RAM
+WSCPU  DATA WRKREG,WSC        WRITE FROM CPU RAM TO FLP
+
+WSCPU2 DATA WRKREG,WSCX       Direct sector, no fcb offset
+RSCPU2 DATA WRKREG,RSCX       Direct sector, no fcb offset
+
+SECIO  DATA WRKREG,SECTIO     VECTOR FOR GPL DIRECT SECTOR I/O
+*
+
+*-------------------------------
+; Caller sets R1 (MYR1) and R3 (MYR3) before the blwp.
+;
+; rscx/wscx are direct, no FCB offset
+RSCX   SETO R0                READ OPCODE
+       JMP  WSC2
+*
+WSCX   CLR  R0                WRITE OPCODE
+       JMP  WSC2        wscx1 I/O TO CPU RAM
+
+;rsc and wsc set FCB
+RSC    SETO R0                READ OPCODE
+       JMP  WSC1              set FCB
+*
+WSC    CLR  R0                WRITE OPCODE
+WSC1   AI   R1,FCB            fcb offset for rsc/wsc
+
+WSC2   MOVB R12,@VDPCPU       I/O TO CPU RAM (0=vdp; <>0 cpu -backwards normal)
+       JMP  IOCM1             skip r1/r3 setup
+*---------------------
+
+; Direct Sector IO via hdr2-p2:GP10/GP20
+;
+SECTIO CLR  R0                SET I/O CODE
+       MOVB R0,@VDPCPU        VDP RAM I/O
+       MOVB @REDWRT,R0
+       MOV  @GBGSEC,R1         LOAD SECTOR TO MY "ROM" SPACE (nulsec l8.layout
+*                              WE'LL MOVE IT TO USER SPACE WITH PASDAT
+       MOV  @SECNUM,R3        SECTOR NUMBER DESIRED
+*----------------------
+
+IOCM1  MOV  R12,@R12SAV       restored on exit
+       MOV  @VOLUME,R5        get logical drive number
+       JLT  UDFSEC            undefined drive
+
+IOCM96 CI   R5,DRVMAPENTRIES  2.9.2021 fixed test
+       JGT  UDFSEC            undefined drive
+*
+       MOVB @DRVMAP(R5),R5
+       SRL  R5,8              internal drive #
+       MOV  R5,R10            table index for physical drive jump
+       SLA  R10,1
+       MOV  @DRVTBL(R10),R10
+       B    *R10              call the correct routine
+
+*----------------------------------------*
+* sector i/o for internal drives #1 - #4 *
+*      (myarc,ti,cc DCC)                 *
+*----------------------------------------*
+FLPSEC MOV  @VOLUME,@VOLSAV   save vol#
+       MOV  R5,@VOLUME
+       LI   R5,10             vector #10
+D10    EQU  $-2
+       BL   @PG2LN3           perform sector IO
+       MOV  @VOLSAV,@VOLUME   restore
+*
+;2.9.2021 Routine enters with error address after, example:
+;    BLWP @<routine>
+;    DATA BADOP
+;
+; Error is returned via SYSRTN-P:BADOP.  MYR9 (this ws) moved to R10
+;      *R3 cleared, R10 copied to >8350, PABERR set (sigh), SYSRTN.[flsh,etc]
+; MYR9 is part of WRKREG, equated to MYPAD+>0100 (l8.layout)
+;      Not to be confused with SCS/HFDC WS equates in >4000 or >E8
+;
+SECT90 MOVB R9,R9             ERROR CODE: (1) WRITE PROT, (6) HARDWARE
+       JEQ  SECT99            OLD R10
+       MOV  *R14,R14          GET word following sector read/write call
+       MOV  @R12SAV,R12       so we can branch to it
+       RTWP
+*
+VOLSAV DATA 0
+*
+; Successful read/write
+SECT99 CLR  R9
+       MOVB R9,@MYPAD+>50
+       INCT R14               move pointer past the error trap so we continue
+       MOV  @R12SAV,R12       with code from caller
+       RTWP
+
+*------------------------------------------------------------*
+* sector i/o for internal ramdisk and PFM 5/7/96 devices     *
+*------------------------------------------------------------*
+* Ramdisk: Memory Mapped
+*
+* PFM: >28  >3A          1-512K [pfm512]      2-128K [pfm+]
+*      --------          -----------------    -----------------
+*      L    L            Bank 0 - System      Bank 0 - System
+*      L    H            Bank 2 - Flash #1    Bank 1 - Flash #1
+*      H    L            Bank 1 - Flash #2    Bank 0 - System
+*      H    H            Bank 3 - Flash #3    Bank 1 - Flash #1
+*
+; 1.18;     Internal ramdisk bit twiddles the PFM.. not optimal
+;           R12 is saved/restored earlier and at exit
+;
+TR12   DATA 0            save r12 for flash
+
+PFMSEC MOVB @MAP96+4,R10      ;moved PFM code here 1.18.2021
+       LI   R7,>F000
+       MOVB R7,@>F114
+       JMP  PFMFLS
+
+INTSEC MOVB @MAP96+4,R10      Internal Ramdisk
+       MOVB @RAM1,@MAP96+4    ;Where is RAM1 set? can't seem to find it
+*
+PFMFLS JEQ  UDFSEC            no ramdisk installed
+
+       CLR  R12          base 0:9901
+       SBZ  >14          FIRST flashdisk BANK
+       SBO  >1D
+
+       C    @>8000,@HBB99     is pfm/ramdisk formatted?
+       JNE  UDFSEC            nope
+       C    R3,@TOTAUS+>8100  is requested sector on the disk?
+       JHE  UDFSEC            nope
+*
+       MOV  R3,R7             sector number
+       INC  R7                skip the reserved 256 byte header
+       MOV  R7,R2
+       SRL  R2,5              page index into page list
+       ANDI R7,>001F          sector index into page
+       SLA  R7,8              byte index into page
+*
+       CB   @NULLP,@>8002(R2)   7/22/90
+       JEQ  UDFSEC
+
+       MOVB @>8002(R2),@MAP96+4              get page # from header
+*
+       CI   R2,15        first bank set at start of routine
+       JLE  PFM512
+       SBO  >14          2ND BANK
+       SBZ  >1D
+       CI   R2,31
+       JLE  PFM512
+       SBO  >14          THIRD BANK
+       SBO  >1D
+*
+PFM512 AI   R7,>8000          r7 has sector address
+       MOV  R1,R8             buffer address
+
+       BL   @RWUNROLLED       ;check R0 then read or write
+
+INTS99 MOVB R10,@MAP96+4
+       JMP  SECT99
+
+;1-31-2021, consolidated R/W and unrolled
+;     PFM, internal ramdisk, horizon
+;
+RWUNROLLED
+       LI   R5,32             loop iterations
+       MOV  R0,R0             0=write,<>0 read
+       JEQ  WRITEUNROLLED
+INTRU1 MOV  *R7+,*R8+         read routine
+       MOV  *R7+,*R8+    3.20, unroll test
+       MOV  *R7+,*R8+
+       MOV  *R7+,*R8+
+       DEC  R5                3.20.2018; changed to word operations!
+       JNE  INTRU1            more to read
+       RT
+
+WRITEUNROLLED
+INTWU1 MOV  *R8+,*R7+         read routine
+       MOV  *R8+,*R7+    3.20, unroll test
+       MOV  *R8+,*R7+
+       MOV  *R8+,*R7+
+       DEC  R5                3.20.2018; changed to word operations!
+       JNE  INTWU1            more to read
+       RT
+*
+HUDFSE SBZ  0                 horizon error/cru off
+UDFSEC MOVB R10,@MAP96+4      horizon/pfm/internal ram mapper restore
+UDFSCT LI   R9,>C000          error 6        7-6-96, for hfdc sector reads
+       MOVB R9,@MYPAD+>50
+       JMP  SECT90            return
+*
+HBB99  DATA >BB99
+TXTSK  DATA 'SK'
+NULLP  DATA 0            CHANged 7.7.96 (originally 4/94 for 2.21) for PFM+
+*  NULLP  DATA P_NULL*256
+R12SAV DATA 0
+*
+INTMAP
+RAM1   BYTE 0,0               ram page for ramdisk header
+
+*------------------------------------------------*
+* sector i/o for internal drive (horizons cards) *
+*------------------------------------------------*
+HORSE1 LI   R12,>1400
+       JMP  HORS00
+*
+HORSE2 LI   R12,>1600
+       JMP  HORS00
+*
+HORSE3 LI   R12,>1401
+       JMP  HORS00
+*
+HORSE4 LI   R12,>1601
+       JMP  HORS00
+
+HORSE5  LI  R12,>1001       MULTIPLE HORIZON CODE BY BWM
+        JMP HORS00
+HORSE6  LI  R12,>1701
+
+*
+HORS00 MOVB @MAP96+4,R10      save current page
+       MOVB @HBA,@MAP96+4     put DSR page in place
+       SBO  0                 turn the card on
+*
+       LI   R2,>B900
+*
+       LDCR R2,8              load low 8 page bits
+       SWPB R2
+       COC  @H0001,R12        check if 16-bit horizons access
+       JNE  HORS02
+       LDCR R2,0              load all page bits
+*
+HORS02 CI   R3,1
+       JGT  HORS09            check parms for any sector > 1
+*
+       MOV  R3,R3
+       JEQ  HORS10            don't error on write (for formatting!)
+*
+HORS09 C    @VIBDSK+>9900+1,@TXTSK
+       JNE  HUDFSE
+       C    R3,@TOTAUS+>9900
+       JHE  HUDFSE
+*
+HORS10
+       MOV    @TOTAUS+>9900,R7
+       COC    @H0001,R12            ADDED 01/01/93 J.G.SCHROEDER
+       JEQ    HORX                  FIXED BUG SO A 16 BIT RAMDISK ABOVE 256K
+       CI     R7,>0401              WILL ERROR OUT WHEN USED AS CRU >xx00
+       JHE    HUDFSE
+HORX   DEC    R7
+       MOV    R7,@JGS
+       MOV    R3,R7
+       CI     R3,1023
+       JGT    LINE0
+       INC    R7
+LINE0  MOV    R7,R2
+       ANDI   R2,>FFF8
+       S      R2,R7
+       SLA    R7,8
+       AI     R7,>9800
+       SRL    R2,2
+       AI     R2,7
+       CI     R3,1023
+       JEQ    OK0
+       CI     R3,1023
+       JGT    OK1
+       CI     R3,>0000
+JGS    EQU    $-2
+       JEQ    OK0
+       CI     R2,3*2+7
+       JGT    LINE1
+       AI     R2,89*2
+       JMP    OK
+LINE1  CI     R2,92*2+7
+       JLT    LINE2
+       INCT   R2
+       ANDI   R2,>00FF      MASK FOR 16 BIT ERROR
+       JMP    OK
+LINE2  AI     R2,>FFFA
+       JMP    OK
+OK0    LI     R2,>00B9
+       LI     R7,>9800
+OK
+       COC    @H0001,R12
+       JEQ    OK2
+       SWPB   R2
+       LDCR   R2,8              load low 8 page bits
+       JMP    HORS25
+OK1    AI     R2,>FFFA
+OK2    LDCR   R2,0
+*
+HORS25 MOV  R1,R8             get buffer address
+
+       BL   @RWUNROLLED       ;test R0, read/write r7/r8
+HORS90 SBZ   0                turn off horizon
+       MOVB R10,@MAP96+4
+       B    @SECT99
+
+
+*-------------------------------------------------*
+* sector i/o for internal drives #9...#13 (HFDC)  *
+*-------------------------------------------------*
+; This routine pages in the HFDC support, we must restore
+;      the pagemap before returning to the sector IO caller
+;
+MAPTT1 DATA 0
+       DATA >5678
+
+HFDSEC
+EMUSEC MOV  @VOLUME,@VOLSAV
+       AI   R5,-9             drive #0...#4 call to HFDC subroutines
+       MOV  R5,R2             volume # to pass: r0,r1,r3 already set...
+       MOV  R0,R5             save r/w flag
+*
+       MOVB @MAP96+1,@PWRPAG                 @@>2000-3FFF
+       MOVB @MAP96+3,@PWRPAG+1               @@>6000-7FFF
+
+;;     MOVB @MAP96+2,@MAPTT1  1.31.2021, we are in this page!
+       MOVB @MAP96+4,@MAPTT1+1   this may or may not be needed
+
+       MOVB @PAGD5,@MAP96+1
+       MOVB @PAGD6,@MAP96+3
+*
+       SETO @HFDFER           set flag for hfdc test
+       C    @>6000,@WDS2TX    HFDC not installed/disabled?
+       JNE  EMUS90            report error
+* r0=r/w flag; r1=buffer; r2=drive, r3=sector
+
+       BLWP @>6008       FLPPIO-- hd\sectorio8
+       MOV  R0,@HFDFER   Save error for test 1.31
+*
+;Start cleanup 1.31.2021
+;  Restore pagemap and volume, then test error
+;
+EMUS90 MOVB @PWRPAG,@MAP96+1     2000
+       MOVB @PWRPAG+1,@MAP96+3   6000
+;      MOVB @MAPTT1,@MAP96+2    ;um, this code is in >4000, already here!
+       MOVB @MAPTT1+1,@MAP96+4   8000
+       MOV  @VOLSAV,@VOLUME
+       MOV  R5,R0        restore rw flag
+
+       ABS  @HFDFER      error: no hfdc or dev error
+       JNE  EMU89E
+       B    @SECT99      success
+EMU89E B    @UDFSCT      error
+HFDFER DATA 0            1.31.2021
+
+;---------Below code replaced 1.31.2021
+;;     BLWP @>6008
+;      MOV  R0,R0        error?
+;      JNE  EMUS90
+;      MOV  R5,R0             restore r/w flag
+;*
+;      MOVB @PWRPAG,@MAP96+1
+;      MOVB @PWRPAG+1,@MAP96+3
+;      MOVB @MAPTT1,@MAP96+2
+;      MOVB @MAPTT1+1,@MAP96+4
+;      MOV  @VOLSAV,@VOLUME
+;      B    @SECT99           NO Error, return
+;*
+;EMUS90 MOV  R5,R0             restore R0
+;      MOVB @PWRPAG,@MAP96+1
+;      MOVB @PWRPAG+1,@MAP96+3
+;      MOVB @MAPTT1,@MAP96+2
+;      MOVB @MAPTT1+1,@MAP96+4
+;
+;      MOV  @VOLSAV,@VOLUME
+;*      B    @UDFSEC
+;      B    @UDFSCT      7-6-96
+*eof

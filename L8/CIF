@@ -1,0 +1,37 @@
+* REMOVED FROM THE ROM OF THE MYARC DISK CONTROLLER USING DISkASSEMBLER.
+* WE CAN HOPE IT WILL WORK, RIGHT?  jph 02/03/87
+CIF
+       LI   R4,FAC
+       STWP R7
+       LI   R8,>0064
+       MOV  *R4,R0
+       MOV  R4,R6
+       CLR  *R6+
+       CLR  *R6+
+       MOV  R0,R5
+       JEQ  CIFA
+       ABS  R0
+       LI   R3,>0040
+       CLR  *R6+
+       CLR  *R6
+       CI   R0,>0064
+       JL   CIFB
+       CI   R0,>2710
+       JL   CIFC
+       INC  R3
+       MOV  R0,R1
+       CLR  R0
+       DIV  R8,R0
+       MOVB @>0003(R7),@>0003(R4)
+CIFC   INC  R3
+       MOV  R0,R1
+       CLR  R0
+       DIV  R8,R0
+       MOVB @>0003(R7),@>0002(R4)
+CIFB   MOVB @>0001(R7),@>0001(R4)
+       MOVB @>0007(R7),*R4
+       INV  R5
+       JLT  CIFA
+       NEG  *R4
+CIFA   B    *R11
+ 

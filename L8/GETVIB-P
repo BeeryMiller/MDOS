@@ -1,0 +1,51 @@
+********************************************************************************
+* GETVIB *
+**********
+*
+*      TAKE CARE OF VOLUME INFORMATION BLOCK BUFFER MANAGEMENT
+*        STORE THE OLD BLOCK IF NECESSARY IN THE OLD DISK DRIVE
+*        GET VIB FOR NEW DRIVE
+*
+*      USES R5
+*
+********************************************************************************
+* FIRST SET UP BUFFER ADDRESS IN THE EVENT OF I/O
+*
+GETVIB MOV  @VIBADR,@MYR1
+*
+       CLR  @MYR3             SECTOR ZERO I/O
+*
+       MOVB @VIBID,R5
+       JEQ  SKPSTR            NO VIB IN BUFFER
+*
+       CB   @DRIVID,R5
+       JEQ  CORVIB            CORRECT VIB ALREADY LOADED.
+*
+       MOVB @VIBCHG,R5
+       JEQ  SKPSTR            DON'T FLUSH, NOT MODIFIED
+*
+* FLUSH CURRENT VIB
+*
+       MOVB @DRIVID,R5
+       MOVB @VIBID,@DRIVID
+       BLWP @WSCPU            WRITE IT TO DISK
+       DATA $+2               IF ERROR, THEN PERSON SCREWED UP, SO JUST CONTINUE
+       MOVB R5,@DRIVID        RESTORE THIS DRIVE NUMBER
+*
+       MOV  @VIBADR,@MYR1     RESET I/O ADDRESS
+*
+SKPSTR MOV  @VOLUME,@VIBCHG   SETS UP VIBCHG=0, VIBID=DRIVID
+*
+       BLWP @RSCPU            READ IT
+       DATA NOVIBT            BRANCH IF ERROR IN READ
+*
+CORVIB INCT R11
+       RT                     VIB SET UP, SO RETURN TO CALLER
+*
+VIBADR DATA VIBBUF-FCB
+*
+* BAD RETURN
+*
+NOVIBT CLR  @VIBCHG           ZERO OUT VIB IN THERE
+       MOV  *R11,R11          GET RETURN LOCATION FOR BAD OP
+       RT

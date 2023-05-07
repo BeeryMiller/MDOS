@@ -1,0 +1,104 @@
+*
+* close, restore
+*
+BOCL5  LI   R10,>A000         EOF error
+CLOSE  SETO @CLOSEF
+*
+RESTOR CI   R2,ENDBUF
+       JNE  BADOPC
+       B    @BADOP7           error return...can't restore or close no file
+*
+BADOPC MOV  @FLOCDA(R3),R5    location of data sector on disk
+       SRL  R0,2              update if output,append
+       JOC  CL1
+       SRL  R0,1
+       JOC  CL4               don't update if input mode
+*
+CL1    CLR  @FLOCDA(R3)       reset data buffer location, file closing...
+       SLA  R5,1              test data changed flag
+       JNC  CL3               it hasn't changed...
+       SRL  R5,1              restore it
+*
+       MOV  R5,@MYR3          sector number to save to
+       JEQ  CL3               can't write to sector zero here
+       MOV  @VDPBUF,@MYR1     data buffer location
+       BLWP @WSCPU2           write it out
+       DATA BADOPS
+*
+CL3    MOV  R3,R0
+       AI   R0,FCB+UPDDAT
+       BLWP @REDCOM           get date stamp into last update field
+*
+       MOV  @FLOCFC(R3),@MYR3 FCB may have been altered, save it.
+       MOV  R3,@MYR1
+       BLWP @WSCPU
+       DATA $+2               ignore all low-level errors...
+       MOVB @WRKREG+>12,R5    test R9 of low-level WS <error code>
+       JEQ  CL4               no error.
+       CB   @H20,R5           write protect error? <user screwed up!>
+       JEQ  CL3B
+       B    @BADOP            return low-level error
+*
+CL3B   MOVB @H00,@PABERR
+CL4    MOV  @OPCODE,R2
+       CB   @RESCOD,R2        restore?
+       JEQ  RES1              yes, continue processing
+       B    @BADOPT           report errors, if there are any
+*
+RES1   SLA  R2,12             test for fixed records
+       JNC  REFIX             fixed, continue
+       CLR  @FLOFL2(R3)       variable, clear sector offset in file
+       MOVB @H00,*R3          clear byte offset in file
+SYSRR1 B    @SYSRTN           return
+*
+REFIX  SLA  R2,4              relative?
+       JOC  SYSRR1            yes, leave it alone
+       CLR  @RECNUM           set it back to zero
+       JMP  SYSRR1            return
+*
+* get file status
+*
+STATUS CI   R2,ENDBUF         file open?
+       JNE  ST1               yes, read data from FCB
+       B    @ISNOPN           try to find file
+*
+ST1    CLR  R1
+       MOVB @FCB+FSTATF(R3),R1
+       ANDI R1,>8B00          mask off irrelevant bits
+       SRC  R1,13             change to format caller expects
+       AB   @3(R4),R1         by doing a circular byte shift
+*
+       MOV  @FCB+LV3REC(R3),R0
+       SWPB R0                get level 3 record count
+       COC  @H0400,R1         fixed?
+       JNE  STFIX             yes...
+*
+       C    @FLOFL2(R3),R0    are we in last sector of file?
+       JNE  ST3                  nope, not EOF
+       CB   *R3,@FCB+EOFOST(R3)  offset >= end offset?
+       JL   ST3                  nope, not EOF
+       JMP  ST4                  at end of file, report it
+*
+STFIX  MOV  @FLOCFC(R3),R9    test for directory file
+       JNE  FIXEDF            not directory...
+       LI   R0,128            one more than max record number for DIR file
+*
+FIXEDF C    @RECNUM,R0        is it a record number within the file?
+
+       JL   ST3               yes, we're ok
+*
+ST4    ORI  R1,>0100          set logical EOF flag
+       BL   @GETVIB           get the VIB for this file
+       DATA BADOP             hardware error
+*
+       LI   R8,200            number of bytes to check
+       LI   R6,VIBBUF+BITMAP  in the bitmap
+ST2B   CB   @HFF,*R6+         any free bits?
+       JNE  ST3               yes, return value
+       DEC  R8                one less byte to check
+       JNE  ST2B              check another...
+       ORI  R1,>0200          set physical EOF flag
+*
+ST3    MOVB R1,@SCNOFF
+       JMP  SYSRR1            return to caller
+*

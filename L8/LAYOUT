@@ -1,0 +1,342 @@
+* L8.LAYOUT
+* added hfdc pages
+* 11/24/88  added subdir defs for sector #0
+* 11/24/88  added subdir name to FCB data block
+*
+;Jul 2020   Warning: PG1COD (HDR2-P2) is limit for HEAD4A block (HDR1-P2)
+;1.18.2021  Added DPAG7 for TIPI (See head\pagenums, head\pg_nums, l8\layout)
+;
+;5.7.2022  -See vectors; AORGs are based on these locations. Further work
+;           needed to adjust the limits to expand table, etc. As of this date,
+;           rs232 code segment >6000 seems to have space from >6C08->6FFF
+;          -Removed PERCRU, no longer needed
+
+
+
+
+;;PERCRU EQU  >1D00        1D00 cru base of personality card
+;
+*
+********************************************************************************
+*  THE FOLLOWING IS THE RAM LAYOUT FOR THE 9640 DSR
+********************************************************************************
+*
+* VECTORS FOR SECOND ASSEMBLY FILE (SHOULD BE MADE ONE FILE, SOMEDAY)
+*
+; See fdc-src-p for the COPY/aorg usage
+;
+PG2VEC EQU  >2900   (FOR GENEVE)
+PG1COD EQU  >4200   ;hdr2-p2,can we shift  <make room for interrupts>
+PG1CON EQU  >7000   ; rest of L8, follows rs232 code
+HEAD4A EQU  >4000   ; hdr1-p2 (table of devices)
+RSCODE EQU  >6000   ; rs232
+ASMCOD EQU  >3980   ; myarc fdc low mem stuff
+*
+DPAG0  EQU  P_DSR1
+DPAG1  EQU  P_DSR2
+DPAG2  EQU  P_DSR3
+DPAG3  EQU  P_DSR4
+DPAG4  EQU  P_DSR5
+PAGDSC EQU  P_SCAC          *PAGE FOR SCSI BUFFER AND CACHE
+PRNPAG EQU  P_DSR6
+
+DPAG5  EQU  P_HFC1
+DPAG6  EQU  P_HFC2
+DPAG7  EQU  P_TIPI
+*
+********************************************************************************
+*
+* MEMORY DEFINITIONS
+*
+
+MYPAD  EQU  >A000        MY SIMULATED PAD AREA  . .. .  CRITICAL!
+
+*
+* VDP MEMORY MAPPING FOR 9640
+*
+       DORG >F100
+VDPWL  EQU  $            VDP WRITE/READ ADDRESS FOR DIRECT VDP I/O
+VDP0   DATA 0            PORT 0
+VDP1   DATA 0            PORT 1
+VDP2   DATA 0            PORT 2
+VDP3   DATA 0            PORT 3
+*
+MAP4A  EQU  >8000        ADDRESS OF MAPPER IN /4A MODE
+MAP96  EQU  >F110        ADDRESS OF MAPPER IN 9640 MODE
+*
+DEVLEN EQU  >54->E0      IN PAD, WORD LOCATION, GIVES # OF CHARS PARSED BY OS
+PABVDP EQU  >56->E0      IN PAD, POINTER TO "." FOLLOWING DEVICE NAME IN VDP RA
+*
+CHAT   EQU  >8342
+CHRPTR EQU  >832C
+*
+* R13 CONTAINS THE GROM WRITE ADDRESS (LIKE WE USE THIS ANYMORE)
+* R14 CONTAINS THE  SYSTEMS FLAGS
+* R15 CONTAINS THE VDP WRITE ADDRESS
+*
+* NOW FOR GPL EQUATES
+*
+       DORG MYPAD+>4A
+FAC    DATA 0
+UNIT   BYTE 0            DRIVE NUMBER
+ACCODE
+REDWRT BYTE 0            0 IF WRITE <>0 IF READ
+GPLBA  DATA 0            GPL BUFFER ADDRESS
+SECNUM BYTE 0            SECTOR NUMBER FOR I/O BASE 0
+*
+R7LSB  EQU  15
+*
+* CRU OUTPUTS
+*
+       DORG 0
+       BYTE 0,0,0
+PG2    EQU  $            ROM PAGE SELECT BIT
+SDEN   BYTE 0            1=SINGLE DENSITY, 0= DOUBLE DEN
+DR1    BYTE 0            DRIVE 1  BASE 1
+DR2    BYTE 0            DRIVE 2
+DR3    BYTE 0            DRIVE 3
+DR4    BYTE 0            DRIVE 4  (AT CRUBASE + >100)
+*
+* NOW FOR VIB LAYOUT
+*
+       DORG 0
+VIB    TEXT 'VOLUMENAME' VOLUME NAME
+TOTAUS DATA >168         TOTAL NUMBER OF SECTORS ON DISK
+SECTRK BYTE 9            SECTORS PER TRACK
+VIBDSK TEXT 'DSK'        ASCII "DSK"
+VPROTC BYTE ' '          BLANK " " OR "P" FOR PROTECTED
+TRKSID BYTE 40           NUMBER OF TRACKS PER SIDE
+SIDES  BYTE 1            NUMBER OF SIDES (1 OR 2)
+DENSIT BYTE 1            DENSITY 1=SINGLE, 2=DOUBLE
+*      BSS  36           RESERVED FOR TIME & DATE STAMP
+FDIRN1 TEXT 'DIRECTORY!'
+FDIRL1 DATA 0
+FDIRN2 TEXT 'DIRECTORY!'
+FDIRL2 DATA 0
+FDIRN3 TEXT 'DIRECTORY!'
+FDIRL3 DATA 0
+BITMAP BSS  200          START OF BIT MAP
+*
+* FILE LAYOUT
+*
+       DORG 0
+FNAME  TEXT '@FILENAME@'
+EXTRLN DATA 0            LONG RECORD LENGTH...WHEN RECLEN IS ZERO
+FSTATF BYTE 0            FILE STATUS FLAGS
+*
+* BIT:  Msb 7 6 5 4 3 2 1 0   MEANING
+*           | | | | | | | +-> 0-DATA 1-PROGRAM
+*           | | | | | | +---> 0-ASCII 1-BINARY
+*           | | | | | +-----> 2              RESERVED
+*           | | | | +-------> 3              0-NOT PROTECTED 1-PROTECTED
+*           | +-+-+---------> 4-6            RESERVED
+*           +---------------> 7              0-FIXED RECORD 1-VARIABLE LENGTH
+*
+LRECPA BYTE 0            LOGICAL RECORDS PER AU (SECTOR IN THIS CASE)
+LV2REC DATA 0            LEVEL 2 (SECTORS) RECORDS ALLOCATED TO FILE
+EOFOST BYTE 0            END OF RECORD OFFSET FOR VARIABLE LENGTH AND PROG FILES
+RECLEN BYTE 0            LOGICAL RECORD LENGTH
+LV3REC DATA 0            # OF LEVEL 3 RECORDS ALLOCATED (BYTES FLIPPED!)
+*RESRV2 BSS  8            NEXT 8 BYTES RESERVED FOR FUTURE
+CREDAT DATA 0,0          the future is here!
+UPDDAT DATA 0,0
+CLUSTR BSS  76*3         FILE CLUSTERS START HERE
+*
+* NOW FOR FDR LAYOUT
+*
+       DORG 0
+FLROST BYTE 0            END OF FILE OFFSET
+FDRVID BYTE 0            DRIVE NUMBER FOR THIS FILE
+FLOCFC DATA 0            LOCATION OF FCB ON DISK
+FLOCDA DATA 0            LOCATION OF DATA BUFFER ON DISK
+FLOFL2 DATA 0            LEVEL 2 OFFSET OF THIS FILE
+FCB    BSS  256          LOCATION OF FCB IN FDR
+SUBDIR BSS  10           NAME OF SUBDIR FILE IS IN
+*
+FBUFLN EQU  $            LENGTH OF FILE BUFFER
+*
+********************************************************************************
+*
+* STATIC RAM LAYOUT
+*
+*
+       DORG MYPAD+>0100    MOVE CONTROLLER RAM INTO OTHER MEMORY POINT
+MYR9   EQU  9*2+$
+MYWS   EQU  $
+WRKREG DATA 0            DSR: R0
+MYR1   DATA 0                 R1
+MYR2   DATA 0                 R2
+MYR3   DATA 0                 R3
+MYR4   DATA 0                 R4
+MYR5   DATA 0                 R5
+       DATA 0,0,0,0,0,0       R6 - R11
+MYR12  DATA 0                 R12      CRU BASE REGISTER FOR BLWP CALLS
+       DATA 0,0,0             R13- R15
+*
+TEMPSV
+IOBUF  BSS  108          IOBUFFER
+IOBLEN EQU  $-IOBUF      LENGTH OF IO BUFFER
+*
+* SOME EXTRA VARIABLES TO KEEP TRACK OF 9640 TYPE THINGS
+* EVEN SOME MORE WS . . . FINGER CROSSING
+*
+DSRWS  EQU  MYPAD+>E0    SIMULATE A DECENT WS
+INTWS  BSS  32           needed to handle full spooler in /4a mode
+SUBWS  BSS  32           WORKSPACE FOR SUBROUTINES (JPH/9640)
+TENBYT DATA 0            flag for addinfo block
+MODE4A BYTE 0            SET MODE. 4A=0, 9640<>0
+       BYTE 0
+*
+* RS232 flags and so on
+*
+*----------------------->initially cleared cpu ram area
+* 6 words worth of flags . . .
+CLRRAM
+CONTRL DATA 0
+BAUD   DATA 0
+ECHFLG BYTE 0            .echo off
+CRFLG  BYTE 0            .crlf off
+LFFLG  BYTE 0            .lf off
+PARFLG BYTE 0            .check parity on
+NULFLG BYTE 0            .nulls on
+HSFLG  BYTE 0            handshake strobe pio flag (INTWS R14)
+IBFLG  BYTE 0            inverted busy pio output flag
+CIFLG  BYTE 0            enable circular interrupt buffer on
+CLRRST
+*
+LEVEL5 DATA 0            level 1 return addr
+LEVEL2 DATA 0            level 2 return addr
+LEVEL3 DATA 0            level 3 return addr
+LEVEL4 DATA 0            level 4 return addr
+*
+* WORKSPACE FOR THE PASDAT ROUTINE, AND ADDRESSES TO PASS DATA THROUGH
+*
+PASWS
+       DATA 0,0          0&1
+PASRW  DATA 0            2
+PASVDP DATA 0            3
+       BYTE 0            4h
+PASADH BYTE 0            4l
+PASADL DATA 0            5
+       DATA 0            6
+PASCNT DATA 0            7
+PASDSR DATA 0            8
+       DATA 0,0,0,0,0,0,0     9-15
+*
+* DEFINE THE LAYOUT OF THE PAB WE MOVE INTO HERE...
+*
+* 9640 PAB LAYOUT.  WE WILL MAP /4A PAB INTO THIS <FUN FUN FUN>
+*
+OPCODE BYTE 0            OPCODE BEING PERFORMED
+FLGSTS BYTE 0            FLAGS AND STATUS BITS
+PABERR BYTE 0            RETURN ERROR CONDITION
+BUFADH BYTE 0            HIGH BYTE OF BUFFER ADDRESS
+BUFADR DATA 0            BUFFER LOCATION FOR DATA
+RECNUM DATA 0            RECORD NUMBER FOR I/O
+LRECLN DATA 0            LOGICAL RECORD LENGTH AS GIVEN BY PAB
+CPUFLG BYTE 0            THIS FLAG DOES EXIST ELSEWHERE AS CPUVDP
+CHRCNH BYTE 0            HIGH BYTE OF CHARACTER COUNT
+CHRCNT DATA 0            CHARACTER COUNT FOR # OF BYTES TO TRANSFER
+SCNOFF BYTE 0            SCREEN OFFSET USED FOR RETURNING STATUS
+OPTLEN BYTE 0            LENGTH OF PATHNAME
+*
+PATHNM TEXT 'DSK.volumename.@filename@'  PATHNAME...
+       TEXT '6789 123456789 '
+*
+       EVEN
+*
+*  BELOW IS THE /4A MODE PAB LAYOUT SO THAT WE CAN EASILY MAP
+*  IT BACK AND FORTH BETWEEN 9640 PAB . . . AIN'T IT FUN?
+*
+OPCOD4 BYTE 0            OPCODE BEING PERFORMED
+FLGST4 BYTE 0            FLAGS AND STATUS BITS
+BUFAD4 DATA 0            BUFFER LOCATION FOR DATA
+LRECL4 BYTE 0            LOGICAL RECORD LENGTH AS GIVEN BY PAB
+CHRCN4 BYTE 0            CHARACTER COUNT FOR # OF BYTES TO TRANSFER
+RECNU4 DATA 0            RECORD NUMBER OF I/O
+SCNOF4 BYTE 0            SCREEN OFFSET USED FOR RETURNING STATUS
+OPTLE4 BYTE 0            LENGTH OF PATHNAME
+*
+* SOME VARIABLES AND FLAGS FOR DSR
+*
+       BYTE 0            MAKE EVERYTHING LINE UP.
+*
+RETRY  BYTE 0            NUMBER OF RETRIES
+VOLUME BYTE 0            FLAG BYTE USED TO INDICATE FILE ACCESS BY VOLUME
+DRIVID BYTE 0            BYTE WHICH CONTAINS DRIVE USED IN THIS OPERATION
+CLOSEF DATA 0                 flag for sector zero flush on close 6/18/89
+VIBCHG BYTE 0            FLAG 0=VIB NOT ALTERED, 0<>VIB ALTERED
+VIBID  BYTE 0            DRIVE NUMBER OF VIB IN VIB BUFFER
+VDPBUF DATA 0            LOCATION OF VDP BUFFER FOR THIS DISK OPERATION
+DSKTYP BSS  4*4          FOUR BYTES PER DISK FIRST 2 ARE NUMBER OF AU'S
+*                        THE NEXT 2 ARE SIDES AND DENSITY
+*
+TRACK1 BYTE 0            CURRENT TRACK LOCATION OF DRIVE 1
+TRACK2 BYTE 0            DRIVE 2
+TRACK3 BYTE 0            DRIVE 3
+TRACK4 BYTE 0            DRIVE 4
+RETPA0 DATA 0            RETURN TO PAGE 0 FROM 1
+FLAGNR BYTE 0            FLAG FOR READING SECTOR 0
+FLGRBK BYTE 0            FLAG FOR READ BACK MODE AFTER WRITE
+VDPCPU BYTE 0            FLAG FOR IO TO CPU <>0 OR VDP = 0
+NUMFIL BYTE 0            NUMBER OF FILE BUFFERS AVAILABLE
+*
+********************************************************************************
+*
+NULSEC BSS  256          random garbage sector for GPL subs <and RS232>
+VIBBUF BSS  256          LOCATION OF VIB IN RAM
+BUF1   BSS  FBUFLN       |
+BUF2   BSS  FBUFLN       |
+BUF3   BSS  FBUFLN       | FCB's 6 files max...more than 6 is only faked for OS
+BUF4   BSS  FBUFLN       |
+BUF5   BSS  FBUFLN       |
+BUF6   BSS  FBUFLN       |
+BUF7   BSS  FBUFLN       |
+BUF8   BSS  FBUFLN       |
+BUF9   BSS  FBUFLN       |
+BUF10  BSS  FBUFLN       |
+ENDBUF EQU  $
+VBUF1  BSS  256          data sector buffers for files
+VBUF2  BSS  256
+VBUF3  BSS  256
+VBUF4  BSS  256
+VBUF5  BSS  256
+VBUF6  BSS  256
+VBUF7  BSS  256
+VBUF8  BSS  256
+VBUF9  BSS  256
+VBUF10 BSS  256
+*
+********************************************************************************
+*
+* NOW FOR RAM USED IN PAD LOCATION
+*
+       DORG MYPAD+>52
+COMBUF BSS  10
+CLUSNO DATA 0            USE THE IO BUF FOR TEMPORARY STORAGE DURING GETAUS
+R1SAVE DATA 0
+R2SAVE DATA 0
+R5SAVE DATA 0
+R9SAVE DATA 0
+R11SAV DATA 0
+FIPTSV DATA 0            FILE POINTER SAVE LOCATION
+PABLOC DATA 0            TEMPORARY LOCATION FOR VOLUME DURING STORAGE OF OLD VIB
+RETUR1 DATA 0            20 BYTES USED TO SAVE PAD RAM DURING DIRECT I/O
+*
+********************************************************************************
+*
+* MAP OF WD1770 CONTROLLER REGISTERS...
+*
+       DORG >0000        MAP THE CARD DSR INTO >8000 SPACE
+*
+DCMDRG EQU  $            COMMAND REGISTER
+DSTARG BYTE 0            STATUS REGISTER
+       BYTE 0
+DTRKRG BYTE 0            TRACK REGISTER
+       BYTE 0
+DSECRG BYTE 0            SECTOR REGISTER
+       BYTE 0
+DDATRG BYTE 0            DATA REGISTER
+*
+********************************************************************************
+*

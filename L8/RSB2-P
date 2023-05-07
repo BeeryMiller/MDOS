@@ -1,0 +1,212 @@
+*
+********************************************************************************
+*
+* code for OPEN
+*
+OPEN   MOV  @LRECLN,R2        get lrl
+       JNE  OPENGO            jmp non-zero, is ok
+*
+       MOVB @D80,@LRECLN+1
+OPENGO MOVB @H00,@CHRCNH
+       MOV  @LRECLN,@CHRCNT   added 3/14/89 to make consistent with disk i/o
+       MOVB @FLGSTS,R1        relative records?
+       SLA  R1,8              >01?
+       JNC  EXITB             jmp no, is ok
+       B    @BADATT           jmp yes, is err
+*
+********************************************************************************
+*
+* code for READ
+*
+READ   CLR  @CHRCNT
+       MOVB @H00,@CHRCNH
+       MOV  @LRECLN,R7        get lrl
+       LI   R9,NULSEC         pointer into my internal buffer
+       BL   @IFINTD           is it internal?
+       JNC  READXX            jmp no
+*
+       SOCB @H01,@BUFNUM+1    input buffer is always odd...
+       BL   @GETCH            get buffered input
+       SRL  R6,8
+       C    R7,R6             is it too large
+       JHE  READX             jmp no
+       B    @SIZERR           else tell about the err
+*
+READX  MOV  R6,R7             for internal use first byte as count
+READXX MOV  R7,R7             right justify and clear MSbyte
+       JEQ  READEX            jmp 0 length
+*
+* yet another jph fuckup...echoed output going into input buffer
+*
+READ1  SOCB @H01,@BUFNUM+1    input buffer is always odd...
+       BL   @GETCH            get character from port
+       SZCB @H01,@BUFNUM+1    output buffer is always even...
+*
+       BL   @IFINTD           is it internal data type?
+       JOC  READ2             jmp yes
+*
+       MOVB @ECHFLG,R1        .echo off switch given?
+       JEQ  EDIT              jmp no, check for edit chars
+*
+       BL   @FIXED            fixed record length?
+       JNC  READ2             jmp yes
+       CI   R6,>0D00          variable and CR?
+       JNE  READ2             jmp no, write but no echo
+       JMP  READEX            jmp yes, end of input
+*----------------------->edit processing
+EDIT   CI   R6,>0D00          is it a carriage return?
+       JEQ  EDITCR            jmp yes
+*----------------------->check for edit chars
+       CI   R6,DEL            delete char?
+       JEQ  DELIT             jmp yes
+       CI   R6,ECHBAK         is it a CONTROL-R?
+       JNE  READEC            jmp no the char
+*----------------------->echo entire buffer back
+       LI   R1,NULSEC         initial address in internal buffer
+GBGSEC EQU  $-2
+       MOV  R1,R13
+       BL   @OUTCR            output CR, maybe nulls, then maybe LF
+       MOV  R9,R2             copy the current last char adr
+       S    @GBGSEC,R2        R3 = current byte count
+       JMP  ECHOEN
+ECHOLP BL   @PUTCHR           get the next char and echo
+       DEC  R2                Done?
+ECHOEN JNE  ECHOLP            jmp no
+       JMP  READ1
+*----------------------->delete a char
+DELIT  C    @GBGSEC,R9        any chars to delete?
+       JEQ  READ1             jmp no
+       INC  R7                adjust the byte count
+       DEC  R9                adjust the buffer addr
+       MOV  R9,R1             get the deleted char
+       MOV  R1,R13
+       BL   @PUTCHR           get the deleted char and echo
+       CI   R6,>0D00          is it a CR?
+       JNE  READ1             jmp no
+       BL   @OUTNUL           output maybe nulls, maybe LF
+       JMP  READ1
+*----------------------->
+* enter when CR & .echo off not given
+*----------------------->
+EDITCR BL   @FIXED            is it fixed length records?
+       JNC  READEC            jmp yes, CR, no nulls, no LF
+       BL   @OUTCR            else output maybe CR, nulls, & LF
+       JMP  READEX
+       PAGE
+*----------------------->
+* write current char to vdp/buffer
+*----------------------->
+READEC BL   @PUTCH            put current char into output buffer
+READ2  MOVB R6,*R9+           move character into buffer
+       DEC  R7                receive buffer full?
+       JNE  READ1             no, then loop
+*
+READEX S    @GBGSEC,R9        compute char count to return
+       MOV  R9,@CHRCNT
+       MOVB @H00,@CHRCNH
+       CLR  @PASRW            write to user space
+       MOVB @CPUFLG,@PASVDP
+       MOV  @GBGSEC,@PASDSR
+       MOV  @CHRCNT,@PASCNT
+       MOV  @BUFADR,@PASADL
+       MOV  @BUFADH,@PASADH
+       BLWP @PASDAT           return string to the user
+EXITB  JMP  EXITA
+*
+********************************************************************************
+*
+* code for WRITE
+*
+WRITE  MOV  R3,R12            make sure we have correct CRU base installed
+       BL   @CKABRT           needed for /4a mode buffer full...
+*
+       MOVB @H00,@CHRCNT      10/29/90 -pc (fix user negative count to pasdat)
+*
+       MOVB @CPUFLG,@PASVDP
+       MOV  @BUFADR,@PASADL
+       SETO @PASRW            read into DSR
+       MOV  @CHRCNT,@PASCNT
+       MOVB @BUFADH,@PASADH
+       LI   R13,NULSEC
+       MOV  R13,@PASDSR
+       BLWP @PASDAT           get the data
+*
+       MOV  R3,R3             parallel output?
+       JGT  WRIT10            jmp no              * JEQ
+       SETO R3                yes, pio flag set for output
+H03    EQU  $-1
+WRIT10
+       MOV  @BUFNUM,R15       get buffer number
+       BL   @PUTBUS           save current PUT buffer pointer
+*
+       MOVB @CHRCNT+1,R7      get the char count
+       BL   @IFINTD           is it internal data type?
+       JNC  WRTX              jmp no
+       MOV  R7,R6             1st byte=record length
+       BL   @PUTCH
+WRTX   SRL  R7,8              right justify and clear MSbyte
+       JEQ  WRITEN            jmp no
+*----------------------->
+* start write loop
+*----------------------->
+WRITLP BL   @PUTCHR           get and output next char
+       DEC  R7                byte count
+       JNE  WRITLP            loop till all done
+*----------------------->
+* if display format records follow record with CR then LF
+*----------------------->
+WRITEN BL   @IFINTD           is it internal data type?
+       JOC  EXITA             jmp yes
+       BL   @FIXED            is if fixed length records?
+       JNC  EXITA             jmp yes
+       BL   @OUTCR            output Cr, maybe nulls, maybe LF
+EXITA  MOV  R3,R3
+       JLT  EXITA1            pio
+       MOV  R3,R12            get correct CRU base , , ,
+       SBO  XBIENB            enable the transmitter interrupt
+       JMP  EXIT              seems closer now . . . . jph
+*
+EXITA1 LI   R12,>1340         get timer CRU base
+       MOV  @BUFNUM,R15
+       CI   R15,6
+       JL   EXITA2
+       LI   R12,>1540         2nd card
+*
+EXITA2 SBO  LDIR
+       LDCR @ITIM,8           this sets the interval timer
+       SBO  TIMENB
+       JMP  EXIT
+*
+ITIM   BYTE 78,0
+*
+       PAGE
+*----------------------->     common returns
+*----------------------->     (err code 2) bad open attributes
+BADATT LI   R1,>4000          set the apporiate byte
+       JMP  BADEXT
+*----------------------->     (err code 3) illegal operation
+BADOP  LI   R1,>6000          set the apporiate bit
+       JMP  BADEXT
+*----------------------->     (err code 4) out of table/buffer space
+SIZERR LI   R1,>8000          set the apporiate bit
+       JMP  BADEXT
+*----------------------->     (err code 6) device err
+DEVERR LI   R1,>C000          set the apporiate bit
+*----------------------->     common err point
+BADEXT SOCB R1,@PABERR        set the err bits
+*
+EXIT   MOVB @MODE4A,R0        in /4A mode?
+       JEQ  EXTSYS            yip, don't touch recieve interrupts
+*
+       LI   R12,>1340
+       SBO  RIENB
+       LI   R12,>1380
+       SBO  RIENB             set up both sets of recieve interrupts
+*
+       LI   R12,>1540
+       SBO  RIENB
+       LI   R12,>1580
+       SBO  RIENB             set up both sets of recieve interrupts
+*
+EXTSYS B    @SYSRT1           return to OS
+*

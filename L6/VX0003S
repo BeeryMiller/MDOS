@@ -1,0 +1,284 @@
+*FILENAME: VX0003S
+*
+* XOP 9 -- Low level video
+*
+XOP9FN  DATA    X900VC,X901VC,X902VC,X903VC
+        DATA    X904VC,X905VC,X906VC,X907VC
+        DATA    X908VC,X909VC,X90AVC,X90BVC
+        DATA    X90CVC,X90DVC,X90EVC,X90FVC
+        DATA    X910VC,X911VC,X912VC,X913VC
+        DATA    X914VC,X915VC,X916VC,X917VC
+        DATA    X918VC,X919VC,X91AVC,X91BVC
+        DATA    X91CVC,X91DVC,X91EVC,X91FVC
+        DATA    X920VC,X921VC,X922VC,X923VC
+        DATA    X924VC,X925VC,X926VC,X927VC
+        DATA    X928VC,X929VC,X92AVC,X92BVC
+        DATA    X92CVC,X92DVC,X92EVC,X92FVC
+*
+        DATA    X930VC,X931VC,X932VC,X933VC
+        DATA    X934VC
+*
+        DATA    X935VC,X936VC,X937VC,X938VC
+        DATA    X939VC,X93AVC
+*
+MAXOP   EQU     $-XOP9FN/2
+*
+CURWS   DATA    0
+VIDREG  BYTE    >00,>E0
+        BSS     46
+PALEXP  DATA    0,0,>611,>733
+        DATA    >117,>327,>151,>627
+        DATA    >171,>373,>661,>664
+        DATA    >411,>265,>555,>777
+PALSQS  DATA    0,0,393,475
+        DATA    79,215,105,407
+        DATA    121,251,433,436
+        DATA    265,181,365,511
+VIDMOD  DATA    0
+VIDUSR  DATA    0                       USER'S VIDEO MODE CP 94/03/02
+GRPHLF  DATA    0                       * Either 8 or 16, left margin
+CHCOLS  DATA    0
+CHROWS  DATA    0
+GXCOLS  DATA    0
+GXROWS  DATA    0
+BRDCOL  DATA    >0F00
+BTMASK  DATA    >8040,>2010,>0804,>0201
+MASKFF  DATA    >FFFF
+MASK00  DATA    >0000
+*
+XOP9    STWP    R12
+        MOV     R12,@CURWS
+*
+        MOV     *R13,R2
+        CI      R2,MAXOP
+        JLE     XOP9L3
+        SETO    *R13
+        RTWP
+*
+
+XOP9L3  SLA     R2,1
+        MOV     @XOP9FN(R2),R1
+        BL      *R1
+        RTWP
+
+* SetVideoMode
+*
+* R1x = Video mode
+*
+* Video modes:
+*       0000    Text 1 mode
+*       0001    Text 2 mode
+*       0002    MultiColor mode
+*       0003    Graphic 1 mode
+*       0004    Graphic 2 mode
+*       0005    Graphic 3 mode
+*       0006    Graphic 4 mode
+*       0007    Graphic 5 mode
+*       0008    Graphic 6 mode
+*       0009    Graphic 7 mode
+*       000A    Text 2 mode -- 26 lines
+*
+*                0   1   9   C  R
+X900TB  BYTE    >00,>10,>00,40,24
+        BYTE    >04,>10,>00,80,24
+        BYTE    >00,>08,>00,0,0
+        BYTE    >00,>00,>00,32,24
+        BYTE    >02,>00,>00,32,24
+        BYTE    >04,>00,>00,32,24
+        BYTE    >06,>00,>80,40,26
+        BYTE    >08,>00,>80,80,26
+        BYTE    >0A,>00,>80,80,26
+        BYTE    >0E,>00,>80,40,26
+        BYTE    >04,>10,>80,80,26
+        EVEN
+*                 X   Y
+X900TC  DATA    0,0
+        DATA    0,0
+        DATA    64,48
+        DATA    256,192
+        DATA    256,192
+        DATA    256,192
+        DATA    256,212
+        DATA    512,212
+        DATA    512,212
+        DATA    256,212
+        DATA    0,0
+*
+X900VC
+X900L1  LI      R0,>0888                * mouse must be on! -pc 9/23/89
+        BLWP    @VWTR                   * Mode register 8 (MOUSE OFF <- hic)
+        MOVB    @VIDREG+1,R0
+        ANDI    R0,>E700                * Kill text, & multicolor modes
+        ANDI    R0,>BFFF                (SCREEN OFF)
+        SRL     R0,8
+        ORI     R0,>0100
+        BLWP    @VWTR
+        MOVB    @VIDREG,R0
+        ANDI    R0,>F100                * Kill graphics modes
+        SRL     R0,8
+        BLWP    @VWTR
+        MOV     @2(R13),R1
+        LI      R2,5
+        MPY     R1,R2
+        MOVB    @VIDREG,R0
+        SOCB    @X900TB(R3),R0
+        SRL     R0,8
+        BLWP    @VWTR                   * Mode register 0
+        MOVB    @VIDREG+1,R0
+        SOCB    @X900TB+1(R3),R0
+        SRL     R0,8
+        ORI     R0,>0100
+        BLWP    @VWTR                   * Mode register 1
+        MOVB    @X900TB+2(R3),R0
+        SRL     R0,8
+        ORI     R0,>0900
+        BLWP    @VWTR                   * Mode register 9
+        MOV     @2(R13),@VIDMOD
+        MOV     @2(R13),@VIDUSR         CP 94/03/02
+        MOVB    @X900TB+3(R3),R0
+        SRL     R0,8
+        MOV     R0,@CHCOLS              * Set number of columns
+        MOVB    @X900TB+4(R3),R0
+        SRL     R0,8
+        MOV     R0,@CHROWS              * Set number of rows
+        LI      R1,80
+        MPY     R1,R0
+        MOV     R1,@SCRADD
+        AI      R1,SCRBUF
+        MOV     R1,@SCREND
+        MOV     @VIDMOD,R3
+        SLA     R3,2
+        MOV     @X900TC(R3),@GXCOLS
+        MOV     @X900TC+2(R3),@GXROWS
+        MOV     @VIDMOD,R3
+        CI      R3,10
+        JNE     X900S1
+        LI      R3,1
+        MOV     R3,@VIDMOD
+X900S1  CLR     R1
+X900L2  MOV     @CHCOLS,@CURXMX+2(R1)
+        MOV     @CHROWS,@CURYMX+2(R1)
+        DEC     @CURXMX+2(R1)
+        DEC     @CURYMX+2(R1)
+        CLR     @CURXMN+2(R1)
+        CLR     @CURYMN+2(R1)
+        CLR     @CURX+2(R1)
+        CLR     @CURY+2(R1)
+        INCT    R1
+        CI      R1,32*2
+        JNE     X900L2
+        CLR     R1
+        CLR     R2
+        LWPI    LOWWP1
+        MOV     @CURWS,R13
+        BL      @X902VC
+        DATA    >009D
+        LI      R0,8
+        MOV     R0,@GRPHLF
+        MOV     @CHCOLS,R0
+        CI      R0,40
+        JEQ     X900L4
+        LI      R0,16
+        MOV     R0,@GRPHLF
+X900L4  CLR     R1
+        CLR     R2
+        CLR     R3
+        MOV     @BRDCOL,R1
+        ANDI    R1,>FF
+        LWPI    LOWWP1
+        MOV     @CURWS,R13
+        BL      @X90CVC
+        DATA    >009D
+        CLR     R1
+        CLR     R2
+        LWPI    LOWWP1
+        MOV     @CURWS,R13
+        LI      R0,LOWWP1
+        MOV     R0,@CURWS
+        BL      @X904L1
+        MOV     R13,@CURWS
+        DATA    >009D
+        MOVB    @VIDREG+1,R0
+        ORI     R0,>4000
+        SRL     R0,8
+        ORI     R0,>0100
+        BLWP    @VWTR                   * Mode register 1 (SCREEN ON)
+        CLR     @SPRACT
+        RT
+
+* GetVideoMode
+*
+* -----
+* R0x = Returned video mode
+* R1x = Number of columns
+* R2x = Number of rows
+* R3x = Number of Graphics columns (pixels)
+* R4x = Number of Graphics rows (pixels)
+* R5x = Current page offset (in pixel rows, use for chip commands)
+* R6x = Color of screen border
+* R7h = Foreground color of text
+* R7l = Background color of text
+*
+X901VC
+*X901L1  MOV     @VIDMOD,*R13
+X901L1  MOV     @VIDUSR,*R13            CP  94/03/02
+        MOV     @CHCOLS,@2(R13)
+        MOV     @CHROWS,@4(R13)
+        MOV     @GXCOLS,@6(R13)
+        MOV     @GXROWS,@8(R13)
+        MOV     @PAGEPX,@10(R13)
+        MOV     @BRDCOL,R0
+        ANDI    R0,>FF
+        MOV     R0,@12(R13)
+        MOV     @STDCLR,@14(R13)
+        RT
+
+* SetCurPos
+*
+* R1x = Row number
+* R2x = Column number
+*
+X902VC
+X902L1  MOV     @PAGE,R3
+        SLA     R3,1
+        MOV     @2(R13),R4
+        MOV     @4(R13),R5
+        A       @CURYMN+2(R3),R4
+        A       @CURXMN+2(R3),R5
+        MOV     R4,@CURY+2(R3)
+        MOV     R5,@CURX+2(R3)
+        C       @CURX+2(R3),@CURXMX+2(R3)
+        JLE     X902L2
+        MOV     @CURXMX+2(R3),@CURX+2(R3)
+X902L2  C       @CURY+2(R3),@CURYMX+2(R3)
+        JLE     X902L3
+        MOV     @CURYMX+2(R3),@CURY+2(R3)
+X902L3  C       @CURX+2(R3),@CURXMN+2(R3)
+        JHE     X902L4
+        MOV     @CURXMN+2(R3),@CURX+2(R3)
+X902L4  C       @CURY+2(R3),@CURYMN+2(R3)
+        JHE     X902L5
+        MOV     @CURYMN+2(R3),@CURY+2(R3)
+X902L5  MOV     @CURX+2(R3),@CURX
+        MOV     @CURY+2(R3),@CURY
+X902L6  RT
+
+* GetCurPos
+*
+* -----
+* R0x = Returned row number
+* R1x = Returned column number
+*
+X903VC
+X903L1  MOV     @PAGE,R3
+        SLA     R3,1
+        MOV     @CURX,@CURX+2(R3)
+        MOV     @CURY,@CURY+2(R3)
+        MOV     @CURY+2(R3),R4
+        MOV     @CURX+2(R3),R5
+        S       @CURYMN+2(R3),R4
+        S       @CURXMN+2(R3),R5
+        MOV     R4,*R13
+        MOV     R5,@2(R13)                      *
+        RT
+

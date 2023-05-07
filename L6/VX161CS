@@ -1,0 +1,569 @@
+* FILENAME: VX161CS
+*
+* BScrollUp
+*
+* R1x = Number of pixels to scroll
+* R2x = Row number of upper left corner
+* R3x = Column number of upper left corner
+* R4x = Row number of lower right corner
+* R5x = Column number of lower right corner
+* R6h = Pixel color for blank pixels
+*
+X916VC
+X916L1  C       @4(R13),@8(R13)
+        JH      X916RT
+        C       @6(R13),@10(R13)
+        JH      X916RT
+        MOV     @VIDMOD,R1
+        CI      R1,6
+        JHE     X916L2
+X916RT  RT
+X916L2  MOV     @2(R13),R10             * R10 increment
+        MOV     @4(R13),R3
+        A       @PAGEPX,R3
+        MOV     @6(R13),R2
+        MOV     R2,R0
+        MOV     R3,R1
+        A       R10,R1                  * R10 increment, # of lines to blank
+        MOV     @8(R13),R5
+        A       @PAGEPX,R5
+        MOV     R5,R9
+        S       R3,R9                   * R9 # of rows
+        INC     R9
+        MOV     @10(R13),R4
+        S       R0,R4
+        S       R1,R5
+        INC     R4
+        INC     R5
+        CLR     R6
+        MOV     @VIDMOD,R8
+        LI      R7,>90
+        LI      R12,>80
+X916L3  C       R10,R9
+        JHE     X916L4
+        MOV     R10,R10
+        JNE     X916L5
+X916L4  MOV     R9,R10
+        JMP     X916L6
+X916L5  BLWP    @VDCMD2
+X916L6  MOV     R4,R2
+        CI      R8,6
+        JEQ     X916L7
+        CI      R8,8
+        JEQ     X916L7
+        CI      R8,7
+        JEQ     X916L8
+        MOV     @12(R13),R4
+        SRL     R4,8
+        JMP     X916L9
+X916L7  MOV     @12(R13),R5             *
+        ANDI    R5,>FF00                *
+        MOV     R5,R4                   * Calculate color for
+        SLA     R5,4                    * blank pixels
+        SOCB    R5,R4                   *
+        SRL     R4,8                    *
+        JMP     X916L9
+X916L8  MOV     @12(R13),R5
+        ANDI    R5,>FF00
+        MOV     R5,R4
+        SLA     R5,2
+        SOCB    R5,R4
+        MOVB    R4,R5
+        SLA     R5,4
+        SOCB    R5,R4
+        SRL     R4,8
+X916L9  MOV     @8(R13),R1
+        A       @PAGEPX,R1
+        INC     R1
+        MOV     R10,R3
+        S       R10,R1                  * R1 starting line to blank
+        MOV     R12,R5
+        BLWP    @VDCMD1
+        RT
+
+* BScrollDown
+*
+* R1x = Number of pixels to scroll
+* R2x = Row number of upper left corner
+* R3x = Column number of upper left corner
+* R4x = Row number of lower right corner
+* R5x = Column number of lower right corner
+* R6h = Pixel color for blank pixels
+*
+X917VC
+X917L1  C       @4(R13),@8(R13)
+        JH      X917RT
+        C       @6(R13),@10(R13)
+        JH      X917RT
+        MOV     @VIDMOD,R1
+        CI      R1,6
+        JHE     X917L2
+X917RT  RT
+X917L2  MOV     @2(R13),R10             * R10 increment
+        MOV     @8(R13),R1
+        A       @PAGEPX,R1
+        MOV     @6(R13),R0
+        MOV     R0,R2
+        MOV     R1,R3
+        S       R10,R1                  * R10 increment, # of lines to blank
+        MOV     R3,R9
+        S       @4(R13),R9              * R9 # of rows
+        S       @PAGEPX,R9
+        INC     R9
+        MOV     @10(R13),R4
+        MOV     R1,R5
+        S       R0,R4
+        S       @4(R13),R5
+        S       @PAGEPX,R5
+        INC     R4
+        INC     R5
+        LI      R6,>0800
+        MOV     @VIDMOD,R8
+        LI      R7,>90
+        LI      R12,>80
+X917L3  C       R10,R9
+        JHE     X917L4
+        MOV     R10,R10
+        JNE     X917L5
+X917L4  MOV     R9,R10
+        JMP     X917L6
+X917L5  BLWP    @VDCMD2
+X917L6  MOV     R4,R2
+        CI      R8,6
+        JEQ     X917L7
+        CI      R8,8
+        JEQ     X917L7
+        CI      R8,7
+        JEQ     X917L8
+        MOV     @12(R13),R4
+        SRL     R4,8
+        JMP     X917L9
+X917L7  MOV     @12(R13),R5             *
+        ANDI    R5,>FF00                *
+        MOV     R5,R4                   * Calculate color for
+        SLA     R5,4                    * blank pixels
+        SOCB    R5,R4                   *
+        SRL     R4,8                    *
+        JMP     X917L9
+X917L8  MOV     @12(R13),R5
+        ANDI    R5,>FF00
+        MOV     R5,R4
+        SLA     R5,2
+        SOCB    R5,R4
+        MOVB    R4,R5
+        SLA     R5,4
+        SOCB    R5,R4
+        SRL     R4,8
+X917L9  MOV     @4(R13),R1
+        A       @PAGEPX,R1
+        MOV     R10,R3
+        MOV     R12,R5
+        BLWP    @VDCMD1
+        RT
+
+* BScrollLeft
+*
+* R1x = Number of pixels to scroll
+* R2x = Row number of upper left corner
+* R3x = Column number of upper left corner
+* R4x = Row number of lower right corner
+* R5x = Column number of lower right corner
+* R6h = Pixel color for blank pixels
+*
+X918VC
+X918L1  C       @4(R13),@8(R13)
+        JH      X918RT
+        C       @6(R13),@10(R13)
+        JH      X918RT
+        MOV     @VIDMOD,R1
+        CI      R1,6
+        JHE     X918L2
+X918RT  RT
+X918L2  MOV     @2(R13),R10             * R10 increment
+        MOV     @4(R13),R1
+        A       @PAGEPX,R1
+        MOV     @6(R13),R0
+        MOV     R0,R2
+        MOV     R1,R3
+        A       R10,R0                  * R10 increment, # of lines to blank
+        MOV     @10(R13),R4
+        MOV     R4,R9
+        S       R2,R9                   * R9 # of columns
+        INC     R9
+        MOV     @8(R13),R5
+        A       @PAGEPX,R5
+        S       R0,R4
+        S       R3,R5
+        INC     R4
+        INC     R5
+        CLR     R6
+        MOV     @VIDMOD,R8
+        LI      R7,>90
+        LI      R12,>80
+X918L3  C       R10,R9
+        JHE     X918L4
+        MOV     R10,R10
+        JNE     X918L5
+X918L4  MOV     R9,R10
+        JMP     X918L6
+X918L5  BLWP    @VDCMD2
+X918L6  MOV     R5,R3
+        CI      R8,6
+        JEQ     X918L7
+        CI      R8,8
+        JEQ     X918L7
+        CI      R8,7
+        JEQ     X918L8
+        MOV     @12(R13),R4
+        SRL     R4,8
+        JMP     X918L9
+X918L7  MOV     @12(R13),R5             *
+        ANDI    R5,>FF00                *
+        MOV     R5,R4                   * Calculate color for
+        SLA     R5,4                    * blank pixels
+        SOCB    R5,R4                   *
+        SRL     R4,8                    *
+        JMP     X918L9
+X918L8  MOV     @12(R13),R5
+        ANDI    R5,>FF00
+        MOV     R5,R4
+        SLA     R5,2
+        SOCB    R5,R4
+        MOVB    R4,R5
+        SLA     R5,4
+        SOCB    R5,R4
+        SRL     R4,8
+X918L9  ORI     R4,>0400
+        MOV     @10(R13),R0
+        MOV     @4(R13),R1
+        A       @PAGEPX,R1
+        MOV     R10,R2
+        MOV     R12,R5
+        BLWP    @VDCMD1
+        RT
+
+* BScrollRight
+*
+* R1x = Number of pixels to scroll
+* R2x = Row number of upper left corner
+* R3x = Column number of upper left corner
+* R4x = Row number of lower right corner
+* R5x = Column number of lower right corner
+* R6h = Pixel color for blank pixels
+*
+X919VC
+X919L1  C       @4(R13),@8(R13)
+        JH      X919RT
+        C       @6(R13),@10(R13)
+        JH      X919RT
+        MOV     @VIDMOD,R1
+        CI      R1,6
+        JHE     X919L2
+X919RT  RT
+X919L2  MOV     @2(R13),R10             * R10 increment
+        MOV     @4(R13),R1
+        A       @PAGEPX,R1
+        MOV     @10(R13),R0
+        MOV     R0,R2
+        MOV     R1,R3
+        S       R10,R0                  * R10 increment, # of lines to blank
+        MOV     R0,R4
+        MOV     R2,R9
+        S       @6(R13),R9                   * R9 # of columns
+        INC     R9
+        MOV     @8(R13),R5
+        A       @PAGEPX,R5
+        S       @6(R13),R4
+        S       R3,R5
+        INC     R4
+        INC     R5
+        LI      R6,>0400
+        MOV     @VIDMOD,R8
+        LI      R7,>90
+        LI      R12,>80
+X919L3  C       R10,R9
+        JHE     X919L4
+        MOV     R10,R10
+        JNE     X919L5
+X919L4  MOV     R9,R10
+        JMP     X919L6
+X919L5  BLWP    @VDCMD2
+X919L6  MOV     R5,R3
+        CI      R8,6
+        JEQ     X919L7
+        CI      R8,8
+        JEQ     X919L7
+        CI      R8,7
+        JEQ     X919L8
+        MOV     @12(R13),R4
+        SRL     R4,8
+        JMP     X919L9
+X919L7  MOV     @12(R13),R5             *
+        ANDI    R5,>FF00                *
+        MOV     R5,R4                   * Calculate color for
+        SLA     R5,4                    * blank lines
+        SOCB    R5,R4                   *
+        SRL     R4,8                    *
+        JMP     X919L9
+X919L8  MOV     @12(R13),R5
+        ANDI    R5,>FF00
+        MOV     R5,R4
+        SLA     R5,2
+        SOCB    R5,R4
+        MOVB    R4,R5
+        SLA     R5,4
+        SOCB    R5,R4
+        SRL     R4,8
+X919L9  MOV     @6(R13),R0
+        MOV     @4(R13),R1
+        A       @PAGEPX,R1
+        MOV     R10,R2
+        MOV     R12,R5
+        BLWP    @VDCMD1
+        RT
+
+* SpriteDef
+*
+* R1x = Pointer to sprite data
+* R2x = # of sprites to define
+*
+DATA7  DATA     7
+DATA8  DATA     8
+*
+X91AVC
+X91AL1  MOV     @2(R13),R2
+        CI      R2,>A000
+        JHE     X91ALZ
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@2(R13)
+X91ALZ  MOV     @VIDMOD,R1
+        CI      R1,2
+        JHE     X91AL2
+        RT
+X91AL2  MOV     @4(R13),R10
+        MOV     @2(R13),R1
+X91AS1  SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        MOV     @SPRATT,R0
+        MOV     *R1+,R2
+        MOV     R2,R5
+        C       R2,@SPRACT
+        JL      X91AL3
+        MOV     R2,@SPRACT
+X91AL3  SLA     R2,2
+        A       R2,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        MOV     *R1+,R3
+        MOV     *R1+,R2
+        DEC     R2
+        SLA     R2,8
+        MOVB    R2,@VDPWD               * Row
+        MOV     *R1+,R2
+        C       @VIDMOD,@DATA7
+        JEQ     $+12
+        C       @VIDMOD,@DATA8
+        JEQ     $+4
+        JMP     $+4
+        SRL     R2,1
+        SLA     R2,8
+        MOVB    R2,@VDPWD               * Column
+        SLA     R3,8
+        MOVB    R3,@VDPWD               * Pattern number
+        SLA     R5,2
+        MOV     *R1+,R3                 * Row velocity
+        SLA     R3,8
+        MOVB    R3,@SPRMTB(R5)
+        MOV     *R1+,R3                 * Column velocity
+        SLA     R3,8
+        MOVB    R3,@SPRMTB+1(R5)
+        CLR     @SPRMTB+2(R5)
+        SRL     R5,2
+        C       R5,@SPRACT
+        JL      X91AL5                  *
+        MOV     R5,@SPRACT
+        INC     @SPRACT
+        MOV     R5,R4
+        SLA     R4,2
+X91AL4  MOVB    @SPRMTB(R4),@SPRMTB(R4)
+        JNE     X91AL5
+        MOVB    @SPRMTB+1(R4),@SPRMTB+1(R4)
+        JNE     X91AL5
+        DEC     @SPRACT
+        CI      R4,0
+        JEQ     X91AL5
+        AI      R4,-4
+        JMP     X91AL4                  *
+X91AL5  MOV     @VIDMOD,R2
+        CI      R2,4
+        JLE     X91AL7
+        SWPB    @SPRCOL+2
+        MOVB    @SPRCOL+2,@VDPWA
+        SWPB    @SPRCOL+2
+        MOVB    @SPRCOL+2,@VDPWA
+        MOV     @SPRCOL,R0
+        SLA     R5,4
+        A       R5,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        LI      R5,16
+X91AL6  MOV     *R1+,R2
+        SLA     R2,8
+        MOVB    R2,@VDPWD               * Multiple color bytes
+        DEC     R5
+        JNE     X91AL6
+        JMP     X91AL8
+X91AL7  MOV     *R1+,R2
+        SLA     R2,8
+        MOVB    R2,@VDPWD               * Color information
+X91AL8  DEC     R10
+        JEQ     X91AL9
+        B       @X91AS1
+X91AL9  RT
+
+* SpriteDel
+*
+* R1x = Pointer to list of sprite #'s
+* R2x = # of sprites to delete (>FFFF for all)
+*
+X91BVC
+X91BL1  MOV     @2(R13),R2
+        CI      R2,>A000
+        JHE     X91BLZ
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@2(R13)
+X91BLZ  MOV     @VIDMOD,R8
+        CI      R8,2
+        JHE     X91BL2
+        RT
+X91BL2  MOV     @4(R13),R10
+        MOV     @2(R13),R1
+X91BS1  SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        MOV     @SPRATT,R0
+        LI      R3,>D400
+        CI      R10,>FFFF
+        JNE     X91BL3
+        CLR     R10
+X91BL6  SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        MOVB    R3,@VDPWD
+        MOV     R10,R4
+        SLA     R4,2
+        CLR     @SPRMTB(R4)
+        CLR     @SPRMTB+2(R4)
+        AI      R0,4
+        INC     R10
+        CI      R10,32
+        JNE     X91BL6
+        CLR     @SPRACT
+        JMP     X91BL7
+X91BL3  MOV     *R1+,R2
+        INC     R2
+        C       R2,@SPRACT
+        JNE     X91BL5
+        MOV     @SPRACT,R4
+        DEC     R4
+        SLA     R4,2
+X91BL4  MOV     @SPRMTB(R4),@SPRMTB(R4)
+        JNE     X91BL5
+        MOV     @SPRMTB+2(R4),@SPRMTB+2(R4)
+        JNE     X91BL5
+        DEC     @SPRACT
+        CI      R4,0
+        JEQ     X91BL5
+        AI      R4,-4
+        JMP     X91BL4
+X91BL5  DEC     R2
+        SLA     R2,2
+        A       R2,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        MOVB    R3,@VDPWD
+        MOV     R2,R4
+        CLR     @SPRMTB(R4)
+        CLR     @SPRMTB+2(R4)
+        DEC     R10
+        JNE     X91BS1
+X91BL7  RT
+
+* SpriteLocate
+*
+* R1x = Pointer to location data
+* R2x = # of sprites to locate
+*
+X91CVC
+X91CL1  MOV     @2(R13),R2
+        CI      R2,>A000
+        JHE     X91CLZ
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+        MOV     R3,@2(R13)
+X91CLZ  MOV     @VIDMOD,R1
+        CI      R1,2
+        JHE     X91CL2
+        RT
+X91CL2  MOV     @4(R13),R10
+        MOV     @2(R13),R1
+X91CS1  SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        SWPB    @SPRATT+2
+        MOVB    @SPRATT+2,@VDPWA
+        MOV     @SPRATT,R0
+        MOV     *R1+,R2
+        SLA     R2,2
+        A       R2,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        MOV     *R1+,R2
+        DEC     R2
+        SLA     R2,8
+        MOVB    R2,@VDPWD               * New row
+        MOV     *R1+,R2
+        C       @VIDMOD,@DATA7
+        JEQ     $+12
+        C       @VIDMOD,@DATA8
+        JEQ     $+4
+        JMP     $+4
+        SRL     R2,1
+        SLA     R2,8
+        MOVB    R2,@VDPWD               * New column
+        DEC     R10
+        JNE     X91CS1
+        RT

@@ -1,0 +1,265 @@
+HERE   EQU  $
+* define the buffer record
+       DORG 0
+
+       BYTE 0
+STARTH BYTE 0
+START  DATA 0
+*
+       BYTE 0
+ENDH   BYTE 0
+END    DATA 0
+*
+       BYTE 0
+GETH   BYTE 0
+GET    DATA 0
+*
+       BYTE 0
+PUTH   BYTE 0
+PUT    DATA 0
+*
+BUFREC EQU  $
+*
+* create the actual buffers . .  .
+       AORG HERE
+*
+RS1IN  DATA 0,0               start
+       DATA 0,>003F           end
+       DATA 0,0,0,0           get/put
+RS2IN  DATA 0,>0040
+       DATA 0,>007F
+       DATA 0,>0040
+       DATA 0,>0040
+RS1OUT DATA 0,>0100
+       DATA 0,>07FF
+       DATA 0,>0100
+       DATA 0,>0100
+RS2OUT DATA 0,>0800
+       DATA 0,>0FFF
+       DATA 0,>0800
+       DATA 0,>0800
+PI1OUT DATA 0,>2000
+       DATA 0,>2FFF
+       DATA 0,>2000
+       DATA 0,>2000
+*
+RS3IN  DATA 0,>0080           start
+       DATA 0,>00BF           end
+       DATA 0,>0080           get
+       DATA 0,>0080           put
+RS4IN  DATA 0,>00C0
+       DATA 0,>00FF
+       DATA 0,>00C0
+       DATA 0,>00C0
+RS3OUT DATA 0,>1000
+       DATA 0,>17FF
+       DATA 0,>1000
+       DATA 0,>1000
+RS4OUT DATA 0,>1800
+       DATA 0,>1FFF
+       DATA 0,>1800
+       DATA 0,>1800
+PI2OUT DATA 0,>3000
+       DATA 0,>3FFF
+       DATA 0,>3000
+       DATA 0,>3000
+*
+* table of pointers to the 10 buffers
+*
+SPPNT
+BUFTAB DATA RS1OUT,RS1IN,RS2OUT,RS2IN,PI1OUT,PI1OUT
+       DATA RS3OUT,RS3IN,RS4OUT,RS4IN,PI2OUT
+*
+* list of buffer pages
+*
+SPPAG
+BUFPAG BYTE PRNPAG,PRNPAG+1
+       DATA 0,0,0,0,0,0,0,0
+       DATA 0,0,0,0,0,0,0,0
+       DATA 0,0,0,0,0,0,0,0
+       DATA 0,0,0,0,0,0,0,0
+*
+       DATA 0,0,0,0,0,0,0,0
+       DATA 0,0,0,0,0,0,0,0
+       DATA 0,0,0,0,0,0,0,0
+       DATA 0,0,0,0,0,0,0     128 pages for spooler == 1meg
+       EVEN
+*
+* uses R15,R0,R1
+* changes page at >C000 . .. shouldn't matter worth a damn
+*
+* put character into buffer. Character is in high byte of R6 . . .
+* r15 is buffer number  . .. .
+*
+BCOUNT BSS  2                 counter for parsing control shit
+PUTSAV DATA 0,0               place to save address of put
+FLGCHR BYTE >FE,0             special buffer character flag
+*
+* routine to see if a buffer is empty
+*      JEQ means it is on return
+*
+BUFABT SLA  R15,1
+       MOV  @BUFTAB(R15),R15
+       MOVB @GETH(R15),@PUTH(R15)
+       MOV  @GET(R15),@PUT(R15)
+       RT
+*
+BUFEMP SLA  R15,1
+       MOV  @BUFTAB(R15),R15  get buffer offset
+       CB   @PUTH(R15),@GETH(R15)            high equal?
+       JNE  BUFEMX                           no, return not equal
+       C    @PUT(R15),@GET(R15)              low equal?
+BUFEMX RT                                    <let caller decide>
+*
+* routine to save current PUT pointer in case of overflow
+*
+PUTBUS SLA  R15,1             as a word
+       MOV  @BUFTAB(R15),R15  get buffer info address
+       MOVB @PUTH(R15),@PUTSAV
+       MOV  @PUT(R15),@PUTSAV+2              save addresses
+       RT                     and now go try to stick into buffer
+*
+* put a character into a buffer
+*
+PUTBUF SLA  R15,1             make word offset
+       MOV  @BUFTAB(R15),R15  get buffer info address
+*
+       CLR  R0                in case  . . . .
+       MOVB @PUTH(R15),R0     get insert high
+       MOV  @PUT(R15),R1      "" low
+       INC  R1                next . . .
+       JNC  PUTC01            no carry . . .
+       AI   R0,>0100          next set of pages . . .
+*
+PUTC01 CB   R0,@ENDH(R15)     end of buffer?
+       JNE  PUTC02            nope
+       C    R1,@END(R15)
+       JNE  PUTC02            ""
+       MOVB @STARTH(R15),R0   get start of buffer
+       MOV  @START(R15),R1    ""
+*
+PUTC02 CB   R0,@GETH(R15)     buffer full?
+       JNE  PUTC03            nope
+       C    R1,@GET(R15)
+       JNE  PUTC03            nope ...
+*
+PUTFUL MOVB @MODE4A,@MODE4A   ?4a mode
+       JEQ  PUTFU1            yes, so return without restoring pointers
+*
+*      MOVB @PUTSAV,@PUTH(R15)               @@ temporary gone restore low
+*      MOV  @PUTSAV+2,@PUT(R15)              and high
+*
+PUTFU1 SETO R15               buffer full . . .
+       JMP  PUTCEX
+*
+PUTC03 MOVB R0,@PUTH(R15)     update pointer
+       MOV  R1,@PUT(R15)      ""
+       MOV  R1,R15            save that value . . . .
+       SLA  R0,3              make room for bits
+       SRL  R1,5              ""
+       AB   R0,R1             high byte of r1 contains page offset
+       SRL  R1,8
+       MOVB @BUFPAG(R1),@MAP96+6             page in the page
+       ANDI R15,>1FFF         8k address
+       MOVB R6,@>C000(R15)    put the byte in place
+*
+       CLR  R15               indicate no error
+PUTCEX RT                     and return
+*
+*
+* get character from buffer. high byte of R6 will be character
+* r15 is buffer number ... .
+*
+GETBUF MOV  R11,@GETBRT
+*
+       MOV  R15,@GETB15       save that . . . .
+       SLA  R15,1             make word offset
+       MOV  @BUFTAB(R15),R15  get buffer info address
+       MOV  R15,@GETB51       save this pointer . . .
+*
+GETB72 BL   @GETBBB           get a single character
+       CB   R6,@FLGCHR        is it the flag?
+       JNE  GETOKR             nope
+       BL   @GETBBB           get next character
+       CB   R6,@FLGCHR        is it flag?
+       JEQ  GETOKR            yes, so return it . .
+*
+*      here we need to parse buffer commands
+*
+       CLR  @BCOUNT           clear counter
+       INC  @BCOUNT
+       LI   R15,0             buffer number,  ,,
+GETB15 EQU  $-2
+       MOV  @STATAB(R15),R5   get buffer pointer
+       AI   R5,12             push it on up . . . . .
+DD12   EQU  $-2
+       MOV  R5,@GETB16        save pointer to CONTRL
+       MOVB R6,*R5+           stick in current port status location
+GETB70 BL   @GETBBB
+       MOVB R6,*R5+
+       INC  @BCOUNT
+       C    @BCOUNT,@DD12     are we done?
+       JNE  GETB70            keep lookin'
+*
+       MOV  @GETB15,R15
+       CI   R15,4
+       JL   GETRS
+       CI   R15,6
+       JL   GETB72            pio, don't load "control" parms...yajphfu
+       CI   R15,10
+       JHE  GETB72
+*
+GETRS  LI   R15,0
+GETB16 EQU  $-2
+       SBO  14                LDCTRL
+       SBO  13                LDIR
+       SBO  12                LRDR
+       SBO  11                LXDR
+       LDCR *R15,8            load command register
+       INCT R15               point to baud
+       SBZ  SKIPIR            skip interval register . . .
+       LDCR *R15,12           and load the baud rate
+       JMP  GETB72            and now try for a real character . ..
+*
+GETOKR CLR  R15               indicate no error
+GETEX  B    @0                return
+GETBRT EQU  $-2
+*
+*  check that a character is available
+*
+GETBBB CLR  R0                in case . . . .
+       LI   R15,0
+GETB51 EQU  $-2               make sure we have the correct pointer
+       MOVB @GETH(R15),R0     get retrieve high
+       MOV  @GET(R15),R1      "" low
+       CB   R0,@PUTH(R15)
+       JNE  GETC01
+       C    R1,@PUT(R15)
+       JNE  GETC01
+       SETO R15               error
+       JMP  GETEX             and get out
+GETC01
+       INC  R1                next . . .
+       JNC  GETC02            no carry . . .
+       AI   R0,>0100          next set of pages . . .
+GETC02
+       CB   R0,@ENDH(R15)     end of buffer?
+       JNE  GETC03            nope
+       C    R1,@END(R15)
+       JNE  GETC03            ""
+       MOVB @STARTH(R15),R0   get start of buffer
+       MOV  @START(R15),R1    ""
+GETC03
+       MOVB R0,@GETH(R15)     update pointer
+       MOV  R1,@GET(R15)      ""
+       MOV  R1,R15            save that value . . . .
+       SLA  R0,3              make room for bits
+       SRL  R1,5              ""
+       AB   R0,R1             high byte of r1 contains page offset
+       SRL  R1,8
+       MOVB @BUFPAG(R1),@MAP96+6             page in the page
+       ANDI R15,>1FFF         8k address
+       MOVB @>C000(R15),R6    put the byte in place
+*
+       RT                     and return
+

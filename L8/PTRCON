@@ -1,0 +1,26 @@
+********************************************************************************
+*
+*      PTTOWD    THIS ROUTINE CONVERTS THE 3 BYTE POINTERS TO
+*                 2 WORDS IN R1 AND R2
+*
+*                 IT ASSUMES THAT R9 POINTS TO THE START OF THE POINTERS
+*
+*
+*
+*
+*
+********************************************************************************
+PTTOWD
+       MOVB *R9+,@3(R4)       LSB OF LOW POINTER
+       MOVB *R9,R1            MSB OF LOW AND LSB OF HIGH
+       MOVB *R9+,@5(R4)       PUT IN LSB OF R2
+       MOVB *R9+,R2           NOW MSB
+       SRL  R2,4
+       ANDI R1,>0FFF          STRIP OFF LSB OF HIGH
+       C    @D3200,@VIBBUF+TOTAUS
+       JHE  PTT1
+       SLA  R1,2
+       C    @D6400,@VIBBUF+TOTAUS
+       JHE  PTT1
+       SLA  R1,1
+PTT1   RT                     EQUAL FLAG SET BY R1'S VALUE

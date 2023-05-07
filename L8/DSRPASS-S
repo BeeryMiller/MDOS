@@ -1,0 +1,865 @@
+; File: DSRPASS-S, compiles to OBJ3 (DSR >0400,>8000 block)
+;
+; 02.10.2021 -> MUST review these AORG's and usage ! !
+;
+; AORG >2000:
+;      Pointers to parameters (how are they used?)
+; XOP->Powerup for DSR. Reset rs232 redirect. Clears SCSI and DSR buffers.
+;      Branches to >6000 (HD.FLPPRM) to powerup HFDC/read DIPs/set emulate
+;      Configures Floppy controller, clears spooler, init RS232 & buffers
+;      Returns via PWRUP7
+;
+; AORG >23D0 ### HARD CODE WARNING $$$  Why this address?
+;      Remap table, CYA override, default mappings (overridden by hfdc/fdc)
+;
+; AORG >0400
+;      /4A & 9640 passthrough; mostly disabled/gone, potential open space
+;
+; AORG $+>2000  ### HARD CODE WARNING $$$  Why this address?
+;      9640 interrupt entry.  SCSI interrupt handler (9640 only), RS232entry
+;
+;------------------------------------------
+* 01.30.94  TIM TESCH
+*           Uncommented <4> Lines beginning after label SROM3.  This re-enabled
+*           the DSRLNK to check for the DSR card header '>AA' and abort if
+*           not found.  Without this comparison, DSRLNK branched to never-never
+*           land.
+*
+* 05.12.94  Jeff White changed RS232 detection scheme - now DSR independent.
+*           Modified and shortened power-up code.
+*
+* 11.17.94  TAT/JHW Modified RS232 detection for 4K/8K CorComp DSRs.  Now
+*           works with all cards; MDOS now at version 2.21
+*
+* 12.28.94  MJM got this file, added scsi compatibility, and linked it into
+*           the rest of the DSR.  MDOS now at version 2.50S (SCSI/HFDC/Floppy)
+*
+* 12.31.97  tat Removed Code referencing Winchester and Pass Through to DSR
+*               at the >4000 area.  May wish to look at the code some day
+*               and use it for non-MDOS supported peripherals, but not until
+*               the clutter is somewhat removed.
+*           Hopefully no more references to >0404/>0402 other than in HDR2-P2!
+*           Should move REMAP table to "static" location though table is present
+*
+*  5.01.98  Added code to use CYA SETDSK values during a power-up
+* 09.11.09  Added CYAREMAP code for override ability (~line 400)
+* 3.17.2018 Fixed hardcoded scsi page map in powerup
+;
+;1.18.2021  $Review PPWR00 to verify P_SCAC is evaluated properly at assembly
+;           $Review PW2, old passthrough flag for Winchester?
+;           $Possible cleanup in powerup + add TIPI powerup /reset flag
+;
+;           Changed DEFMAP default remap so that DSK6,7,8,9=HRD1401,1601
+;
+; 2.6.2021  Reset tipi\header:TIPPWR flag at WINPRT to prime powerup routine
+;
+; 2.9.2021  Cleaned up Winchester and HFDC powerup. Removed HF1 and mappings
+;           Replaced F0F0 hard-code to task WS SYSREG with local data
+;         --Multiple AORG (0400, >2000,>2380,$+>2000) dangerous! review!
+;           See REMAP and near end for most dangerous
+;          ?Consider changing CYA persistence
+;
+; 2.10.2021 Removed 17 byte/values from passthrough area >0400; cleanup
+;
+; 2.14.2021 Modified REMAP powerup:
+;           Drives 1-4 are changed based on FDC, HFDC-floppy, or TIPI @>1100
+;           Drives 5-9 default to DRVMAP (sect2-p) and are now persistent
+;           Forced call to REMAP at WINPRT1; R12==0 prior to HFDC test
+;           Fixes problem with remaps on restart if no hfdc found first try
+;
+;4.18.2021  REMAP routine updated; TIPI DSK1-4 mapped active if CRU==1100
+;           See linkage and REF's to tipi code
+;
+;5.5.2022   TIPI DSK1-4 "CRU1100" promoted from test.
+;           Note use of SCNOFF is for both STATUS opcode and MSB Sector!
+;
+; 5.11.2022 TIPI Powerup confirmed. However, REMAP requires visibility to
+;           the TIPCRU label, so we must powerup TIPI before Remap - either
+;           here or by reordering the XOP powerup table in OSHEADx
+;          -See also likely entry point for SCSI power. Consider mimicking
+;           the TIPI powerup.  ~line 150
+;
+; 5.14.2022 Added CorComp bank fix to NOTMYR (somehow was missing again!)
+;           Removed DEFMAP code/DEF. See SECT2-P for DRVMAP
+;
+; PENDING FIXES/REVIEW:
+;      - INT964 fix the hardcoded SCSI CRU
+;      - CYA Remap re-evaluation
+;      - Add SCS/IDE/HRD powerup linkage (may leave in SCSI page only)
+;      - No >AA test for FDCs; what happens if none present?
+;
+;
+; 6.19.2022 Added REF to SCSPWL,IDEPWL linkage (SCSI2\POWERS,TIDE9S)
+;           Modified powerup to call SCSPWL,IDEPWL for all scsi/ram/ide powerup
+;           Location >6018 (pagd6) now holds SCSI CRU for os reference
+;           Location >601A (pagd6) could potentially hold IDE CRU later
+;       $$$ SCSI interrupt still hardcoded, not sure how to reference cru
+;           May need IDE interrupt handler too. Consider consolidating
+;           into the "scsi" code page; this would allow 9640 and /4a mode to
+;           use the same handler.
+;
+; 6.28.2022 Powerup and REMAP routines updated to detect
+;           whether HFDC/TIPI, FDC, or nothng is present at >1100.
+;           @CTLTYP is set to -1 if no valid FDC controller found
+;
+; 6.28.2022 $$ RS232 powerup refers to STATAB for 4 RS232 ports, however,
+;              the table does not match usage. Investigate powerup and the
+;              other port usage. Possible error in table order.
+;              See RSA2-P for STATAB and port status
+;              4.29.2023, See line ~440 for R5 comments and future fix.
+;
+; 6.28.2022 $$ The AORGs in this file are dangerous. The REMAP code may be
+;              in jeopardy of overwriting the ABORT code via AORG >0380.
+;              This file requires more scrutiny for code overlap during the
+;              link process. A quick assembly/link of the first section shows
+;              approx >2F0 bytes in use.
+;
+; 8.06.2022 Added CYAMP7 for Remapping drive tables
+;
+;
+;
+       UNL
+*
+       COPY "\MDOS\HEAD\PAGENUMS"
+       COPY "\MDOS\L8\LAYOUT" +hfdc,+subdir
+ LIST
+       REF  SET964
+       REF  PASDAT,PABD00
+*
+       REF  PAGLST,PAGCNT
+       REF  CYASTP       cya steprate/track for SECT3-P3
+       REF  STPDRV,TRKDRV,VERWRT,CTLTYP,CTLBAS,LSTDRV
+       REF  DRVMAP
+       REF  INTMAP,SPPAG,SPPNT,RSMAP
+       REF  PIOTYP,PIOTY2
+       REF  STATAB
+       REF  WS4000
+
+       REF  TIPPWR,TIPLV2,TIPLV3,TIPENA      2.6, TIPI\HEADER [x6000]
+       REF  TIPCRU,TIPPWL       4.17.2021 TIPI\HEADER [x6000]
+
+       DEF  CYAMP7       8.6.2022
+
+       DEF  ABTKEY,MAP426
+;;     DEF  DEFMAP       Removed 5.14.2022; remaps refactored 2021
+
+       REF  SCSPWL       SCSI powerup linkage (SCSI2\POWERS)
+       REF  IDEPWL       IDE powerup linkage (SCSI2\TIDE9S)
+       REF  SCSINT       SCSI/IDE interrupt linkage (SCSI2\INTS)
+*
+MODE   EQU  >1EF4
+*
+       AORG >2000
+       JMP  PWRUP        xop powerup via BL @>2000 in OSHEAD
+       B    @SET964      ;>2002, dsr entry
+       B    @INT964      ;>2006, interrupt entry
+*
+* POINTERS to user settable parameter blocks - DO NOT MOVE!
+*
+* 6.28.2022 These are hard-referenced, often with page offset.
+*           This may be another place to front load CRU addresses for
+*           the various devices. Further inspection needed. Documented source
+*
+       DATA STPDRV       >200A  [sect3-p] step rates FDC
+       DATA DRVMAP       >200C  [sect2-p] remaps w/drvtbl
+       DATA VERWRT       >200E  [sect3-p] verify on write FDC
+       DATA INTMAP       >2010  [sect2-p] ramdisk header page (RAM1)
+
+       DATA SPPAG        >2012  [rsbuffers] spooler page list
+       DATA SPPNT        >2014  [rsbuffers] table of spooler pointers
+       DATA RSMAP        >2016  [rsa2-p]    low-level rs232/pio redirection
+       DATA STATAB       >2018  [rsa2-p]    port configuation pointers
+
+       DATA TRKDRV       >201A  [sect3-p]
+       DATA LSTDRV       >201C  [sect3-p]
+       DATA TRACK1       >201E  [layout]  current track location (1-4)
+       DATA CTLTYP       >2020  [sect3-p]
+       DATA CTLBAS       >2022  [sect3-p]
+
+       DATA PIOTYP       >2024  [rsa2-p]  card type #1
+       DATA PIOTY2       >2026  [rsa2-p]  card type #2
+       DATA WS4000       >2028  fdc-src-p, WS must not be paged out
+
+; warning, this HF1 label is NOT the same as defined in hdr2-p2
+HF1    DATA 0              >202A   HFDC CRU FOR GPL
+M96SSS DATA 0              >202C   Used to be >F0F0; moved out of scratch
+
+*
+PWRUP  CLR  R4
+PPWR00 MOV  R4,@RSMAP(R4)     restore low-level redirection to default
+       INCT R4                ;6.28.22, what exactly is the redirection?
+       CI   R4,10             ; seems to allow RS232/1 to be on card 2
+       JLE  PPWR00            ; and other similar things
+*
+*** mjm, 12/94.  Added routine to clear SCSI workspace RAM page >E8
+* might also put a nice little device check routine here, but let's not
+*   get carried away just yet!  [MOVED TO SCSI2\POWERUP]
+*
+;       LI   R4,P_SCAC*256  >E800  3.17.2018, fixed mjm page hardcode
+;      MOVB R4,@MAP96+5
+;**     MOVB @PAGSC2+>2000,@MAP96+5 might need the offset for byte here
+;      LI   R4,>A000
+;SCSICL CLR  *R4+         Clear SCSI Buffer @ Page >E8 (also l8.hdr2-p2)
+;      CI   R4,>C000
+;      JL   SCSICL
+
+       MOVB @PAGD6+>2000,@MAP96+3            ;Hard drive >6000 space
+;                                            ;needed to store SCSICRU
+       MOVB @>F110,@SCSPWLPAGE+1
+       MOVB @SCSPWLPAGE,@>F110
+       BLWP @SCSPWL                          ;call SCSI powerup
+       BLWP @IDEPWL                          ;call IDE powerup
+;      blwp @rampwl  in theory, could use CFG detection to check ramdisk.
+       MOVB @SCSPWLPAGE+1,@>F110
+
+*
+* Clear >A000->DFFF (dsr buffers including those in l8.layout)
+*
+* The /4a mode powerup in hdr2/p2 does this one page at a time!
+*      Can we consolidate the two? That is the question.
+*
+CLRDB1 LI   R4,>A000
+       MOVB @PAGD1+>2000,@MAP96+5            +>2000 to allow for load map
+       MOVB @PAGD2+>2000,@MAP96+6            +>2000 to allow for load map
+PWRUP1 CLR  *R4+                             different than run-map
+       CI   R4,>E000
+       JL   PWRUP1
+*
+* Number of file buffers. See L8.COMPAR; l8.layout (numful,buf1..buf10)
+*
+       MOVB @H0A,@NUMFIL     **** THIS MUST BE EXECUTED WITH PAGE
+*                            ****  "PAGD1" MAPPED AT >A000!!!!
+
+       MOVB @MAP96+2,@M96SSS     ;2.9.21, @>F0F0 Scratch/sysreg see end cya
+
+; 2.9.202,  Find and powerup HFDC ONLY. HD.FLPPRM:PRWIN0
+;           PRWIN0 skips CRU >1200 to avoid SCS (WDS) mismatch (could test SCS)
+;           Sets up dsr, gets HFDC floppy parms, checks for emulate. DSONWIN,etc
+;           NOTE: If another DSR with WDS is found, OS will mistake it for hfdc
+;
+;2.14.2021, Force remap to execute regardless of HFDC identification /flag
+;
+       MOV  R11,@PWRUP7+2     restore R11 after RS232 powerup - jhw
+       MOVB @PAGD6+>2000,@MAP96+3
+       CLR  R12               For REMAP; ensure no false HFDC test 2.14.2021
+       C    @>6000,@WDS2TX+>2000   winds1-s header 'HD'
+       JNE  WINPRT            no HFDC code installed (or HFDC OFF called)
+       MOV  @>6002,R1
+       CLR  @>601E           *CLEAR SCSI ACCESS FLAG.
+;;;    MOV  @>6016,@HF1       HFDC CRU ADDRESS  local hf1, not used
+
+       BL   *R1
+       NOP
+
+;
+; 5.14.2022 Retain page map for TIPCRU but disable duplicate powerup. This
+;           ensures the XOP and DSR are powered up by OSHEAD before the DSR.
+;
+;           @REMAP expects to see the TIPI DSR at MAP96+3
+
+WINPRT MOVB @PAGD7+>2000,@MAP96+3   ;TIPI visible  @ >6000
+;     bl   @tippwl      DISABLED in favor of XOP-based powerup (OSHEAD)
+;
+       LI   R0,DPAG1*256      dsr page
+       MOVB R0,@MAP96+2       fix >4000 page for DRVMAP
+
+       BL   @REMAP            reassign floppy drive defaults (hfdc|fdc|tipi)
+;                             R12 must be preserved for hfdc test below!
+
+       MOVB @PAGD0+>2000,@MAP96+3     next up, Floppy controller
+       MOVB @HBA+>2000,@MAP96+6       map in bus/card(s) here 10-17-89
+
+;6.28.2022, see remap for ctltyp flag setting
+;;     CI   R12,>1100    Was the HFDC @>1100? (R12==0 if hfdc test skipped)
+;;     JEQ  MS5          yeah... skip this part, otherwise, get switches for1100
+
+       MOV  @CTLTYP,R5   check for flag      6.28.22
+       JLT  MS5          >FF (-1) is hfdc or tipi
+
+*--------------------------------------------------------
+* FLOPPY CONTROLLER
+*    determine controller type, drive types, and step rates
+*
+* CTLTYP:  0=TI, 1=Myarc, 2=CC (3=Tip?) Default=Myarc/1
+*           -1 for TIPI
+*
+* 6.28.2022, updated floppy detection to flag no FDC via CTLTYP
+*
+       LI   R5,TRKDRV    tracks (40/80)
+       LI   R6,STPDRV    Step rate
+*
+       MOV  @H2828,*R5        assume 40 track for 1,2
+       MOV  @H2828,@2(R5)     3,4
+*
+       MOV  @H0202,*R6        assume step rates
+       MOV  @H0202,@2(R6)
+       MOVB @H00+>2000,@VERWRT  and turn off(?) write verification
+       SETO @LSTDRV             ??
+*
+       LI   R12,>1100         point to floppy controller
+       LDCR @H00+>2000,8      clear first 8 cru bits
+       SBO  0                 turn on card
+
+;6-28-2022, test for a controller at >1100
+       CB   @>C000,@HAA+>2000 is there an eprom >AA header?
+       JEQ  CHKMY1            yes. Go figure out what type of card it is
+       SETO @CTLTYP           NO. So we don't have an FDC at this point
+       JMP  MS5                   exit floppy detection
+
+; (1) Check for Myarc card by detecting RAM in the >5000-5ff0 page
+CHKMY1 LI   R2,>D000
+       MOV  *R2,R0
+       INV  *R2
+       MOV  *R2,R1
+       INV  *R2          restores value, if RAM
+       C    R0,R1        compare
+       JEQ  NOTMYR       nope, not a Myarc card w/ram
+
+****Set Myarc FDC Configuration:
+       MOV  @H9FF1,@CTLBAS
+       MOVB @H01,@CTLTYP
+*
+       C    @>C00A,@H4010     is it an 80 track eprom?
+       JNE  NOTM80
+       CLR  *R6               yes, reset step rates
+       CLR  @2(R6)
+       LI   R1,TRKDRV         test DIP for 40/80 track operation
+       AI   R12,>000E
+MS1    TB   0
+       JEQ  MS2
+       MOVB @H50,*R1          80 track
+MS2    INC  R1                40 track (remember, we defaulted above)
+       DECT R12
+       CI   R12,>1106
+       JH   MS1
+       LI   R12,>1100
+       TB   2
+       JEQ  MS5
+       MOVB @H01,@VERWRT
+MS5    JMP  PWREX             complete
+*
+NOTM80 LI   R1,STPDRV         NOT 80 track EPROM, so the DIP is step rates
+       AI   R12,>000E
+MSA1   TB   0                 0=GND=20 MS
+       JNE  MSA2
+       MOVB @H00+>2000,*R1    set step
+MSA2   INC  R1
+       DECT R12
+       CI   R12,>1106
+       JH   MSA1
+       LI   R12,>1100
+       JMP  PWREX             R12 must contain valid card! complete
+*
+* here, check to see if ti or corcrap
+*
+NOTMYR MOV  @H9FF0,@CTLBAS
+       MOVB @H00+>2000,@CTLTYP
+       SBO  11                flip rom bank (only possible w/cc)
+       CB   @>C000,@HAA+>2000 standard header this bank?
+       JEQ  PWREX             yes,it's a ti card (use 40 track, step setting=2)
+**
+* corcrap, set step rates...  (40 track only; setDSK can override)
+*
+       SBZ  11                no, reset Corcomp ROM bank; fixes rompage/gencfg
+       MOVB @H02,@CTLTYP
+       CLR  R0
+       AI   R12,>22
+       STCR R0,8              get the switches
+       LI   R12,>1100
+*
+       MOVB R0,R1
+       MOVB R0,R2
+       SRL  R1,1
+       SRL  R2,4
+       ANDI R1,>0100
+       ANDI R2,>0200
+       SOCB R1,R2
+       MOVB R2,*R6       step rate drive 1 (DS0)
+*
+       MOVB R0,R1
+       MOVB R0,R2
+       SRL  R1,4
+       SRL  R2,5
+       ANDI R1,>0100
+       ANDI R2,>0200
+       SOCB R1,R2
+       MOVB R2,@1(R6)    drive 2 (DS1)
+*
+       MOVB R0,R1
+       MOVB R0,R2
+       SRL  R1,3
+       SRL  R2,6
+       ANDI R1,>0100
+       ANDI R2,>0200
+       SOCB R1,R2
+       MOVB R2,@2(R6)    drive 3 (DS3)
+*
+       MOVB R0,R1
+       MOVB R0,R2
+       SRL  R1,2
+       SLA  R2,1
+       ANDI R1,>0100
+       ANDI R2,>0200
+       SOCB R1,R2
+       MOVB R2,@3(R6)    drive 4 (DS4)
+*---end floppy powerup
+
+; Be sure R12 contains valid CRU when we add TIPI, etc
+
+PWREX  SBZ  0            Must turn off the card!
+*
+* 5.1.98, Override floppy step/settings with CYA settings IF available.
+*
+       LI   R1,CYASTP    CYA step/track rates [track1/step1,track2/step2,..4]
+       LI   R2,STPDRV    Step Rates
+       LI   R5,TRKDRV    Tracks
+CYAPP2 MOV  *R1+,R6      get values [track#/step#]
+       JEQ  CYAP1        0? skip this one
+       MOVB R6,*R5       !0, set TRACK
+       SWPB R6           swap
+       MOVB R6,*R2       set STEP RATE
+CYAP1  INC  R2           next step
+       INC  R5           next track
+       CI   R1,STPDRV    end of cya table?
+       JNE  CYAPP2       not yes
+
+       MOVB @M96SSS,@MAP96+2  ;2.9.2021
+;;     MOVB @>F0F0,@MAP96+2
+*
+
+; Reset INTERNAL RAMDISK header page
+;   The two bytes are updated by the 'RAMDISK=' command.
+;   See CLI.BATCMDS: AUTR80 for offset >A010 [>2010] earlier in this file.
+;
+       CLR  @INTMAP
+
+;
+; Set spooler (RSBUFFERS)
+;
+       LI   R1,ISPOOL
+       LI   R2,SPPNT
+       MOV  @2(R2),R2         get pointer to 1st spooler
+PWREX0 CLR  *R2+              (2nd index points to first rs table!)
+       MOV  *R1+,*R2+         (RS1IN)
+       CI   R1,ISPOLD
+       JL   PWREX0
+*
+* figure out what sort of rs232 cards we have here...
+*
+* 05.13.94 Jeff White -- removed DSR-dependent RS232 check
+*                        DSR-validation byte >AA still required, but
+*                          could be removed
+*                        inserted powerup into check
+*
+;4.29.2023
+; STATAB [RSA2-P] consists of pointers to the 4 serial/2 parallel ports
+;      For powerup, the first pointer is copied to R5, then adjusted
+;      so that the first time through PWRUP8, we get the 2nd row of
+;      the first serial port's control register and baud rate.
+;
+;      R5 is not correctly adjusted for (1) skipping PIO1 and (2) skipping
+;      all three ports if the RS232 at >1300 is not present.
+;
+       LI   R12,>1300
+       LI   R1,PIOTYP
+       MOV  @STATAB,R5        get pointer
+       AI   R5,-10            adjust for PWRUP8 loop
+NXTPIO SBO  0
+       CLR  R0                assume MYARC
+       SETO *R1
+       CB   @>C000,@HAA+>2000
+       JNE  GONE1             no card here
+       SBO  7                 turn on LED (TI or Corcrap)
+       TB   7                 test if ON
+       SBZ  7                 turn it OFF (does not affect status bits)
+       JNE  PORT1             must be MYARC
+       TB   7                 test if OFF
+       JEQ  PORT1             must be MYARC
+       INCT R0                now assume Corcrap
+*
+* jhw: place CorCrap PIO powerup routine here -- compatible with TI PIO
+*
+       SBO  2                 disable TI/CC PIO strobe
+       SBZ  1                 set TI/CC PIO to OUTPUT mode
+       MOVB @>D000,@TESCH1    get BYTE @>5000 on the card
+       INV  @>D000            invert whatever is there
+       CB   @>D000,@TESCH1    are the two equal?
+       JEQ  PORT1             no, must be TI - ROM cannot be changed!
+
+*      MOVB @>C000,@>D000     write a byte, but do not strobe
+*      CB   @>C000,@>D000     test what is in OUTPUT register
+*      JNE  PORT1             must be Corcrap
+       MOVB R0,@>D000         null to OUTPUT register
+       DEC  R0                hope it is TI
+PORT1  MOV  R0,*R1
+*
+*
+* 05.13.94 -- Jeff White
+* reset the rs232 card serial ports
+*
+; 6.28.2022 Possible error. SPATAB is RS1,RS2,P1,RS3,RS4,P2
+;           but the routine does not skip to RS3.
+;
+PWRUP5 AI   R12,>0040         1st port this card
+PWRUP6 BL   @PWRUP8
+       SBO  20                timer interrupt on for PIO(/1 or /3)
+       AI   R12,>0040         2nd port this card
+       BL   @PWRUP8
+       AI   R12,->0080        restore base address
+GONE1  SBZ  0
+       LI   R1,PIOTY2
+       AI   R12,>0200
+       CI   R12,>1500
+       JEQ  NXTPIO
+PWRUP7 B    @0
+
+*
+; R5 starts at STAR1-10, so that 2nd row of each port is used.
+; total of 24 bytes per table
+; HOWEVER, the table is R1 R2 P1 R3 R4 P2. There should be a +24 after
+PWRUP8
+       SBO  31
+       AI   R5,22             point to next port data
+       LDCR *R5,8             load control register
+       INCT R5
+       LDCR @ITIM,8           interval timer
+*      SBZ  13                cleared when interval timer loaded - jhw
+       LDCR *R5,12            load bps rate
+       SBO  19                transmit interrupt on
+       RT
+
+SCSPWLPAGE DATA P_SCSI*256    ;6.19.2022 for powerup
+TESCH1 DATA 0
+H9FF1  DATA >9FF1
+H9FF0  DATA >9FF0
+H4010  DATA >4010
+H2828  DATA >2828
+H0202  DATA >0202
+H02    EQU  H0202
+*
+ITIM   BYTE 78,0              5ms for interval timer for PIO
+*
+H03    BYTE >03
+H0A    BYTE >0A
+H0D    BYTE >0D
+H50    BYTE >50
+H01    BYTE >01
+*
+PAGER  DATA PAGLST
+*
+ABTKEY MOV  R11,@ABTDAT  ;Check for BREAK key, L8.RSD2-P: CKABRT
+       LI   R12,MODE     ;
+       SBZ  0
+       BL   @>20
+       STST R11
+       LI   R12,MODE
+       SBO  0
+       B    @0
+ABTDAT EQU  $-2
+*
+
+
+**** WAIT **** HOW *** DO *** WE ** KNOW ** THIS ** IS ** OK ? ? ?
+
+       AORG >2380             unused PAD ram
+
+* What if above code exceeds >380 bytes?
+;
+; Not only that, later we aorg based on >0400 +>2000!  NIGHTMARE CODE>
+
+********************************************************************************
+*  REMAP Devices -  J.G.SCHROEDER 09/26/92
+*
+* Original table shifted offset 0 for emulate. Confirm use of @DRVMAP(0)
+*    0 1 2 3 4 5 6 7 E F      default map
+*
+* IN: R12, from FLPPRM hfdc search (R12==0 before hfdc check)  MUST PRESERVE
+*     R1,  from FLPPRM emulate 0=none; 1=found
+*
+* >>> Remap expects TIPI page at MAP96+3 for  reference @TIPCRU!!!
+*      HFDC/SCSI/RamHD page >6000 can't be mapped in at same time, so we cannot
+*      test the >6000 area unless we combine CRU's into one place
+*
+* 6.28.2022 Changed logic for hfdc/fdc. Set CTLTYP -1 for non FDC.
+*           We can always clear it later, if necessary. See powerup.
+
+REMAP  LI   R3,DRVMAP    ref'd  L8.SECT2-P
+       INC  R3           start at proper offset
+
+;4.17.21, TIPI maps dsk1-4 if card at >1100
+       SETO @CTLTYP      set floppy controller to non-FDC (-1)
+
+       LI   R4,HTIPDD         check for tipi first
+       C    @TIPCRU,@CR1100   tipi page must be at >6000 for this to work
+       JEQ  REMAP1
+
+;      LI   R4,H0102     FDC default
+;      CI   R12,>1100    hfdc at >1100? see flpprm
+;      JNE  REMAP1         no
+;      LI   R4,H0A0B       yes,default to hfdc floppy
+;
+
+       LI   R4,H0A0B     HFDC floppy default
+       CI   R12,>1100    R12 is set in hfdc powerup
+       JEQ  REMAP1
+       CLR  @CTLTYP      reset flag
+       LI   R4,H0102     FDC default
+
+REMAP1 MOVB *R4+,*R3+    set dsk1-4 remaps
+       MOVB *R4+,*R3+
+       MOVB *R4+,*R3+
+       MOVB *R4+,*R3+
+
+*********************************************
+* 9.11.2009 - CYA Remap Override modification - per drive!
+*      If the byte in the table is 0, existing map is retained at powerup
+*      Otherwise, the CYA table remap is used
+CYAORM LI   R2,CYAREMAP
+       LI   R3,DRVMAP   (first byte is emulation; not sure if used)
+       LI   R4,9
+CYAREMAPNEXT
+       INC  R3
+       MOVB *R2,*R2
+       JEQ  CYAREMAPSKIP
+       MOVB *R2,*R3
+CYAREMAPSKIP
+       INC  R2
+       DEC  R4
+       JNE  CYAREMAPNEXT
+       RT
+
+CYAMP7
+CYAREMAP DATA 0,0,0,0,0  DRIVES 1-9 FOR CYA REMAP
+*
+H0102  DATA >0102        standard floppy
+H0304  DATA >0304
+H0A0B  DATA >0A0B        HFDC floppy
+H0C0D  DATA >0C0D
+CR1100 DATA >1100        For comparison with remaps/CRU
+HTIPDD BYTE 23,24,25,26  TIPI floppy remaps
+       BYTE 0
+
+;;DEFMAP BYTE 0            ;possibly used for emulate
+;;     DATA >0102,>0304,>050E
+;;     DATA >0F0E,>0F0A            E & F RAMDISKS DSK8 DSK9   J.G.S.
+
+********************************************************************************
+* DSRPASS ... pass thru to winchester disk
+*      Originally called from HDR2-P2 passthrough code
+*      Removed 12.31.1997; retained stubs for graceful return if called
+*
+       AORG >0400        to locate past our fake PAD ram for >8300
+
+       JMP  PASS00       ENTRY FOR /4A MODE (COULD BE A BRANCH)
+       NOP
+       DATA MYRCWS,PASS02  @0404   BLWP entry for 9640 mode pass through
+
+PASS00 RT                Graceful return    /4A mode (page in, do dsrlnk)
+PASS02 RTWP              same here          9640 mode
+
+********************************************************************************
+* map a /4a pab onto a 9640 PAB
+*
+* Used ONCE: in HDR2-P2 just before CALDRV (page is mapped in/out)
+*
+MAP426 MOVB @OPCOD4,R0
+       MOVB @H00,@CPUFLG
+       ANDI R0,>4000
+       JNE  MAP42A
+       MOVB @HFF,@CPUFLG
+*
+MAP42A MOVB @OPCOD4,R0
+       ANDI R0,>BF00
+       MOVB R0,@OPCODE
+*
+       MOVB @FLGST4,R0        get error and flags
+       ANDI R0,>E000          isolate error bits
+       MOVB R0,@PABERR        move it back
+*
+       MOVB @FLGST4,R0
+       ANDI R0,>1F00          isolate status bits
+       MOVB R0,@FLGSTS        move them back, too
+*
+       MOV  @SCNOF4,@SCNOFF   copy status & name length
+       MOVB @H00,@CHRCNH      this high byte always zero
+*
+       CB   @OPCODE,@H05      load?
+       JEQ  PASS49            yes.
+       CB   @OPCODE,@H06      save?
+       JEQ  PASS49            yes.
+*
+       MOVB @LRECL4,R0        RECORD LENGTH FROM BYTE TO WORD
+       SRL  R0,8
+       MOV  R0,@LRECLN
+*
+       MOVB @CHRCN4,R0        CHARACTER COUNT FROM BYTE TO WORD
+       SRL  R0,8
+       MOV  R0,@CHRCNT
+       MOV  @RECNU4,@RECNUM   RECORD NUMBER
+       JMP  PASS50            skip load/save remap
+*
+PASS49 MOV  @LRECL4,@LRECLN   number of characters loaded
+       CLR  @RECNUM           clear high byte of chars loaded
+       MOV  @RECNU4,@CHRCNT   max allowable size for pgm image
+PASS50 RT
+
+HAA    BYTE >AA
+HFF    BYTE >FF
+WDS2TX DATA 'HD'         used in HFDC powerup
+MYRCWS BSS  32           used in Passthrough
+*
+HBA    BYTE >BA
+H00    BYTE >00
+SAVADR DATA 0
+SAVPTR DATA 0
+H05    BYTE >05
+H06    BYTE >06
+;
+; Warning: above section starts >0400! Page bytes require +>2000 offset
+;           if used in the >2000 section (still not clear WHY)
+;
+       COPY "\MDOS\L8\DSRMEM"     COPY IN THE DSR PAGE USAGE (list of pages)
+*
+       AORG $+>2000      ;in theory, int handler is >0400+>2000+$
+*
+********************************************************************************
+*
+* entry point for 9640 mode interrupt
+*
+INT964 LI   R3,BITTAB
+NXTBIT MOV  *R3+,R12
+       TB   0
+       JEQ  GOINT
+       CI   R3,LSTBIT
+       JLE  NXTBIT
+*
+*3-12-18, SCSI Interrupt handler We should still be in >2000 space.
+*      Still, pray we aren't in >4000, based on AORG above
+*
+*      We might need to jump into SCSI/IDE page since they both have
+*      interrupt lines.
+*
+;  mov @scscru,r12      ;possible code within scsi2 dsr page
+;  jeq noscsi           ;allow call from /4a mode handler
+;  <int handler>
+;  mov @idecru,r12
+;  jeq noide
+;  <emulate gplws, call IDE int handler>
+;
+       MOVB @>F110,@SCSPWLPAGE+1             ;can we use local
+       MOVB @SCSPWLPAGE,@>F110
+       BL   @SCSINT                 ;call ide handlerall IDE powerup
+       MOVB @SCSPWLPAGE+1,@>F110
+;      remove below scsi handler and tie into /4a mode
+;;
+;;     LI   R12,>1200         scsi MUST be here, if present
+;;     SBO  0
+;;     TB   0                 interrupt?
+;;     JNE  NOTSC6            no, exit
+;;     MOVB @>F112,@HBAXX+1   yes,save 4000 page
+;;     MOVB @HBAXX,@>F112     get it
+;;     MOV  @>4FEE,R3  --clear int; careful, cant do GOINT after this
+;;     MOVB @HBAXX+1,@>F112 restore dsr page
+;NOTSC6 SBZ  0            turn off card
+;NOTSCSINT
+
+       RTWP                   call was a garbage interrupt
+
+HBAXX  DATA >BA00
+*
+BITTAB DATA 17*2+>1340        rs232/1 out
+       DATA 16*2+>1340                in
+       DATA 17*2+>1380        rs232/2 out
+       DATA 16*2+>1380                in
+       DATA 19*2+>1340        PIO
+       DATA 19*2+>1340        PIO
+*
+       DATA 17*2+>1540        rs232/3 out
+       DATA 16*2+>1540                in
+       DATA 17*2+>1580        rs232/4 out
+       DATA 16*2+>1580                in
+LSTBIT DATA 19*2+>1540        PIO/2
+*
+*******************************************
+*
+GOINT  ANDI R12,>1FC0         fix CRU base for bit tested
+       AI   R3,-BITTAB-2
+       SRL  R3,1
+*
+       STWP R4                save calling WS
+       MOV  R4,@INTWSR        and save it .
+       MOV  R3,@CDTYPE
+       MOV  R12,@CRUSA1
+*
+       MOVB @PAGD1+>2000,@MAP96+5   bring in the other pages
+       MOVB @HFF+>2000,@MODE4A      indicate entry from 9640 mode (>FF)
+*                             see hdr2-p2,  >00 = 4/a mode
+*
+       LWPI INTWS               bring in the good ws
+       LI   R3,0
+CDTYPE EQU  $-2
+       MOV  @INTWSR,R4
+*
+       LI   R12,0             cru base
+CRUSA1 EQU  $-2
+;
+; RS232 code lives in >6000 space
+;
+       MOV  @RSCODE+2,R5      get interrupt link l8.layout:>6000 l8.ints
+       BL   *R5               go to it . . .
+;
+; This isn't really 83e0..
+;
+       LWPI >83E0             return to calling WS
+INTWSR EQU  $-2               place to stick actual calling WS
+*
+       RTWP                   should work. . . .
+*
+ISPOOL DATA 0               start
+       DATA >003F           end
+       DATA 0,0           get/put
+       DATA >0040
+       DATA >007F
+       DATA >0040
+       DATA >0040
+       DATA >0100
+       DATA >07FF
+       DATA >0100
+       DATA >0100
+       DATA >0800
+       DATA >0FFF
+       DATA >0800
+       DATA >0800
+       DATA >2000
+       DATA >2FFF
+       DATA >2000
+       DATA >2000
+*
+       DATA >0080           start
+       DATA >00BF           end
+       DATA >0080           get
+       DATA >0080           put
+       DATA >00C0
+       DATA >00FF
+       DATA >00C0
+       DATA >00C0
+       DATA >1000
+       DATA >17FF
+       DATA >1000
+       DATA >1000
+       DATA >1800
+       DATA >1FFF
+       DATA >1800
+       DATA >1800
+       DATA >3000
+       DATA >3FFF
+       DATA >3000
+       DATA >3000
+ISPOLD EQU  $
+*
+********************************************************************************
+*
+       LIST
+*
+       END
+*

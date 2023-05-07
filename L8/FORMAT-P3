@@ -1,0 +1,389 @@
+; File: Format-p3
+;
+; 2.14.2021 Updated FMTTAB to account for remaps 24-26
+;           Redirected all devices except FDC and HFDC floppy to BADNVC
+;           Removed NULFMT routine
+;           (To do: Confirm this doesn't impact formatting)
+;
+
+       TITL 'PAUL CHARLTON 1/17/86'
+*
+* ROUTINE TO WAIT FOR COMPLETION OF FLOPPY COMMAND (UP TO 1.6 SECONDS)
+*
+*
+HFDGD0
+HFDBD6 BL   @RESPA1           10/10/89...error code alread in PAB
+       JMP  CFILX1         ;(this branches into CFILES. Ugh)
+*
+BADNVC LI   R10,>0600         02.14.2021,force error for devices we cant format
+       JMP  BADRT             and skip the CTLTYP test so that we aren't
+*                             resetting CRU bit 1 ! !
+*
+BADRT6 LI   R10,>0600    -> TIMED OUT <-> PROBABLY NO DISK <-> ERROR <
+*
+       CB   @CTLTYP,@H01      0=TI, 1=Myarc, 2=CC
+       JNE  GODRT
+*
+       SBZ  RSETFC
+*
+GODRT
+BADRT  BL   @RESPA1           RESTORE PAD
+       CLR  R9                ZERO DSR LINK ERROR CODE
+       MOVB R10,@MYPAD+>50    STORE ERROR CODE IF ANY
+       JEQ  NE                BRANCH IF NO ERROR
+       LI   R9,>C000          BAD OP 6
+       CB   @HB34,R10         WRITE PROTECT?
+       JNE  NE
+       LI   R9,>2000
+*
+NE
+NCHGCT MOVB R9,@PABERR        for 9640 mode format error code
+       JMP  CFILX1
+*
+       PAGE
+********************************************************************************
+*
+*      THE FOLLOWING IS A TABLE OF FORMAT DATA
+*      IF FIRST BYTE IS A 01 THEN WRITE ID FIELD
+*      IF FIRST BYTE IS A 02 THEN AT END OF SECTOR
+*      OTHERWISE, FIRST BYTE IS DATA FOLLOWED BY THE #
+*           OF TIMES THE DATA IS TO BE REPEATED
+*
+********************************************************************************
+*
+* TRACK HEADER FOR DOUBLE DENSITY
+*
+DDHED  DATA 18           18 SECTORS / TRACK
+       BYTE >4E,32
+*
+* SECTOR LAYOUT FOR DOUBLE DENSITY
+*
+D12    EQU  $
+DDTBL  BYTE 0,12,>F5,3,01,>4E,22,0,12,>F5,3,>FB,1
+       BYTE >D7,128,>D7,128,>F7,1,>4E,20
+RESCM2
+H02    BYTE >02
+       DATA 11,>4E4E,DDTBL
+*
+* TRACK HEADER FOR SINGLE DENSITY
+*
+SDHED  DATA 9            9  SECTORS / TRACK
+       BYTE >FF,40
+*
+* SECTOR LAYOUT FOR SINGLE DENSITY
+*
+SDTBL  BYTE 0,6,01,>FF,11,0,6,>FB,1
+       BYTE >E5,128,>E5,128,>F7,1,>FF,36
+       BYTE 2
+       DATA 7,>FFFF,SDTBL
+*
+JUNK2  BYTE DPAG4,0
+*
+*   FORMATTING ROUTINES
+*
+MOVMU1 MOVB R0,*R13+          MOVE TO VDP RAM
+       DEC  R7
+       JNE  MOVMU1
+WATRT  RT
+*
+       PAGE
+**************************************************************************
+*
+*      FORMAT ROUTINE
+*
+*      NOW FOR REGISTER USAGE
+*               WORK SPACE IS >83E0 ON INPUT
+*      R0 - SECTOR FORMAT ADDER (INTERLEAVE)
+*      R1 - BUFFER ADDRESS
+*      R2 - DRIVE #
+*      R3 - # OF AU'S FORMATTED
+*      R4 - DENSITY FLAG
+*      R5 - SIDE 0=0  <>0 =1
+*      R6 - CURRENT TRACK NUMBER
+*      R7 -
+*      R8 - SECTOR COUNTER USED FOR INTERLEAVE
+*      R9 - DRIVE * 2
+*      R10-
+*      R11-
+*
+**************************************************************************
+*
+* NOW INITIALIZE PARAMETERS  USE R4 FOR TOTAL AU'S
+* USE ACTUAL TRACK LOCATION FOR TRACK #
+* FIRST SAVE VARIABLES FROM PAD
+*
+FORMAT
+FORCO1 LWPI WRKREG
+       BL   @SAVPAD
+*
+       MOVB @RECNUM+1,@CHRCNH
+*
+       INC  R2                R2 should have drive # 1-9
+       JLT  BADRT6
+
+*
+* 7-7-96, Could this explain the HFDC format problems? We're dropping
+*           an offset for REMAP which no longer needs it!!!!
+*      MOVB @MODE4A,R9
+*      JNE  FORC96
+*      MOVB @DRVMAP,R9
+*      JEQ  FORC96
+*      DEC  R2                offset -1 for active emulate file in 4a mode
+*      JLT  BADRT6
+
+FORC96 CI   R2,9
+       JH   BADRT6
+*
+       MOVB @DRVMAP(R2),R2
+       SRL  R2,8              r2 has internal drive #
+       MOV  R2,R9
+       SLA  R9,1
+       MOV  @FMTTAB(R9),R9
+       B    *R9               call the correct format routine for this drive
+*
+; 2-14-2021-updated format table and error trap
+;  Changed NULFMT to BADNVC:5,6,7,8,14-23
+;  Changed BADRT6 to BADNVC: 0,9
+;  Removed NULFMT routine so now an error is reported
+;
+FMTTAB DATA BADNVC            old emulate remap dev 0 ?
+       DATA FLPFMT,FLPFMT,FLPFMT,FLPFMT      1,2,3,4       DCC floppy
+       DATA BADNVC                           5             internal ramdisk
+       DATA BADNVC,BADNVC                    6,7           horizons ramdisk
+       DATA BADNVC                           8             rave card
+       DATA BADNVC                           9             HFDC emulate file
+       DATA HFDFMT,HFDFMT,HFDFMT,HFDFMT      10,11,12,13   HFDC floppy
+       DATA BADNVC,BADNVC                    14,15         9/26/92 J.SCHROEDER
+       DATA BADNVC,BADNVC,BADNVC,BADNVC      16,17,18,19   10/4/92 B.MILLER
+       DATA BADNVC,BADNVC,BADNVC,BADNVC      20,21,22,23
+       DATA BADNVC,BADNVC,BADNVC,BADNVC      24,25,26,27   (26 max 2.14.21)
+*
+NULFMT CLR  @LRECLN           number of au's
+       INCT @LRECLN           since we have no idea how big it is...user specify
+       MOVB @H09,@CHRCNT      number of sectors/track
+       CLR  R10
+       B    @RESPAD
+*
+FLPFMT DEC  R2                format routine drive # one less than internal #
+       MOV  @CTLBAS,R15
+       MOVB @JUNK2,@MAP96+6
+*
+       LI   R10,>0700
+*
+       MOV  R2,R9             DRIVE NUMBER
+       SLA  R9,2              USE DRIVE NUMBER AS TABLE INDEX
+       SZCB @H80,@DSKTYP+2(R9)
+       MOVB @BUFADH,R3        number of tracks/side to format
+*
+       BL   @DRTYP
+       JEQ  DRTST1            40 TRACK DRIVE
+*
+       CB   R3,@D40B
+       JEQ  DRTST2            FORMAT A 40 TRACK DISK IN 80 TRACK DRIVE
+*
+       SRL  R3,1
+       JMP  DRTST1
+*
+DRTST2 SOCB @H80,@DSKTYP+2(R9) DOUBLE STEP, 40 TRACK DISK IN 80 TRACK DRIVE
+*
+DRTST1 CB   R3,@D40B          TOO MANY TRACKS REQUESTED?
+       JLE  DRTST3            track count is ok
+       B    @BADRT            BRANCH NOT CORRECT NUMBER OF TRACKS
+*
+*
+*-------------------------------------------------------------------------------
+DRTST3 BL   @SETPM            RESTORE DRIVE, SET R6 TO ZERO
+*
+       CLR  R3                CLEAR AU COUNTER FOR FORMAT
+STECMP CLR  R5                FLAG FOR WHICH SIDE OF DISK
+
+NEXTSD CLR  R8                SECTOR NUMBER
+       LI   R13,>C000         CPU buffer address
+*
+DDEN1  LI   R1,SDHED
+       CB   @RECNUM,@H02      TEST REQUESTED DENSITY
+       JNE  DEDEND            BRANCH IF NOT DOUBLE DENSITY
+*
+       LI   R1,DDHED          double DENSITY
+       MOVB @CTLTYP,@CTLTYP
+       JNE  DEDEND            NOT A TI CARD
+       B    @BADRT6           THIS IS A TI CARD-CAN'T DO DOUBLE !
+*
+DEDEND MOV  *R1+,R4
+*
+DDENLD MOVB *R1+,R0           GET NEXT BYTE
+       CB   R0,@H01           TEST IF ID FIELD >01
+       JEQ  WRTID             BRANCH IF YES
+*
+       CB   R0,@H02           TEST IF DATA FIELD >02
+       JEQ  SETEND            BRANCH IF AT END
+*
+       MOVB *R1+,R7           GET THE BYTE TO BE WRITTEN
+       SRL  R7,8
+       BL   @MOVMU1
+       JMP  DDENLD
+*
+WRTID  MOVB @HFE,*R13+        ID BYTE
+       MOVB R6,*R13+          CURRENT TRACK #
+       MOVB R5,*R13+          SIDE NUMBER
+       MOVB @R8LSB+WRKREG,*R13+   SECTOR #
+       MOVB @H01,*R13+        SECTOR LENGTH
+       MOVB @HF7,*R13+        CRC
+       JMP  DDENLD            CONTINUE
+*
+SETEND A    *R1+,R8
+       CLR  R7
+       DIV  R4,R7             MOD SECTORS/TRACK
+       MOV  *R1+,R0
+       MOV  *R1,R1            GET NEXT TABLE POINTER
+       MOV  R8,R8
+       JNE  DDENLD
+*
+COMLD  LI   R7,700
+       BL   @MOVMU1
+*
+       PAGE
+**************************************************************************
+*
+* ALL DATA SETUP IN VDP, NOW WRITE TO THE DISK CONTROLLER
+*
+       LI   R8,10        write track
+       MOV  R8,@WHICH
+*
+       LI   R1,>C000
+       MOV  R1,@IOADR
+*
+       LI   R10,2919          NUMBER OF FORMAT BYTES TO WRITE (SINGLE DEN)
+       CB   @H02,@RECNUM
+       JNE  SDFOR
+*
+       LI   R10,6080          COUNT FOR DOUBLE DENSITY
+*
+SDFOR  MOV  R10,@IOCNT
+       MOV  R4,@>F012         density info
+*
+       LI   R13,1
+       CLR  R14
+NXWATY MOVB @DSTARG(R15),R10
+       SWPB R10                              +5 WORDS
+       MOVB @CTLTYP,R10
+       JNE  NXWATZ
+       INV  R10
+NXWATZ CI   R15,MYBASE
+       JNE  NX01
+       ANDI R10,>0001
+NX01   ANDI R10,>0081
+       JEQ  NXWATX
+       ANDI R10,>0080
+       JNE  BDR61
+       DEC  R14
+       JNE  NXWATY
+       DEC  R13
+       JNE  NXWATY
+       JMP  BDR61
+*
+NXWATX MOVB R6,R6
+       JNE  NXWATW            only kill time on track zero...skip now
+       MOV  R5,R5             side 0?
+       JNE  NXWATW            no, don't kill time
+*
+       LI   R14,>6000
+NXW000 SWPB R13
+       SWPB R13
+       DEC  R14
+       JNE  NXW000            KILL SOME TIME FOR HEAD TO SETTLE
+*
+NXWATW MOVB R14,@DDATRG+8(R15)
+       BLWP @DSKIO            CALL ROUTINE IN PAD
+*
+       MOV  @>F012,R10        TEST IF OLD R9=0 (NO INDEX HOLE FOUND)
+       JNE  FTKCMP            BRANCH IF NOT TIMED OUT
+BDR61  B    @BADRT6
+*
+FTKCMP MOVB @DSTARG(R15),R10
+       CB   @H00,@CTLTYP
+       JNE  GRR1
+       INV  R10
+GRR1   ANDI R10,>4000         WRITE PROTECTED DISK?
+       JEQ  DSKNPR
+*
+       SRL  R10,4
+       B    @BADRT            BRANCH IF WRITE PROTECTED
+*
+* SUCCESSFUL FORMAT, SO SEE IF DOUBLE SIDED
+*
+DSKNPR CB   @RECNUM+1,@H02
+       JNE  NOTDS        BRANCH IF NOT DOUBLE SIDED
+*
+       MOV  R5,R5
+       JNE  SID2FD       BRANCH IF JUST FORMATTED SIDE 2
+*
+       LI   R5,>0101     SET SIDE 2 FLAG
+       A    R4,R3        ADD THE NUMBER OF SECTORS JUST FORMATTED
+       B    @NEXTSD      BRANCH TO DO SIDE 2
+*
+* TRY TO READ BACK ADDRESS ON SIDE 2 TO SEE IF *DRIVE* IS DOUBLE SIDED
+* (WHEN WE'RE ON TRACK ZERO, ONLY)
+*
+SID2FD MOV  R6,R0             this is redundant!
+       JNE  NOTDS
+*
+       CB   @H00,@CTLTYP
+       JNE  GRR2
+       INV  R0
+*
+GRR2   MOVB R0,@DSECRG+8(R15)   TRY TO READ SECTOR 0
+*
+       MOV  @H0100,@IOCNT
+*
+       LI   R8,8         DUMMY READ
+       MOV  R8,@WHICH    LOAD THE ROUTINE TO PAD RAM
+*
+       MOV  R4,@>F012         density info...
+       MOVB R14,@DDATRG+8(R15)
+       BLWP @DSKIO
+*
+       MOV  @>F012,R10   OLD R9
+       JEQ  BDR61        TIMED OUT, ERROR
+*
+       MOVB @DSTARG(R15),R7
+       CB   @CTLTYP,@H00
+       JNE  GRR3
+       INV  R7
+*
+GRR3   SLA  R7,4         TEST RECORD NOT FOUND FLAG
+       JNC  NOTDS        BRANCH IF DOUBLE SIDED
+*
+* THERE IS NO SIDE #2, SO ADJUST
+*
+       MOVB R5,@CHRCNH        return number of sides as 1
+       JMP  NOTDS1       DO NOT ADD SIDE 1
+*
+NOTDS  A    R4,R3
+NOTDS1 AI   R6,>0100     NEXT TRK
+*
+H0100  EQU  $-2
+H01    EQU  $-2
+*
+       CB   R6,@BUFADH   TEST IF COMPLETE
+       JHE  FORDON       YES, COMPLETE
+*
+STIN   BL   @TURNMO
+       BL   @SEKTK       STEP IN A TRACK
+       B    @STECMP      LOOP BACK TO FORMAT MORE TRACKS
+*
+       PAGE
+********************************************************************************
+*
+* FORMAT COMPLETE
+*
+FORDON MOV  R3,@LRECLN        # OF AU'S ON DISKETTE
+       MOVB @MYWS+9,@CHRCNT
+*
+       MOV  R3,@DSKTYP(R9)
+       MOVB @MYWS+9,@DSKTYP+3(R9)
+*
+       CLR  R10               NO ERROR.
+       B    @RESPAD           GOOD RETURN ADDRESS
+*
+********************************************************************************

@@ -1,0 +1,410 @@
+* THIS FILE IS AORG'D @>2900 (pg2vec) by COPY2-P2.
+*
+*
+       IDT  '>Paul C<'
+* part-A2 for paged version (see part A1 for dsr links)
+*
+PAD    EQU  ->E0         start of cpu ram
+* NOW FOR GPL EQUATES
+DENPS  EQU  MYPAD+>50        DENSITY BYTE IN FORMAT
+SIDSPS EQU  MYPAD+>51        NUMBER OF SIDES
+TRKPS  EQU  MYPAD+>4D        NUMBER OF TRACKS PASSED
+FORAUS EQU  MYPAD+>4A        NUMBER OF AU'S FORMATTED ON RETURN
+SECPTK EQU  MYPAD+>4D        SECTORS PER TRACK RETURNED AFTER FORMAT
+FBUFSZ EQU  518          LENGTH OF TI FILE BUFFER SIZE
+*
+R8LSB  EQU  17
+* NOW FOR CRU LAYOUT
+CRUBAS EQU  >1100
+KSCANG EQU  >000E
+*
+* CRU INPUTS
+FLPINT EQU  0            COMMAND COMPLETE BIT
+FLPDRQ EQU  1            DATA REQUEST BIT
+FLPRED EQU  2            IF 1 THEN READ BACK EVERY WRITE
+
+*DRV1SP EQU  4           IF 0 THEN 6 MILLISEC TRK TO TRK
+*DRV2SP EQU  5           IF 1 THEN 20 MILLISEC TRK TO TRK
+*DRV3SP EQU  6
+*DRV4SP EQU  7
+
+
+* CRU OUTPUTS
+RSETFC EQU  1            BIT TO RESET FLOPPY DISK CONTROLLER
+FSIDE  EQU  2
+
+* NOW FOR ASSEMBLY LIBRARY EQUATES
+GPLLNK EQU  >20FC
+XMLLNK EQU  >2100
+KSCAN  EQU  >2104
+VSBW   EQU  >2108
+VMBW   EQU  >210C
+VSBR   EQU  >2110
+VMBR   EQU  >2114
+VWTR   EQU  >2118
+DSRLNK EQU  >211C
+LOADER EQU  >2120
+NAMLNK EQU  >2002
+TGOBLD EQU  >2004
+*
+*
+       PAGE
+       DATA CDIR         vector for CALL DIR(X)
+       DATA 0        ILR INIT RAM FOR ASSEMBLY LANGUAGE
+       DATA CFILES       call files (basic)
+       DATA CFILEG       call files (gpl)
+       DATA 0        LR  LOAD AND RUN TO LOAD ASSM FROM FILE
+       DATA IOCM1        SECTOR I/O
+       DATA FORMAT       FORMAT ROUTINE
+       DATA 0        LLR TO BRANCH TO ASSEMBLY LANGUAGE ROUTINE
+       DATA COMPAT       COMPAR TO FIND BUFFER ROUTINE
+       DATA CDIR2        TITLE PART OF CALL DIR
+       DATA CDIR3        FILE PART OF CALL DIR
+       DATA CIFPG1
+HA55A  DATA >A55A        MOVED FROM ABOVE. NO REFERENCING
+       PAGE
+CDIR3  LI   R5,MESTB2
+       MOV  R0,@IOBUF    SAVE TYPE AND PROTECTION
+       JMP  CDIR33
+*
+CDIR31 SRL  R7,8
+CDIR26 MOVB *R5+,R8
+       AI   R8,>6000
+       MOVB R8,*R9
+       DEC  R7
+       JNE  CDIR26
+       JMP  CDIR21
+********************************************************************************
+*      ROUTINE TO PROVIDE STATEMENTS TO SCREEN
+*
+*
+********************************************************************************
+MESTBL BYTE >FF,11            SCROLL, MESS LENGTH
+       TEXT 'DISKNAME = '
+
+HFD    BYTE >FD,>FF,6         NAME, SCROLL, MESS LENGTH
+       TEXT 'USED ='
+HFE    BYTE >FE,12            NUMBER, MESS LENGTH
+       TEXT ' AVAILABLE ='
+       BYTE >FE,>FF,28        NUMBER, SCROLL, MESS LENGTH
+       TEXT ' FILENAME  SIZE    TYPE    P'
+HFF    BYTE >FF,28            SCROLL, MESS LENGTH
+       TEXT '---------- ---- ---------- -'
+HFC    BYTE >FC               FINISHED
+       EVEN
+* WE KNOW THE FOLLOWING
+* R0=0
+* R10= TOTAL # OF AU'S
+* R2= NUMBER OF AU'S ON DISK
+* R3= CPU RAM BUFFER
+* R4= WORKSPACE POINTER
+* DISKNAME STARTS AT R3+FCB
+
+* FIRST ADJUST R10 TO NUMBER AVAILABLE
+CDIR2  S    R2,R10
+
+* NOW ENTER TABLE DRIVEN SYSTEM
+       LI   R5,MESTBL
+CDIR33
+CDIR21 CLR  R7
+       LI   R9,VDP0      POINTER TO VDP WRITE DATA
+       MOVB *R5+,R7
+       CB   R7,@HFA      TEST FOR SCROLL
+       JL   CDIR31       BRANCH IF NOT
+       SRL  R7,7         GET POINTER TO TABLE
+       MOV  @BRTBL->1F4(R7),R7 GET JUMP ADDRESS
+       B    *R7
+
+BRTBL  DATA CDIRFA
+       DATA CDIRFB
+       DATA CDIR32       DONE
+       DATA CDIRFD
+       DATA CDIRFE
+       DATA CDIRFF
+
+CDIRFF
+SCROLL
+********************************************************************************
+*      SCROLL SCREEN ROUTINE    USES R1,R6,R7
+*      USE FCB BUFFER AS A BUFFER
+*      CLEARS BOTTOM LINE AND
+*      POSITIONS VDP WRITE POINTER AT BEGINNING OF LINE
+********************************************************************************
+* MOVE A LINE AT A TIME
+*      MOV  R11,R9
+       LI   R1,32
+SCR3   LI   R6,IOBUF+4   R3 CONTAINS BUFFER
+       BL   @VDPRAD      SET READ ADDRESS
+SCR1   MOVB @VDP0,*R6+  MOVE TO RAM
+       CI   R6,IOBUF+4+32
+       JNE  SCR1
+* NOW WRITE OUT TO LINE BEFORE IT
+       AI   R1,>4000-32
+       BL   @VDPRAD
+       LI   R6,IOBUF+4
+SCR2   MOVB *R6+,*R9
+       CI   R6,IOBUF+4+32
+       JNE  SCR2
+       AI   R1,64->4000
+       CI   R1,24*32
+       JNE  SCR3
+* NOW BLANK TO LAST LINE
+       LI   R7,32
+SCR4   MOVB @H80,*R9
+       DEC  R7
+       JNE  SCR4
+       LI   R1,23*32+2+>4000 NOW POSITION WRITE POINTER
+       BL   @VDPRAD
+*      DATA >4000
+       JMP  CDIR21
+       PAGE
+
+CDIRFE MOV  R10,R7
+********************************************************************************
+*      CONVERT HEX TO ASCII
+*      ALWAYS DOES 5 SPACES, RIGHT JUSTIFIED
+*      NUMBER IN R7     USES R6-R10, DESTROYS R7
+********************************************************************************
+HEXASC CLR  R10          FLAG FOR LEADING 0 SUPPRESSION
+       LI   R9,10000     FIRST DIVISOR
+HLOOP  CLR  R8           FOR DIV/MUL
+       CLR  R6           FOR DIV/MUL
+       DIV  R9,R6
+       MOV  R6,R6        ZERO?
+       JNE  NZERO        BRANCH IF YES
+       MOV  R10,R10      ARE THERE ANY PREVIOUS DIGITS
+       JNE  NZERO        BRANCH IF YES
+       LI   R6,>8000     IS THIS THE LAST DIGIT
+H80    EQU  $-2
+       CI   R9,1
+       JNE  SUPPR        BRANCH IF NOT
+NZERO  AI   R6,>90       TO ASCII
+       INC  R10          NO MORE LEADING ZERO SUPPRESS
+       SWPB R6
+SUPPR  MOVB R6,@VDP0     TO VDP RAM
+       DIV  @D10,R8      NEXT LOWER DIGIT
+       MOV  R8,R9
+       JNE  HLOOP        BRANCH IF NOT YET DONE
+       MOV  R2,R10       READY FOR NEXT TIME
+       JMP  CDIR21
+*
+* >FD, Name
+*
+CDIRFD MOV  R3,R6
+       AI   R6,FCB
+       LI   R7,10
+D10    EQU  $-2
+CDIR25 MOVB *R6+,R8
+       AI   R8,>6000
+       MOVB R8,*R9
+       DEC  R7
+       JNE  CDIR25
+       JMP  CDIR21
+*
+* >FB, get file type
+*
+CDIRFB MOV  @IOBUF,R7    FILE TYPE STORED IN IOBUF
+       ABS  R7           MAKE POSITIVE
+       MPY  @H0006,R7    PRODUCT IN R7,R8
+       MOV  R8,R6
+       AI   R6,FINMTB-6
+       LI   R7,6
+H0006  EQU  $-2
+       JMP  CDIR25       NOW MOVE FILE TYPE
+
+*
+* >FA,  show protection
+*
+CDIRFA MOV  @IOBUF,R7
+       JGT  CDIR32
+       MOVB @H80,*R9     MOVE BLANK
+H1000  NOP
+       MOVB @HB0,*R9     MOVE "P"
+*
+* check for keypress (pause)
+*
+CDIR32 MOV  R3,@IOBUF+4  SAVE CPU RAM BUFFER POINTER
+       LI   R12,>1EF4
+       SBZ  0            ti mode
+       LWPI >83E0
+       BL   @KSCANG      TEST IF KEY JUST PRESSED
+       MOVB @>837C,R1    BRANCH IF NOT
+       JEQ  NKDN
+*
+NKDN1  BL   @KSCANG
+       MOVB @>837C,R1
+       JEQ  NKDN1        WAIT FOR NEW KEY PUSH
+*
+NKDN   LWPI DSRWS
+       LI   R12,>1EF4    9640 mode
+       SBO  0
+       LI   R12,CRUBAS
+       STWP R4
+       MOV  @IOBUF+4,R3
+       JMP  CFILEX            return to caller, CDIR?
+*-=-=-=--=-=-=--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=--=-=-=-=-=-=-=-
+
+MESTB2
+*      BYTE >FF,>FD,>FA          7/7/96, remove!
+
+* NOW FOR MESSAGE TABLE FOR FILE ENTRIES IN CALL DIR(X)
+HFB    EQU  $+3
+HFA    EQU  $+5
+       BYTE >FF,>FD,>FE,>FB,>FE,>FA  SCROLL, NAME, SIZE,TYPE,LEN,P END
+       EVEN
+FINMTB
+* NOW FOR FILE TYPE TABLE
+BLANK  EQU  $
+H20    TEXT ' D/F  '
+       TEXT ' D/V  '
+       TEXT ' I/F  '
+       TEXT ' I/V  '
+       TEXT ' PGM  '
+       TEXT ' DIR  '
+
+       EVEN
+
+       PAGE
+CIFPG1 BL   @CIF
+       JMP  CFILEX
+       PAGE
+*
+********************************************************************************
+*                                                                              *
+* CALL FILES(X) & GPL SUBROUTINE >16                                           *
+* PaulC 10/10/1985  (32 BYTES SHORTER!)                                        *
+*                                                                              *
+********************************************************************************
+* uses: r0,1,4,9,11      (BASIC entry point)
+*
+* Call Files for 99/4 Basic 5/16/84
+* allocates buffer space and sets number of files to be open
+*
+MAXCFV EQU  9       max call files value
+MAXDRV EQU  7       max number of drives base 1 . . 5&6 internal&horizon
+STLN   EQU  >8330   start of line # table
+ENLN   EQU  >8332   end of line # table
+STRSP  EQU  >8318   string space pointer
+STREND EQU  >831A   end of string space pointer
+CFERR  EQU  MYPAD+>50    error code addr
+CFVAL  EQU  MYPAD+>4C    value for call files
+MEMTOP EQU  >8370        top of memory pointer
+FACACT EQU  >834A
+*
+CFILES LI   R1,7           'POINTER PAST "FILES("
+       BL   @STRSET
+*
+**************************************************************************
+       BL   @CFILE        VALUE ALREADY IN R0, CFILEA DOES RANGE CHECK
+       MOVB @CFERR,R0  err?
+       JNE  CFILEX
+       A    @D12,@CHRPTR char pointer to end of line
+*                              (error from BASIC when we don't bump it)
+CFILEZ SZCB @CHAT,@CHAT zero char
+CFILEX MOV  @RETPA0,R11   get return
+CFILEY RT                NO MORE PAGING . . JUST RETURN
+*CFILEY LI   R7,>1E00+PG2
+*      LI   R8,>45B       rt
+*      B    R7            return
+********************************************************************************
+*
+* GPL entry
+* uses: r0,1,4,9,11  PAD+>4C = # of buffers
+*
+CFILEG LI   R11,CFILEX   'OVERALL RETURN FROM CFILE
+       MOVB @CFVAL,R0 value
+*
+********************************************************************************
+*
+* ERROR STATUS RETURNED AT "CFERR"
+*
+CFILE  SETO R1           ERROR CODE
+       ANDI R0,>FF00         'mask out garbage
+       JEQ  CFILER           error if 0
+       CI   R0,MAXCFV*256    max call files value
+       JGT  CFILER
+*
+* NEW MEMTOP: OLD-FBSIZE*(NEW#-OLD#)
+*
+       MOV  R0,R9
+       SB   @NUMFIL,R9         NEW-OLD
+       SRA  R9,8
+       MOVB R0,@NUMFIL         STORE NEW VALUE
+       LI   R0,FBUFSZ
+       MPY  R9,R0              OFFSET TO SUBTRACT FOR NEW MEMTOP
+       S    R1,@MEMTOP    'signed arith magically done for LSword! (MPY)
+       CLR  R1
+CFILER MOVB R1,@CFERR
+       RT
+       PAGE
+********************************************************************************
+*                                                                              *
+* GET A NUMERIC VALUE FROM BASIC...COMMAND LINE ONLY                           *
+*                                                                              *
+********************************************************************************
+*
+*
+*
+STRSET MOV  R11,R9            SAVE RETURN
+       A    @CHRPTR,R1        GET POINTER TO LINEBUF FROM BASIC
+       BL   @VRWD$            GET FIRST WORD (TYPE)
+       CI   R0,>C801          TEST UNQUOTED STRING AND LENGTH
+       JNE  CFILEX            ERROR IF NOT
+       INCT R1                POINT TO "#)"  'NUMERIC VARIABLES NOT ALLOWED
+       BL   @VRWD$            GET NEXT WORD  (VALUE)
+       AI   R0,->30B6         BINARY FOR "0)"
+       B    *R9
+       PAGE
+*
+********************************************************************************
+*
+* CALL DIR(X)   --->BASIC
+*
+*
+CDIR   LI   R1,5              'POINTS PAST "DIR(" IN TYPE BUFFER
+H0005  EQU  $-2
+H00    EQU  $-2
+H05    EQU  $-1
+       BL   @STRSET
+       MOV  R10,R11
+       CI   R0,MAXDRV*256     TEST IF 7 OR LESS
+       JH   CFILEY            BRANCH IF MORE THAN 7
+       SRL  R0,8
+       JEQ  CFILEY            BRANCH IF DRIVE 0
+       MOV  R0,@VOLUME        SAVE DRIVE # IN VOLUME
+       MOV  R9,R11
+       JMP  CFILEX            BRANCH TO RETURN TO CALLER
+*
+       PAGE
+*
+H11    BYTE >11
+HC7    BYTE >C7
+*
+**********************************************
+*
+* READ A WORD FROM VDP RAM
+*
+*
+VRWD$  SWPB R1
+       MOVB R1,@VDP1
+       SWPB R1
+       MOVB R1,@VDP1
+       NOP
+       MOVB @VDP0,R0
+       SWPB R0
+       MOVB @VDP0,R0
+       SWPB R0
+       RT
+*
+* SET VDP ADDRESS
+*
+VDPWAD A    *R11+,R1     add in offset
+VDPRAD SWPB R1
+       MOVB R1,@VDP1     output LSbyte r1 first
+       SWPB R1           delay for addr output
+       MOVB R1,@VDP1     output MS byte now
+       SWPB R1
+       SWPB R1           MAKE SURE THERE IS A LONG 9640 DELAY
+MASM3  RT
+       PAGE
+*

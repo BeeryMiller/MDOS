@@ -1,0 +1,604 @@
+*-------------------------------------------------------------------------
+*
+*      WRITTEN: 07/13/1985
+*
+*      FILE:    WDS1.133.TRINSIC1
+*
+*      NAME:    TRINSIC PART ONE FUNCTIONS
+*
+*
+*-------------------------------------------------------------------------
+*=========================================================================
+*
+*    NAME:  PWR$$   INVOLUTION
+*                     FAC=EXPONENT, ARG= BASE  B^E
+*    WHAT:  POWER ROUTINE
+*
+*=========================================================================
+PWR$$  MOV  @FAC,R0      IS EXPONENT 0?
+       JEQ  PWRG01       YES THEN RESULT=1
+       MOV  @ARG,R0      IS BASE 0?
+       JEQ  PWRG02       THEN RETURN 0 OR WARNING
+       LI   R1,ARG       PUT ARG TO STK #3 (BASE)
+       LI   R2,STK3
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       LI   R1,FAC       PUT FAC TO STACK #4 (EXP)
+       LI   R2,STK4
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @GRINT       NOW CHECK TO SEE IF EXPONENT IS INTEGER
+       MOVB @CW08,@SIGN  ASSUME SIGN IS POSITIVE
+*
+* NOW COMPARE THE EXP TO THE INT(EXP)
+*
+       LI   R1,FAC
+       LI   R2,STK4
+       C    *R1+,*R2+
+       JNE  PWR$$3
+       C    *R1+,*R2+
+       JNE  PWR$$3
+       C    *R1+,*R2+
+       JNE  PWR$$3
+       C    *R1,*R2
+       JNE  PWR$$3
+*
+*    COMPUTE INTEGER POWER B^E
+*       WE KNOW THAT E IS AN INTEGER AN IN FAC
+*
+*      BL   @PUSH
+       MOVB @CW08,@FAC+10 ASSUME NO ERROR IN CFI CONVERSION
+       BL   @CFI         NOW EXP IS AN INTEGER IN FAC
+       MOV  @FAC,R12     MOVE IT TO R12 AND MAKE IT POSITIVE
+       MOVB R12,@WSM6    SAVE SIGN OF EXPON FOR LATER USE
+       ABS  R12
+       MOVB @FAC+10,R0
+       JNE  PWR$$1
+*
+* NOW MOVE ARG (BASE) TO FAC
+*
+       LI   R1,STK3
+       LI   R2,FAC
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       DEC  R12
+       JEQ  PWRJ40
+PWRJ30 SRL  R12,1
+       JNC  PWRJ10
+       LI   R1,STK3
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+PWRJ10 MOV  R12,R12
+       JEQ  PWRJ40
+* PUT FAC IN STK4
+       LI   R1,FAC
+       LI   R2,STK4
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       LI   R3,STK3
+       LI   R1,FAC            MOVE FAC TO ARG
+       LI   R2,ARG
+       MOV  *R3,*R1+
+       MOV  *R3+,*R2+
+       MOV  *R3,*R1+
+       MOV  *R3+,*R2+
+       MOV  *R3,*R1+
+       MOV  *R3+,*R2+
+       MOV  *R3,*R1
+       MOV  *R3,*R2
+       BL   @FMULT
+       LI   R1,STK4
+       LI   R2,STK3
+       LI   R3,FAC
+       MOV  *R3,*R2+
+       MOV  *R1+,*R3+
+       MOV  *R3,*R2+
+       MOV  *R1+,*R3+
+       MOV  *R3,*R2+
+       MOV  *R1+,*R3+
+       MOV  *R3,*R2
+       MOV  *R1,*R3
+       JMP  PWRJ30
+*
+*
+*
+PWRG02 MOVB @FAC,R0
+       JLT  PWRG05
+       JMP  PWRJ45
+*
+*    NEED A FLOATION POINT ONE IN FAC
+*
+PWRG01 LI   R1,FAC            GET A FLOATING ONE
+       MOV  @FLTONE,*R1+
+       CLR  *R1+
+       CLR  *R1+
+       CLR  *R1
+       JMP  PWRRTN
+
+PWRJ40 MOVB @WSM6,R0     TEST EXPONENT SIGN NOW
+       JLT  PWRJ41
+PWRRTN B    @TRINRT
+*
+*
+*
+PWRJ41 MOVB @FAC+10,R0
+       JNE  PWRJ45
+
+       LI   R2,ARG            PUT A FLOATING POINT ONE IN ARG
+       MOV  @FLTONE,*R2+
+       CLR  *R2+
+       CLR  *R2+
+       CLR  *R2
+       BL   @FDIV
+       JMP  PWRRTN
+*
+*
+*
+PWRJ45 CLR  @FAC
+       MOVB @FAC,@FAC+10
+       JMP  PWRRTN
+*
+*   TO BE HERE, EXP IS NOT AN INTEGER, CHECK IF Y>0 OF Y^X
+*
+PWR$$3 MOVB @STK3,R1
+       JGT  PWR$$2
+       MOVB @ERRNIP,@FAC+10
+       JMP  PWRRTN
+*
+*    INTEGER EXPONENT OUT OF INTEGER RANGE
+*
+PWR$$1 CLR  R1
+       MOVB @STK4,R1
+       JGT  PWR$$2
+*
+*    NEGATIVE BASE SO SEE IF EXPONENT IS EVEN OR ODD
+*    TO SET THE SIGN OF THE RESULT
+*
+PWR$$4 ABS  R1
+       CI   R1,>4600
+       JGT  PWR$$2
+       SWPB R1
+       AI   R1,FAC->003F
+       MOVB *R1,R1
+       SLA  R1,7
+       MOVB R1,@SIGN
+PWR$$2 MOVB @SIGN,@WSM6
+       LI   R1,STK3
+       LI   R2,FAC
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       ABS  @FAC
+       BL   @LOG$$$
+       LI   R1,STK4
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+       BL   @EXP$$$
+       MOVB @WSM6,R1
+       JLT  PWR$$5
+       JMP  PWRRTN
+
+PWR$$5 NEG  @FAC
+       JMP  PWRRTN
+
+PWRG05 BL   @OVEXP
+       JMP  PWRRTN
+       PAGE
+EXPONE LI   R2,FAC
+       MOV  @FLTONE,*R2+
+       CLR  *R2+
+       CLR  *R2+
+       CLR  *R2
+       JMP  EXPRTN
+
+EXP05  LI   R7,NXC127
+       BL   @FCOMP7
+       JLT  EXP03
+       JEQ  EXP03
+*
+*
+*
+EXP01  MOV  @FAC,@EXP
+       MOVB @CW08,@SIGN       RESULT IS POSITIVE
+       BL   @OVEXP
+EXPRTN MOV  @EXTRTN,R11       USE EXTENDED RETURN
+       RT
+*
+*
+*   FAC=EXP(FAC)
+*
+*
+EXP$$  BL   @EXP$$$
+       B    @PWRRTN
+
+EXP$$$ MOV  R11,@EXTRTN
+       MOV  @FAC,R0      IS IT 0 E^0=1
+       JEQ  EXPONE       YES
+       LI   R1,LOG10E
+       LI   R2,ARG            SOURCE
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+       LI   R1,FAC
+       LI   R2,STK1
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @GRINT
+       MOV  @FAC,R1         IS IT POSITIVE OR NEGATIVE?
+       JLT  EXP05
+       LI   R7,EXC127
+       BL   @FCOMP7
+       JLT  EXP01
+EXP03  LI   R1,FAC       GRINT(FAC) TO STK2
+       LI   R2,STK2
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @CFI
+       MOV  @FAC,R12
+       SLA  R12,1
+       LI   R1,STK2
+       LI   R2,FAC
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       LI   R1,STK1
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FSUB
+       LI   R7,FHALF
+       BL   @FCOMP7
+       JGT  EXP04
+       LI   R2,ARG
+       MOV  @FHALF,*R2
+       NEG  *R2+
+       CLR  *R2+
+       CLR  *R2+
+       CLR  *R2
+       BL   @FADD
+       INC  R12
+EXP04  LI   R1,FAC
+       LI   R2,STK1
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @POLYX
+       DATA EXPP
+       LI   R1,STK1
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+       LI   R1,FAC       NOW S*P(S^2) TO STK2
+       LI   R2,STK2      AND S (in STK1) TO FAC
+       LI   R3,STK1
+       MOV  *R1,*R2+
+       MOV  *R3+,*R1+
+       MOV  *R1,*R2+
+       MOV  *R3+,*R1+
+       MOV  *R1,*R2+
+       MOV  *R3+,*R1+
+       MOV  *R1,*R2
+       MOV  *R3,*R1
+       BL   @POLYX       NOW Q(S^2) IN FAC
+       DATA EXPQ
+       LI   R1,STK2      NOW S*P(S^2) IN ARG
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       LI   R1,FAC       PUT Q(S^2) IN STK1
+       LI   R2,STK1
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FADD        NOW S*P(S^2)+Q(S^2) IN FAC
+*
+*  NOW S*P(S^2) TO FAC AND Q(S^2) TO ARG
+*
+       LI   R1,STK1      STK1 TO ARG
+       LI   R2,ARG       FAC TO STK1
+       LI   R3,STK2      STK2 TO FAC
+       LI   R4,FAC
+       MOV  *R1,*R2+     STK1 TO ARG
+       MOV  *R4,*R1+     FAC TO STK1
+       MOV  *R3+,*R4+    STK2 TO FAC
+       MOV  *R1,*R2+     STK1 TO ARG
+       MOV  *R4,*R1+     FAC TO STK1
+       MOV  *R3+,*R4+    STK2 TO FAC
+       MOV  *R1,*R2+     STK1 TO ARG
+       MOV  *R4,*R1+     FAC TO STK1
+       MOV  *R3+,*R4+    STK2 TO FAC
+       MOV  *R1,*R2      STK1 TO ARG
+       MOV  *R4,*R1      FAC TO STK1
+       MOV  *R3,*R4      STK2 TO FAC
+       BL   @FSUB
+       LI   R1,STK1
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FDIV
+EXPSQT SRA  R12,1
+       JNC  EXPSQ5
+       LI   R1,SQRTEN
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+EXPSQ5 LI   R2,ARG            GET A FLOATING ONE
+       MOV  @FLTONE,*R2+
+       CLR  *R2+
+       CLR  *R2+
+       CLR  *R2
+       SRA  R12,1
+       JNC  EXPSQ8
+       MOVB @CBHA,@ARG+1
+EXPSQ8 SWPB R12
+       AB   R12,@ARG
+       BL   @FMULT
+       B    @EXPRTN
+       PAGE
+*
+*
+*
+*
+*
+*
+LOG$$  BL   @LOG$$$
+       B    @PWRRTN
+
+LOG$$$ MOV  R11,@EXTRTN
+       MOV  @FAC,R0
+       JGT  LOG$$3
+       MOVB @ERRLOG,@FAC+10
+LOGRTN MOV  @EXTRTN,R11
+       RT
+
+LOG$$3 BL   @CNSTIN
+       JNE  LOG$$5
+       LI   R2,ARG
+       MOV  @FLTONE,*R2+
+       CLR  *R2+
+       CLR  *R2+
+       CLR  *R2
+       MOVB @CBHA,@ARG+1
+       BL   @FMULT
+       BL   @CNSTIN
+       JMP  LOG$5A
+LOG$$5 INC  @EXP
+*
+*
+*
+LOG$5A MOVB @CBH3F,@FAC
+       MOV  @EXP,R12
+       LI   R1,SQRTEN
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+       BL   @FORMA
+       LI   R1,FAC
+       LI   R2,STK1
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @POLYX
+       DATA LOGP
+       LI   R1,STK1
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+       LI   R1,STK1
+       LI   R2,FAC
+       MOV  *R1,R3
+       MOV  *R2,*R1+
+       MOV  R3,*R2+
+       MOV  *R1,R3
+       MOV  *R2,*R1+
+       MOV  R3,*R2+
+       MOV  *R1,R3
+       MOV  *R2,*R1+
+       MOV  R3,*R2+
+       MOV  *R1,R3
+       MOV  *R2,*R1
+       MOV  R3,*R2
+       BL   @POLYX
+       DATA LOGQ
+       LI   R1,STK1
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FDIV
+       LI   R1,FAC
+       LI   R2,STK1
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       LI   R0,ARG
+       MOV  R12,*R0+
+       CLR  *R0+
+       CLR  *R0+
+       CLR  *R0
+*
+*    STATUS WAS SET BY THE MOVE ABOVE
+*
+       JEQ  LOG$$7
+       ABS  @ARG
+       MOV  @ARG,R0
+       CI   R0,99
+       JGT  LOG$$9
+       MOVB @FLTONE,@ARG
+LOG$$6 MOVB R12,R12
+       JEQ  LOG$$7
+       NEG  @ARG
+LOG$$7 LI   R2,FAC
+       MOV  @FHALF,*R2+
+       CLR  *R2+
+       CLR  *R2+
+       CLR  *R2
+       BL   @FSUB
+       LI   R1,LN10
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+       LI   R1,STK1
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FADD
+       B    @LOGRTN
+*
+*
+*
+LOG$$9 S    @CW100,@ARG
+       MOVB @ARG+1,@ARG+2
+       MOVB @CBH411,@ARG
+       JMP  LOG$$6
+       PAGE
+*
+*
+*  EVALUATE POLYNOMIAL
+*
+*
+POLY   MOV  *R11+,@P$
+       MOV  R11,R10
+       JMP  POLY01
+*
+*
+*
+POLYX  MOV  *R11+,@P$
+POLYX1 MOV  R11,R10
+       LI   R1,FAC       SQUARE NUMBER IN FAC
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+POLY01 LI   R1,FAC
+       LI   R2,PLYBUF
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       MOV  @P$,R1
+       LI   R2,FAC
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2
+       MOV  R1,@P$
+       JMP  POLY03
+
+POLY02 LI   R1,PLYBUF
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FMULT
+       MOV  @P$,R1
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2
+       MOV  R1,@P$
+       BL   @FADD
+POLY03 MOV  @P$,R3
+       CB   *R3,@CBH80
+       JNE  POLY02
+       B    *R10
+       PAGE
+*
+*
+*
+FORMA  MOV  R11,R10      SAVE RETURN
+       LI   R1,FAC
+       LI   R2,FORBUF
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       LI   R2,ARG
+       MOV  @FNEG1,*R2+
+       CLR  *R2+
+       CLR  *R2+
+       CLR  *R2
+       BL   @FADD
+       LI   R1,FAC       NOW MOVE FOR BUF TO ARG
+       LI   R2,FORBUF    FAC TO FOR BUF
+       LI   R3,ARG       AND +1 TO FAC
+       MOV  *R2,*R3+     FORBUF TO ARG
+       MOV  *R1,*R2+     FAC TO FORBUF
+       MOV  @FLTONE,*R1+ +1 TO FAC
+       MOV  *R2,*R3+     FORBUF TO ARG
+       MOV  *R1,*R2+     FAC TO FORBUF
+       CLR  *R1+         +1 TO FAC
+       MOV  *R2,*R3+     FORBUF TO ARG
+       MOV  *R1,*R2+     FAC TO FORBUF
+       CLR  *R1+         +1 TO FAC
+       MOV  *R2,*R3      FORBUF TO ARG
+       MOV  *R1,*R2      FAC TO FORBUF
+       CLR  *R1          +1 TO FAC
+       BL   @FADD
+       LI   R1,FORBUF
+       LI   R2,ARG
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2
+       BL   @FDIV
+       B    *R10
+*
+*
+*

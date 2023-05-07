@@ -1,0 +1,572 @@
+* FILENAME: VX282AS
+*
+* RestoreCharSpritePat
+*
+* R1x = Restore Chars?   (0=No)
+* R2x = Restore Sprites? (0=No)
+*
+X928VC
+X928L1  MOV     R11,R12
+        MOV     @2(R13),R1    R1=0?
+        JEQ     X928L2        yes, check R2
+        BL      @X928CH       R1<>0 do characters
+X928L2  MOV     @4(R13),R1    R2=0?
+        JEQ     X928L3        yes,
+        BL      @X928SP       do sprites
+X928L3  MOV     R12,R11       return
+        RT
+*
+X928SP  MOV     @VIDMOD,R1    resetore SPRITE patterns
+        CI      R1,2
+        JLE     X928VP
+        SWPB    @SPRPAT+2
+        MOVB    @SPRPAT+2,@VDPWA
+        SWPB    @SPRPAT+2
+        MOVB    @SPRPAT+2,@VDPWA
+        MOV     @SPRPAT,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        LI      R1,CHREST
+
+        LI      R2,CHRESB-CHREST
+
+       MOV  @>2022,R2
+
+X928TP  MOVB    *R1+,@VDPWD
+        DEC     R2
+        JNE     X928TP
+        MOV     @SPRPAT,R0
+        AI      R0,255*8
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        LI      R1,CROSSH
+        LI      R2,8
+X928UP  MOVB    *R1+,@VDPWD
+        DEC     R2
+        JNE     X928UP
+X928VP  RT
+*
+X928CH  LI      R0,CHREST     restore character set
+        LI      R1,CHDEFT
+
+*       LI      R2,CHRESB-CHREST
+
+       MOV  @>2022,R2
+
+X928DH  MOVB    *R0+,*R1+
+        DEC     R2
+        JNE     X928DH
+        MOV     @VIDMOD,R1
+        CI      R1,2
+        JEQ     X928FH
+        CI      R1,4
+        JHE     X928FH
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        MOV     @PTABLE,R0
+        SWPB    R0
+        MOVB    R0,@VDPWA
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,@VDPWA
+        LI      R1,CHDEFT
+
+*       LI      R2,CHRESB-CHREST
+
+       MOV  @>2022,R2
+
+X928EH  MOVB    *R1+,@VDPWD
+        DEC     R2
+        JNE     X928EH
+X928FH  RT
+
+* SetTextColor
+*
+* R1h = Foreground color for text
+* R1l = Background color for text
+*
+X929VC
+X929L1  MOV     @2(R13),@STDCLR
+        MOVB    @2(R13),@BRDCOL
+        MOV     @STDCLR,R0
+        MOV     R0,R1
+        ANDI    R0,>F
+        SRL     R1,4
+        ANDI    R1,>00F0
+        SOC     R1,R0
+        MOV     @VIDMOD,R1
+        CI      R1,3
+        JL      X929L3
+        JH      X929L4
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        MOV     @CTABLE,R3
+        SWPB    R3
+        MOVB    R3,@VDPWA
+        SWPB    R3
+        ORI     R3,>4000
+        MOVB    R3,@VDPWA
+        LI      R2,32
+        SWPB    R0
+X929L2  MOVB    R0,@VDPWD
+        DEC     R2
+        JNE     X929L2
+        JMP     X929L4
+X929L3  ORI     R0,>0700
+        BLWP    @VWTR
+X929L4  RT
+
+* WriteCharString
+*
+* R1x = Address of string
+* R2x = # of characters in string
+* R3x = 0 if change cursor position, >FFFF if leave cursor at beginning
+*
+X92ALS  DATA    X92AM0,X92AM1,X92AM2,X92AM3
+        DATA    X92AM4,X92AM4,X92AM6,X92AM6
+        DATA    X92AM6,X92AM6
+X92ASA DATA 0                  STRING ADDRESS
+X92ANC DATA 0                  CHARACTER COUNT
+X92ACF DATA 0                  CURSOR POSN FLAG
+*
+X92AVC
+        MOV     @2(R13),R2
+       MOV  R2,@X92ASA
+       MOV  @4(R13),@X92ANC
+       MOV  @6(R13),@X92ACF
+        CI      R2,>A000
+        JHE     X92ALZ
+        MOV     R2,R3
+        SRL     R2,13
+        ANDI    R3,>1FFF
+        MOVB    @TSKMAP(R2),@MAPPER+5
+        INC     R2
+        MOVB    @TSKMAP(R2),@MAPPER+6
+        AI      R3,>A000
+       MOV  R3,@X92ASA
+X92AL1
+X92ALZ
+X92AL2  MOV     @VIDMOD,R1
+        SLA     R1,1
+        MOV     @X92ALS(R1),R9
+       MOV  @X92ANC,R10
+       LI   R12,VDPWA
+       B    *R9
+VX2AXX ABS  @X92ACF
+        JNE     X92AL4
+        MOV     R5,@CURX
+        MOV     R6,@CURY
+X92AL4 RT
+*
+X92AM0  SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,*R12
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,*R12
+       MOV  @X92ASA,R2
+        C       @STDCLR,@BRDCOL
+        JEQ     X92AN0
+        MOV     @STDCLR,R1
+        MOV     R1,R0
+        ANDI    R0,>F
+        ANDI    R1,>0F00
+        SRL     R1,4
+        SOC     R1,R0
+        ORI     R0,>0700
+        BLWP    @VWTR
+X92AN0  MOV     @CURX,R5
+        MOV     @CURY,R6
+X92AP0  C       R6,@CURYMX
+        JLE     X92AQ0
+        DEC     R6
+        MOV     @CURXMN,R5
+        LWPI    LOWWP2
+        LI      R1,1
+        MOV     @CURYMN,R2
+        MOV     @CURXMN,R3
+        MOV     @CURYMX,R4
+        MOV     @CURXMX,R5
+        LI      R6,32
+        MOV     @STDCLR,R7
+        LWPI    >F080
+        LI      R13,LOWWP2
+        BL      @X906VC
+        MOV     @CURWS,R13
+        DATA    >009D
+X92AQ0  MOVB    *R2+,R1
+        MOV     R6,R7
+        MPY     @CHCOLS,R7
+        MOV     R8,R0
+        A       R5,R0
+        A       @SCRIMG,R0
+        SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,*R12     @@ write to screen buffer
+        MOVB    R1,@VDPWD
+*
+       MOV  R6,R7
+       MPY  @D80,R7
+       A    R5,R8             byte offset into screen buffer
+       A    @SCROFF,R8
+       C    R8,@SCREND
+       JL   X92AS0
+*
+       S    @SCRADD,R8
+*
+X92AS0 MOVB R1,*R8
+*
+        INC     R5
+        C       R5,@CURXMX
+        JLE     X92AR0
+        MOV     @CURXMN,R5
+        INC     R6
+X92AR0  DEC     R10
+        JNE     X92AP0
+       B    @VX2AXX
+*
+X92AM1  SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,*R12
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,*R12
+       MOV  @X92ASA,R9
+        MOV     @CURX,R5
+        MOV     @CURY,R6
+        MOV     @STDCLR,R2
+        MOV     R2,R1
+        ANDI    R1,>7FFF
+        C       R2,@BRDCOL
+        JEQ     X92AO1
+        MOV     R1,R0
+        ANDI    R0,>F
+        ANDI    R1,>0F00
+        SRL     R1,4
+        SOC     R1,R0
+        ORI     R0,>0700
+        BLWP    @VWTR
+X92AO1  C       R6,@CURYMX
+        JLE     X92AP1
+        DEC     R6
+        LWPI    LOWWP2
+        LI      R1,1
+        MOV     @CURYMN,R2
+        MOV     @CURXMN,R3
+        MOV     @CURYMX,R4
+        MOV     @CURXMX,R5
+        LI      R6,32
+        MOV     @STDCLR,R7
+        LWPI    >F080
+        LI      R13,LOWWP2
+        BL      @X906VC
+        MOV     @CURWS,R13
+        DATA    >009D
+X92AP1  MOVB    *R9+,R1
+        MOV     R6,R7
+        MPY     @CHCOLS,R7
+        MOV     R8,R0
+        A       R5,R0
+        A       @SCRIMG,R0
+        SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,*R12     @@ write to screen buffer
+*
+       MOV  R6,R7
+       MPY  @D80,R7
+*
+       A    R5,R8
+       A    @SCROFF,R8
+       C    R8,@SCREND
+       JL   X92AT1
+*
+       S    @SCRADD,R8
+X92AT1 MOVB R1,*R8
+*
+        ANDI    R0,>BFFF
+        S       @SCRIMG,R0
+        MOVB    R1,@VDPWD
+       MOV  @CTABLE+2,R1
+       SWPB R1
+       MOVB R1,*R12
+       SWPB R1
+       MOVB R1,*R12
+        MOV     R0,R3
+        SRL     R0,3
+        A       @CTABLE,R0
+        SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        MOVB    R0,*R12
+        ANDI    R3,>7
+        MOVB    @VDPRD,R4
+        MOVB    R2,R2
+        JLT     X92AQ1
+        SZCB    @BTMASK(R3),R4
+        JMP     X92AR1
+X92AQ1  SOCB    @BTMASK(R3),R4
+X92AR1  SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,*R12
+        INC     R5
+        MOVB    R4,@VDPWD     @@ write to blink table
+        C       R5,@CURXMX
+        JLE     X92AS1
+        MOV     @CURXMN,R5
+        INC     R6
+X92AS1  DEC     R10
+        JNE     X92AO1
+       B    @VX2AXX
+*
+X92AM2 B    @VX2AXX
+*
+X92AM3 MOV  @X92ASA,R9
+        MOV     @CURX,R5
+        MOV     @CURY,R6
+*       CLR     R2
+*       MOVB    @STDCLR,R2
+*       MOVB    @STDCLR+1,R3
+*       SLA     R2,4
+*       SOCB    R3,R2
+*       SLA     R1,8
+X92AO3  C       R6,@CURYMX
+        JLE     X92AP3
+        DEC     R6
+        LWPI    LOWWP2
+        LI      R1,1
+        MOV     @CURYMN,R2
+        MOV     @CURXMN,R3
+        MOV     @CURYMX,R4
+        MOV     @CURXMX,R5
+        LI      R6,32
+        MOV     @STDCLR,R7
+        LWPI    >F080
+        LI      R13,LOWWP2
+        BL      @X906VC
+        MOV     @CURWS,R13
+        DATA    >009D
+X92AP3  MOVB    *R9+,R1
+        MOV     R6,R7
+        MPY     @CHCOLS,R7
+        MOV     R8,R0
+        A       R5,R0
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,*R12
+        SWPB    @SCRIMG+2
+        MOVB    @SCRIMG+2,*R12
+        A       @SCRIMG,R0
+        SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,*R12
+        MOVB    R1,@VDPWD
+*
+       MOV  R6,R7
+       MPY  @D80,R7
+*
+       A    R5,R8
+       A    @SCROFF,R8
+       C    R8,@SCREND
+       JL   X92AT3
+*
+       S    @SCRADD,R8
+X92AT3 MOVB R1,*R8
+*
+*       MOV     R1,R3
+*       SWPB    @CTABLE+2
+*       MOVB    @CTABLE+2,*R12
+*       SWPB    @CTABLE+2
+*       MOVB    @CTABLE+2,*R12
+*       SRL     R3,11
+*       A       @CTABLE,R3
+*       SWPB    R3
+*       MOVB    R3,*R12
+*       SWPB    R3
+*       ORI     R3,>4000
+*       MOVB    R3,*R12
+*       MOVB    R2,@VDPWD
+        INC     R5
+        C       R5,@CURXMX
+        JLE     X92AQ3
+        MOV     @CURXMN,R5
+        INC     R6
+X92AQ3  DEC     R10
+        JNE     X92AO3
+       B    @VX2AXX
+*
+X92AM4 MOV  @X92ASA,R9
+        MOV     @CURX,R5
+        MOV     @CURY,R6
+        ANDI    R1,>00FF
+        CLR     R2
+        MOVB    @STDCLR,R2
+        MOVB    @STDCLR+1,R3
+        SLA     R2,4
+        SOCB    R3,R2
+X92AO4  C       R6,@CURYMX
+        JLE     X92AP4
+        DEC     R6
+        LWPI    LOWWP2
+        LI      R1,1
+        MOV     @CURYMN,R2
+        MOV     @CURXMN,R3
+        MOV     @CURYMX,R4
+        MOV     @CURXMX,R5
+        LI      R6,32
+        MOV     @STDCLR,R7
+        LWPI    >F080
+        LI      R13,LOWWP2
+        BL      @X906VC
+        MOV     @CURWS,R13
+        DATA    >009D
+X92AP4  MOVB    *R9+,R1
+        SRL     R1,8
+        MOV     R6,R8
+        SLA     R8,8
+        MOV     R8,R0
+        MOV     R5,R7
+        SLA     R7,3
+        A       R7,R0
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,*R12
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,*R12
+        A       @PTABLE,R0
+        SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,*R12
+        LI      R3,CHDEFT
+        SLA     R1,3
+        A       R1,R3
+        SRL     R1,3
+        LI      R4,8
+X92AQ4  MOVB    *R3+,@VDPWD
+        DEC     R4
+        JNE     X92AQ4
+        S       @PTABLE,R0
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,*R12
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,*R12
+        A       @CTABLE,R0
+        SWPB    R0
+        MOVB    R0,*R12
+        SWPB    R0
+        ORI     R0,>4000
+        MOVB    R0,*R12
+        LI      R4,8
+X92AR4  MOVB    R2,@VDPWD
+        DEC     R4
+        JNE     X92AR4
+        INC     R5
+        C       R5,@CURXMX
+        JLE     X92AS4
+        MOV     @CURXMN,R5
+        INC     R6
+X92AS4  DEC     R10
+        JNE     X92AO4
+       B    @VX2AXX
+*
+X92AM6  MOV     @CURX,R8
+        MOV     @CURY,R9
+X92AY6  C       R9,@CURYMX
+        JLE     X92AZ6
+        DEC     R9
+        LWPI    LOWWP2
+        LI      R1,1
+        MOV     @CURYMN,R2
+        MOV     @CURXMN,R3
+        MOV     @CURYMX,R4
+        MOV     @CURXMX,R5
+        LI      R6,32
+        MOV     @STDCLR,R7
+        LWPI    >F080
+        LI      R13,LOWWP2
+        BL      @X906VC
+        MOV     @CURWS,R13
+        DATA    >009D
+X92AZ6 MOV  @X92ASA,R7
+*       S       R10,R7
+        MOVB    *R7,R7
+        SRL     R7,8
+        LI      R0,6
+        MPY     R8,R0
+        MOV     R1,R0
+*       AI      R0,5
+        A       @GRPHLF,R0
+        MOV     R9,R1
+        SLA     R1,3
+        A       @PAGEPX,R1
+        LI      R2,6
+        LI      R3,8
+        CLR     R4
+*       MOVB    @BTMASK+5,R4
+        SLA     R7,3
+        AI      R7,CHDEFT
+       MOVB *R7+,R6
+       A    R6,R6
+       JNC  X92AN6
+        MOVB    @STDCLR,R4
+        SRL     R4,8
+        JMP     X92AO6
+X92AN6  MOV     @STDCLR,R4
+        ANDI    R4,>FF
+X92AO6  LI      R5,>B0
+*       ORI     R4,>0400
+        BLWP    @VDCMD1
+        MOVB    @STDCLR,R1
+       MOVB @STDCLR+1,R0
+*       SLA     R0,8
+        LI      R2,8
+       LI   R4,5
+*       LI      R3,>8F02                * Read status register #2
+*       SWPB    R3
+*       MOVB    R3,*R12
+*       SWPB    R3
+*       MOVB    R3,*R12
+*       LI      R6,>AC00
+       JMP  X92AR6
+X92AP6 LI   R4,6
+       MOVB *R7+,R6
+X92AR6
+       A    R6,R6
+       JNC  X92AS6
+       MOVB R1,*R12
+       JMP  X92AX6
+X92AS6
+*X92AT6  MOVB    @VDPSTA,R6
+*       JGT     X92AT6
+       MOVB R0,*R12
+X92AX6 LI   R5,>AC00
+       MOVB R5,*R12
+        DEC     R4
+       JNE  X92AR6
+        DEC     R2
+        JNE     X92AP6
+        INC     R8
+        C       R8,@CURXMX
+        JLE     X92AV6
+        MOV     @CURXMN,R8
+        INC     R9
+X92AV6  DEC     R10
+        JLE     X92AW6
+       INC  @X92ASA
+        B       @X92AY6
+X92AW6  MOV     R8,R5
+        MOV     R9,R6
+       B    @VX2AXX

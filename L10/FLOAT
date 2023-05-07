@@ -1,0 +1,405 @@
+*=========================================================================
+*
+*    FILE:  WDS1.156.FPIN
+*
+*    WHAT:  FLOATING POINT INTERFACE
+*
+* VERSION:  1.0 - 03/02/86    BASE LINE FROM 99/4A
+*
+*=========================================================================
+FCOMP
+FCOMP1 LI   R7,ARG
+FCOMP7 LI   R5,FAC            ENTRY FOR COMPARE NUM R7*
+       C    *R7,*R5+          COMPARE THE FIRST WORDS
+       JNE  FCOMRT            DONE COMPARING IF NOT EQUAL
+       MOV  *R7+,R6           SIGN OF THE NUMBERS
+       JEQ  FCOMRT            NUMBERS ARE ZERO AND EQUAL
+       JGT  FCOM01            BOTH NEGATIVE
+       MOV  R5,R6
+       MOV  R7,R5
+       MOV  R6,R7
+FCOM01 C    *R7+,*R5+         BOTH POSITIVE
+       JNE  FCOMRT            CONTINUE COMPARING UNITL UNEQUAL
+       C    *R7+,*R5+         OR END OF NUMBER
+       JNE  FCOMRT
+       C    *R7,*R5           THE LAST !
+FCOMRT RT                     EXIT AS SPECIFIED
+       PAGE
+FSUB   NEG  @FAC              SAVE RETURN ADDRESS
+FADD
+FADD1  MOV  @ARG,R7           IS ARGUMNET ZERO ?
+       JEQ  FADD02            YES NO CHANGE TO FAC
+       MOV  @FAC,R8           IS FAC ZERO
+       JNE  FADD03            NO, GO ADD FAC TO ARG
+AGTOFC LI   R1,ARG            YES, MOVE ARG TO FAC
+       LI   R2,FAC
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+         NEXT VICTIM
+       MOV  *R1+,*R2+
+       MOV  *R1,*R2           DONE ?
+FADD02 RT                     EXIT TO GPL WITH STATUS
+ 
+FADD03 XOR  R8,R7             SIGN DIFFERENCE
+       LI   R3,FAC
+       LI   R6,ARG
+       ABS  *R3               TAKE ABSOULTE VALUES OF FAC
+       ABS  *R6               AND ARG
+       C    *R3+,*R6+
+       JGT  FADD05            IS OKAY
+       JLT  FADD2B
+       C    *R3+,*R6+
+       JGT  FADD05
+       JLT  FADD2B
+       C    *R3+,*R6+
+       JGT  FADD05
+       JLT  FADD2B
+       C    *R3,*R6
+       JHE  FADD05
+       JMP  FADD21
+ 
+FADD2B DECT R3
+       DECT R6
+FADD21 MOV  *R3,R0
+       MOV  *R6,*R3+
+       MOV  R0,*R6+
+       CI   R3,FAC+8
+       JNE  FADD21
+       XOR  R7,R8
+FADD05 CLR  R5                HANDY ZERO
+       CLR  @FAC+8             CLEAR GUARD DIGITS FOR FAC
+       CLR  @ARG+8             AND ARG
+       MOVB R8,@SIGN          SAVE THE RESULT SIGN
+       MOVB @FAC,R6           FAC EXP TO R3(R6)
+       SRL  R6,8
+       MOV  R6,@EXP           USE FAC EXP AS RESULT EXP
+       MOVB R5,@FAC           CLEAR HIGH BYTE OF FAC TO CHECK
+       SB   @ARG,@WSG+13      FOR OVERFLOW
+       CI   R6,7              SMALLER NUMBER TOO SMALL TO
+       JGT  FADD15            AFFECT THE SUM ?
+*                             YES, RETURN WITH LARGER NUMBER IN FAC
+       MOV  R6,R0             EXPONENT DIFFERENCE
+       LI   R8,1*256          1 FOR BYTE OPERATION
+       LI   R9,100*256        100 FOR BYTE OPERATION
+       LI   R5,FAC+9          POINTER TO LOW BYTE OF BIG NUM
+       LI   R6,ARG+9          AND LOW BYTE OF SMALLER NUMBER
+       S    R0,R6             ADJ ARG POINTER TO ALIGN RADIX
+       MOV  R0,R4             ADD/SUBTRACT LOOP COUNTER IS
+       AI   R4,-9             BYTES LEFT IN SMALLER NUMBER
+       MOV  R7,R1             TWO NUMBERS HAVE SAME SIGN
+       JLT  FADD11            NO SUBTRACT THEM
+FADD06 AB   *R6,*R5           YES ADD A BYTE OF SMALL TO LARGE
+       CB   *R5,R9            IS SUM LARGER THAN RADIX
+       JL   FADD07            THEN CONTINUE TO NEXT BYTE
+       SB   R9,*R5            SUBTRACT RADIX FROM THIS BYTE
+       AB   R8,@-1(R5)        AND ADD CARRY TO NEXT BYTE
+FADD07 DEC  R5                TO NEXT HIGHER BIG NUMBER
+       DEC  R6                AND NEXT HIGHER SMALLER NUMBER
+       INC  R4                IF NOT ALL SIGNIF BYTES OF SMALL
+       JLT  FADD06            ADDED, THEN CONTINUE
+       JMP  FADD09            ELSE PROPAGATE CARRY
+FADD08 DEC  R5                WAS LARGER POINT TO NEXT BYTE
+       AB   R8,*R5            ADD CARRY TO NEXT BYTE
+FADD09 SB   R9,*R5            SUBTRACT RADIX FROM NEXT BYTE
+       JGT  FADD08            DONE IF REACHED ONE BYTE
+*                             SMALLER THAN RADIX
+       JEQ  FADD08            CONTIUE IF RESULT = RADIX
+       AB   R9,*R5            RADIX SUBTRACTED ONCE TOO OFTEN
+       MOVB @FAC,R1           CARRY OUT OF HIGH ORDER RESULT ?
+       JEQ  FADD10            NO ROUNT RESULT
+       INC  @EXP              YES, INCREMENT EXPONENT
+       LI   R1,FAC+8
+       LI   R2,9
+FADD30 MOVB *R1,@1(R1)        SHIFT FAC ONE BYTE
+       DEC  R1
+       DEC  R2
+       JNE  FADD30
+FADD10 JMP  ROUN1
+FADD11 SB   *R6,*R5           SUBTRACT A BYTE OF SMALL FROM BIG
+       JGT  FADD12
+       JEQ  FADD12
+       AB   R9,*R5
+       SB   R8,@-1(R5)
+FADD12 DEC  R5
+       DEC  R6
+       INC  R4
+       JLT  FADD11
+       JMP  FADD14
+FADD13 AB   R9,*R5
+       DEC  R5
+       SB   R8,*R5
+FADD14 MOVB *R5,R4
+       JLT  FADD13
+       JMP  NORMAL
+ 
+FADD15 JMP  PACKUP
+       PAGE
+*
+*    FLOATING POINT MULTIPLICATION
+*
+FMULT  LI   R3,FAC            IF FAC IS ZERO
+       LI   R5,ARG
+       MOV  *R3,R8            IF FAC IS ZERO
+       JEQ  FMULZR            THEN RESULT IS ZERO
+       XOR  *R5,R8            COMPUT RESULT SIGN
+       ABS  *R5               IF ARG IS ZERO
+       JEQ  FMULZR            THEN ZERO FAC AND RETURN
+       ABS  *R3               TAKE ABS VALUE OF FAC
+       CLR  R9                TO ZERO LOW BYTE OF RESULT EXP
+       MOVB *R3,R9            RESULT EXP = FAC EXP
+       AB   *R5,R9            PLUS ARG EXP
+       SWPB 9                     >06C9
+       AI   R9,-63            SUBTRACT BIAS
+       MOV  R9,@EXP
+       MOVB R8,@SIGN          SAVE TIL NORMAL, ROUND
+       LI   R5,FAC+8           LOW ORDER DIGITS
+FMCLR  CLR  *R5+              WILL BE
+       CI   R5,FAC+16          FORMED
+       JNE  FMCLR             HERE
+       LI   R5,FAC+8           BYTES IN FAC+1
+FMUL02 DEC  R5                CHANGE SIGNIFICANT BYTE COUNT
+*                             FOR LAST ZERO BYTE
+       MOVB *R5,R0            IF NEXT FAC BYTE IS ZERO
+       JEQ  FMUL02            THEN DECREMENT COUNT FOR IT
+       LI   R7,8              COUNT SIGNIFICANT BYTES IN ARG
+FMUL03 DEC  R7                DECREMENT FOR ZERO BYTE
+       MOVB @ARG(R7),R0       IF THIS BYTE OF ARG IS ZERO
+       JEQ  FMUL03            THEN DECREMENT COUNT
+       CLR  R0                MPY/DIV WORK REGISTER
+       MPY  R0,R2             CURRENT RESULT HIGH BYTE
+       MOV  R5,R6
+       LI   R8,WSG+1           RB(R0)
+       LI   R9,100            RADIX
+FMUL04 MOV  R7,R4             INNER LOOP CTR = BYTES IN ARG
+       A    R7,R6             RESULT PTR TO END OF NEXT PARTIAL PROD
+       MOVB *R5,@WSG+7         RB(R3) IS NEXT DIGIT OF FAC
+       MOVB R3,*R5            CLEAR FAC DIGIT FOR NEXT PARTIAL
+FMUL05 MOVB @ARG(R4),*R8      GET NEXT DIGIT OF ARG
+       MPY  R3,R0             AND MPY IT
+       MOVB *R6,@WSG+5         TO CORRESPONDING PARITIAL PROD
+*                             DIGIT IN RB(R2)
+       A    R2,R1             ADD IN NEXT PARTIAL PROD DIGIT
+       DIV  R9,R0             CONVERT PRODUCT TO RADIX DIGIT
+*                             AND CARRY
+       MOVB @WSG+3,*R6         STORE NEW RESULT DIGIT IN FAC
+       DEC  R6                POINT TO NEXT HIGHER BYTE OF RESULT
+       AB   *R8,*R6           ADD IN CARRY TO NEXT HIGHER BYTE
+       DEC  R4                IF ALL ARG DIGITS NOT DONE
+       JGT  FMUL05            THEN CONTINUE
+       DEC  R6                POINT TO START OF NEXT PARTIAL
+       DEC  R5                IF FAC DIGITS REMAIN
+       CI   R5,FAC
+       JGT  FMUL04            THEN CONTINUE
+FMEND  CLR  @FAC+10           no error to report
+*
+*    NORMALIZE THE NUMBER
+*
+NORMAL LI   R1,-9             NUMBER OF BYTES IN FAC INCLUDING
+*                             GUARD DIGITS
+NORM01 MOVB @FAC+10(R1),R2     IS NEXT BYTE OF FAC NON-ZERO
+       JNE  NORM02            YES SHIFT REST LEFT
+       INC  R1                NO ALL BYTES ZERO
+       JLT  NORM01            YES LOOK AT NEXT BYTE
+ 
+FZERO  EQU  $
+FMULZR CLR  @FAC              INSTALL FLOATING ZERO
+       CLR  @FAC+2            CLEAR BASIC TYPE CODE
+       JMP  STEX              AND EXIT WITH STATUS
+NORM02 MOV  R1,R0             NUMBER OF NON-ZERO BYTES
+       AI   R0,9              FIRST BYTE NON-ZERO
+       JEQ  ROUN1             YES, FINISH
+       S    R0,@EXP           NO, ADJUST EXPONENT FOR SHIFT
+       LI   R2,FAC+1          POINT OT FIRST BYTE OF FAC
+NORM03 MOVB @FAC+10(R1),*R2+   MOVE NON-ZERO BYTE
+       INC  R1                IF NON-ZERO BYTES REMAIN
+       JLT  NORM03            THEN MOVE ANOTHER BYTE
+NORM04 MOVB R1,*R2+           MOVE A ZERO
+       DEC  R0                LAST BYTE DONE
+       JGT  NORM04            NO CONTINUE
+ 
+ROUND
+ROUN1
+       CB   @FAC+8,@CBD50      IS ROUNDING NECESSARY
+       JL   PACKUP            NO PUT EXPONENT BACK
+       LI   R1,7              ROUND UP, GET NUMBER OF BYTES NEEDED
+ROUNUP LI   R2,1*256          ONE FOR BYTE INSTRUCTION
+       LI   R0,100*256        SAME
+ROUN02 AB   R2,@FAC(R1)       ADD ONE TO A BYTE OF FAC
+       CB   @FAC(R1),R0       IF BYTE NOT GREATER THAN RADIX
+       JL   PACKUP            THEN PUT EXPONENT IN FAC
+       SB   R0,@FAC(R1)       BRING DIGIT BACK IN RANGE
+       DEC  R1                IF CARRY PAST HIGH BYTE OF FAC
+       JGT  ROUN02            THEN CARRY TO NEXT HIGHER BYTE
+       INC  @EXP              FRACTION HAS OVERFLOWED
+       MOVB R2,@FAC+1         MAKE THE HIGH BYTE A ONE
+ 
+PACKUP C    @EXP,@CW128
+       JHE  OVEXP1
+       MOVB @EXP+1,@FAC        PUT EXPONENT IN FAC
+       MOVB @SIGN,R2
+       INV  R2                IF SIGN IS NEGATIVE
+       JLT  PACK01
+       NEG  @FAC              THEN INVERT FIRST WORD
+ 
+PACK01
+STEX
+STEX01
+       RT
+       PAGE
+DIVZER EQU  $
+FDIV01 LI   R9,>0200          DIVIDE BY ZERO ERROR CODE
+       JMP  BIGFLT            LARGEST MAGNITUDE WITH SIGN
+ 
+OVEXP
+OVEXP1 MOVB @EXP,R2           IS EXPONENT NEGATIVE
+       JLT  FZERO             YES, RETURN ZERO @@ underflow!!!
+OV
+OV1    LI   9,>0100           ERROR CODE
+ERROVF EQU  $-2
+BIGFLT LI   R0,->7F63         HIGH WORD OF LARGEST POSITIVE VALUE
+       MOVB @SIGN,R2          IS FAC NEGATIVE
+       JLT  BIGF01            YES @@pc fix...from jlt bigflt
+       NEG  R0
+BIGF01 LI   R2,FAC            GET POINTER TO FAC
+       MOV  R0,*R2+           PUT APPROPRIATE HIGH WORD IN FAC
+       LI   R0,>6363          GET 99'S
+       MOV  R0,*2+            PUT IN FAC
+       MOV  R0,*2+            ....
+       MOV  R0,*2             ...
+ERRXI1 MOVB R9,@FAC+10         PLACE ERROR CODE
+       JMP  STEX              NO ROUTINE SPECIFIED, RETURN
+       PAGE
+FDIV   LI   R3,FAC            POINTER TO FAC
+       MOV  *R3,R8            GET DIVISOR FIRST WORD
+       LI   R0,ARG            POINTER TO ARG
+       XOR  *R0,R8            COMPUTE SIGN OF QUOTIENT
+       MOVB R8,@SIGN          SAVE IT
+       ABS  *R3               ABSOLUTE DIVISOR
+       JEQ  FDIV01            CANT BE ZERO
+       ABS  *R0               IS DIVIDED ZERO
+       JEQ  FMULZR            YES RESULT IS ZERO
+       MOVB *R0,R9            GET DIVIDEND EXPONENT
+       SB   *R3,R9            SUBTRACT EXPONENTS TO GET
+*                             QUOTIENT EXPONENT
+       SRA  R9,8              GET DIFFERENCE IN LOW BYTE
+       AI   R9,64             ADD BIAS TO EXPONENT
+       MOV  R9,@EXP           AND SAVE RESULT
+*                             MOVE FAC TO DIVISOR STORAGE
+       LI   R4,FAC+10         WHERE TO MOVE IT TO
+       LI   R5,ARG+8
+ 
+       MOV  *R3+,*R4+         MOVE A WORD
+       MOV  *R3+,*R4+
+       MOV  *R3+,*R4+         MOVE A WORD
+       MOV  *R3,*R4
+       CLR  *R5+
+       CLR  *R5+
+       CLR  *R5+
+       CLR  *R5               JUST MOVE AND CLEAR
+       CLR  R4
+       MOVB R4,@ARG           CLEAR EXTRA HIGH BYTE OF
+*                             DIVIDEND
+       LI   R5,WSG+1           GET POINTERS INTO MULTIPLY
+       LI   R6,WSG+3
+       LI   R7,100            RADIX
+       CLR  R2                CLEAR HIGH BYTE OF WHERE V1 WILL BE
+       MOVB @FDVSR+1,@WSG+5    GET V1 IN RB(R2)
+       CI   R2,49             HAS VI ALREADY BEEN NORMALIZED
+       JGT  FDIV06            YES PROCEED WITH DIVISION
+       INC  R2                NO COMPUTE V1+1
+       CLR  R3                GET RADIX IN R REGS FOR DIV
+       MOV  R7,R4             GET RADIX
+       DIV  R2,R3             COMPUTE MULTIPLER
+*                             INT(100/(V1+1))
+       LI   R9,FDVSR+8
+FDVLP  LI   R4,8              GET NUMBER OF BYTES IN DIVIDEND+1
+FDIV04 DEC  R4                IGNORE ZERO BYTE AT END
+       DEC  R9
+       MOVB *R9,R0            IS NEXT HIGHER ORDER BYTE ZERO
+       JEQ  FDIV04            YES KEEP LOOKING FOR NON ZERO
+       CLR  R0                CLEAR CARRY AND LOW ORDER BYTE
+FDIV05 MOV  R0,R2             SAVE CARRY FROM LAST BYTE
+       MOVB *R9,*R5           GET NEXT BYTE OF DIVIDEND
+       MPY  R3,R0             MULTIPLY THIS BYTE FOR MULTIPLER
+       A    R2,R1             ADD IN CARRY FROM PREVIOUS BYTE
+       DIV  R7,R0             CNVRT TO RADIX DIGIT AND CARRY
+       MOVB *R6,*R9           PUT RESULT BYTE IN DIVIDEND
+       DEC  R9
+       DEC  R4                LOOP UNTIL ALL DIVIDEND BYTES
+       JGT  FDIV05            NO CONTINUE MULTIPLICATION
+       CI   R9,FDVSR
+       JNE  FDVLPA
+       LI   R9,ARG+8
+       JMP  FDVLP
+FDVLPA MOVB *R5,@ARG          YES PUT CARRY OUT OF HIGH BYTE
+ 
+FDIV06 LI   R6,8              NUMBER DIVISOR BYTES+1
+FDIV07 DEC  R6                COMPUT NUBER OF SIGNIF BYTES
+*                             IN DIVISOR
+       MOVB @FDVSR(R6),R0     GET NEXT HIGHER ORDER BYTE
+       JEQ  FDIV07            IGNORE IF IT IS ZERO
+       CLR  R7                CLR HIGH BYTE OF WHERE V1 WILL BE
+       MOVB @FDVSR+1,@WSG+15   RB(R7) IS V1
+       MOV  R7,R8             COPY VI TO COMPUTE
+       MPY  @LW100,R8         COMPUT 100*V1
+       MOVB @FDVSR+2,@WSG+17   GET V2
+       A    R8,R9             COMPUTE 100*V1+V2
+       LI   R5,-9             COMPUTE NINE BYTES OF QUOTIENT
+       LI   R15,ARG           PTR TO HIGH BYTE OF DIVIDEND
+FDIV08 CLR  R2                CLEAR HIGH BYTE OF WHERE U(J) WILL BE
+       MOVB *R15,@WSG+5        RB(R2) IS U(J)
+       MPY  @LW100,R2         COMPUTE 100*U(J)
+       CLR  R0                WHERE U(J+1) WILL BE
+       MOVB @1(R15),@WSG+1    GET U(J+1)
+       A    R0,R3             100*U(J)+U(J+1)
+       DIV  R7,R2             GET Q AND REMAINDER
+       MPY  @LW100,R3         100*REMAINDER
+       MOVB @2(R15),@WSG+1    U(J+2)
+       A    R0,R4             100*REM +U(J+2)
+       MOV  R2,R0             GET Q FOR THE TEST
+       MPY  R8,R0             COMPUTE V2*Q
+       CI   R2,100            DOES Q=100
+       JEQ  FDIV09            YES MAKE Q=99
+       S    R4,R1             NO COMPUTE V2*Q-(100*REM+U(J+2))
+       JMP  FDIV11            GO CHECK IF ITS IN RANGE
+ 
+FDIV09 S    R4,R1             COMPUTE V2*Q-(100*REM+U(J+2))
+FDIV10 DEC  R2                DEC Q
+       S    R9,R1             COMPUTE ABOVE FOR NEW Q
+FDIV11 JGT  FDIV10            IF Q IS TOO BIG MAKE IT SMALLER
+       MOV  R2,R2             IS Q ZERO82
+       JEQ  FDIV16            YES DO NO SUBTRACTING
+       CLR  R3                CLEAR CARRY INTO FIRST BYTE
+       MOV  R6,R4             GET DIVISOR LOOP COUNT
+       A    R6,R15            TO LOW ORDER BYTE OF DIVIDEND
+FDIV12 MOV  R0,R3             SAVE CARRY FROM PREVIOUS BYTE
+       MOVB @FDVSR(R4),@WSG+1  GET NEXT BYTE OF DIVISOR
+       MPY  R2,R0             MPY BYTE OF DIVISOR BY QUOTIENT
+       A    R3,R1             ADD IN CARRY FROM LAST DIVISOR
+       DIV  @LW100,R0         CONVERT RESULT TO A RADIX DIGIT
+       SB   @WSG+3,*R15        SUBTRACT PRODUCT BYTE FROM DIVIDEND
+       JGT  FDIV13            IS RESULT POSITIVE
+       JEQ  FDIV13            OR ZERO ?
+       AB   @LB100,*R15       NO ADD RADIX BACK
+       INC  R0                INCREMENT PRODUCT CARRY
+FDIV13 DEC  R15               POINT TO NEXT BYTE OF DIVIDEND
+       DEC  R4                SUBTRACT ALL BYTES OF DIVISOR
+       JGT  FDIV12            NO CONTINUE
+       SB   @WSG+1,*R15        YES SUBTRACT CARRY FROM DIVISOR
+       JGT  FDIV16            HIGH ORDER HIGHEST ORDER
+       JEQ  FDIV16            DIVIDEND BYTE NEGATIVE RESULT
+       DEC  R2                DEC Q WAS ONE TOO BIG
+       MOV  R6,R4             GET ADD-BACK LOOP COUNT
+       A    R6,R15            POINT TO LOW ORDER BYTE OF DIVIDEND
+FDIV14 AB   @FDVSR(R4),*R15   ADD BYTE OF DIVISOR TO DIVIDEND
+       CB   *R15,@LB100       RESULT LARGER THAN RADIX
+       JL   FDIV15            NO RESULT IS CORRECT
+       SB   @LB100,*R15       YES SUBTRACT RADIX
+       AB   @LB1,@-1(R15)     ADD ONE FOR CARRY TO HIGH BYTE
+FDIV15 DEC  R15               TO NEXT HIGHER BYTE OF DIVIDEND
+       DEC  R4                DONE NOTHING IN ALL BYTES OF DIVIDEND
+       JGT  FDIV14            NO ADD IN THE NEXT ONE
+FDIV16 MOVB @WSG+5,@FAC+10(R5)  PUT AWAY NEXT QUOTIENT BYTE
+       INC  R15               HIGH ORDER OF NEXT SIGNIF DVDND
+       INC  R5                COPUTE ALL NECESSARY BYTES
+       JLT  FDIV08            NO CONTINUE
+       B    @FMEND            YES NORMAILIZE AND CONTINUE

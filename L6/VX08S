@@ -1,0 +1,353 @@
+* FILENAME: VX08S
+*
+* ScrollWinLeft
+*
+* R1x = Number of lines to scroll
+* R2x = Row number of upper left corner
+* R3x = Column number of upper left corner
+* R4x = Row number of lower right corner
+* R5x = Column number of lower right corner
+* R6x = Character value for blank lines
+* R7h = Foreground color for blank lines (NO COLOR IN TEXT MODES & M3)
+* R7l = Background color for blank lines
+*
+X908LS  DATA    X908M0,X908M0,X908M2,X908M0
+        DATA    X908M4,X908M4,X908M6,X908M6
+        DATA    X908M6,X908M6
+*
+X908VC
+X908L1  C       @4(R13),@8(R13)
+        JH      X908RT
+        C       @6(R13),@10(R13)
+        JH      X908RT
+        MOV     @2(R13),R10             * R10 increment
+        MOV     @VIDMOD,R1
+        SLA     R1,1
+        MOV     @X908LS(R1),R1
+        MOV     R11,@X9STAK
+        BL      *R1
+        MOV     @X9STAK,R11
+X908RT  RT
+*
+X908M0 MOV  @10(R13),R9
+       S    @6(R13),R9
+       INC  R9
+       C    R10,R9
+       JH   X90800
+       MOV  R10,R10
+       JNE  X90801
+X90800 MOV  R9,R10
+X90801 MOV  @4(R13),R8
+       MPY  @D80,R8
+       MOV  R9,R6
+       A    @6(R13),R9        r9 has pointer to top left corner
+       A    @10(R13),R6       r6 has pointer to top right corner
+*
+       MOV  @8(R13),R7
+       MPY  @D80,R7
+       A    @6(R13),R8        r8 has pointer to bottom left corner
+       MOV  R6,R7             R7 has pointer to top right corner
+*
+       MOVB @13(R13),R0       char to fill blanks with
+*
+       MOV  R9,R6
+       MOV  R7,R5
+       A    @SCROFF,R5
+X90809 C    R5,@SCREND
+       JL   X90810
+       S    @SCRADD,R5
+*
+X90810 C    R6,R8
+       JH   X90860            done with all rows, now to update screen
+*
+       MOV  R6,R4
+       MOV  R6,R3
+       A    R10,R3
+*
+       A    @SCROFF,R3
+       C    R3,@SCREND
+       JL   X90813
+       S    @SCRADD,R3
+X90813 A    @SCROFF,R4
+       C    R4,@SCREND
+       JL   X90811
+       S    @SCRADD,R4
+X90811 MOVB *R3+,*R4+
+       C    R3,R5
+       JLE  X90811
+*
+X90812 MOVB R0,*R4+
+       C    R4,R5
+       JLE  X90812
+*
+       AI   R6,80
+       AI   R5,80
+       JMP  X90809
+*
+* now to update screen
+*
+X90860 MOV  @4(R13),R5
+       MPY  @CHCOLS,R5
+       A    @6(R13),R6        r6 has screen offset now
+       A    @SCRIMG,R6        r6 has screen address now
+*
+X90861 C    R9,R8
+       JH   X90899            done with update
+*
+       MOV  @10(R13),R2
+       S    @6(R13),R2        character count for this line
+*
+       SWPB @SCRIMG+2
+       MOVB @SCRIMG+2,@VDPWA
+       SWPB @SCRIMG+2
+       MOVB @SCRIMG+2,@VDPWA
+*
+       MOV  R9,R7
+       A    @SCROFF,R7
+       C    R7,@SCREND
+       JL   X90862
+       S    @SCRADD,R7
+X90862 MOV  R6,R5
+       ORI  R5,>4000
+       SWPB R5
+       MOVB R5,@VDPWA
+       SWPB R5
+       MOVB R5,@VDPWA
+*
+X90863 MOVB *R7+,@VDPWD
+       DEC  R2
+       JOC  X90863
+*
+       AI   R9,80
+       A    @CHCOLS,R6
+       JMP  X90861
+*
+X90899 RT
+*
+X908M2  RT
+*
+X908M4  MOV     @4(R13),R1
+        MOV     R1,R8
+        SLA     R8,8
+        MOV     @6(R13),R6
+        SLA     R6,3
+        A       R6,R8                   * R8 top row + left column
+        MOV     @8(R13),R1
+        MOV     R1,R9
+        SLA     R9,8
+        A       R6,R9                   * R9 bottom row + left column
+        MOV     @8(R13),R7
+        S       @4(R13),R7              * R7 # of lines to blank
+        INC     R7
+        MOV     @12(R13),R2
+        MOV     @10(R13),R5
+        S       @6(R13),R5
+        INC     R5
+        SLA     R10,3
+        SLA     R5,3
+        S       R10,R5                  * R5 # of columns - increment
+        A       R10,R8
+        MOV     R5,R5
+        JLT     X908Z4
+        MOV     R10,R10
+        JNE     X908N4
+X908Z4  MOV     @8(R13),R10
+        S       @6(R13),R10
+        INC     R10
+        SLA     R10,3
+        JMP     X908S4
+X908N4  SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        A       @PTABLE,R8
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        ANDI    R8,>BFFF
+        MOVB    R8,@VDPWA
+        LI      R1,LINBUF
+        MOV     R5,R4
+X908O4  MOVB    @VDPRD,*R1+
+        DEC     R4
+        JNE     X908O4
+        S       R10,R8
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        ORI     R8,>4000
+        MOVB    R8,@VDPWA
+        LI      R1,LINBUF
+        MOV     R5,R4
+X908P4  MOVB    *R1+,@VDPWD
+        DEC     R4
+        JNE     X908P4
+        A       R10,R8
+        S       @PTABLE,R8
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        A       @CTABLE,R8
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        ANDI    R8,>BFFF
+        MOVB    R8,@VDPWA
+        LI      R1,LINBUF
+        MOV     R5,R4
+X908Q4  MOVB    @VDPRD,*R1+
+        DEC     R4
+        JNE     X908Q4
+        S       R10,R8
+        SWPB    R8
+        MOVB    R8,@VDPWA
+        SWPB    R8
+        ORI     R8,>4000
+        MOVB    R8,@VDPWA
+        LI      R1,LINBUF
+        MOV     R5,R4
+X908R4  MOVB    *R1+,@VDPWD
+        DEC     R4
+        JNE     X908R4
+        S       @CTABLE,R8
+        ANDI    R8,>BFFF
+        C       R8,R9
+        JEQ     X908S4
+        AI      R8,256
+        A       R10,R8
+        JMP     X908N4
+X908S4  ANDI    R2,>FF
+        LI      R3,CHDEFT
+        SLA     R2,3
+        A       R2,R3
+        A       R5,R9
+        ORI     R9,>4000
+X908T4  SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        SWPB    @PTABLE+2
+        MOVB    @PTABLE+2,@VDPWA
+        A       @PTABLE,R9
+        SWPB    R9
+        MOVB    R9,@VDPWA
+        SWPB    R9
+        MOVB    R9,@VDPWA
+        MOV     R10,R4
+        SRL     R4,3
+        S       @PTABLE,R9
+X908U4  MOV     R3,R2
+        LI      R6,8
+X908V4  MOVB    *R2+,@VDPWD
+        DEC     R6
+        JNE     X908V4
+        DEC     R4
+        JNE     X908U4
+        CLR     R1
+        MOVB    @14(R13),R1
+        MOVB    @15(R13),R2
+        SLA     R1,4
+        SOCB    R2,R1
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        SWPB    @CTABLE+2
+        MOVB    @CTABLE+2,@VDPWA
+        A       @CTABLE,R9
+        SWPB    R9
+        MOVB    R9,@VDPWA
+        SWPB    R9
+        MOVB    R9,@VDPWA
+        MOV     R10,R4
+        S       @CTABLE,R9
+X908W4  MOVB    R1,@VDPWD
+        DEC     R4
+        JNE     X908W4
+        AI      R9,-256
+        DEC     R7
+        JNE     X908T4
+        RT
+*
+X908M6  MOV     @4(R13),R1
+        A       @PAGEPX,R1
+        MOV     @6(R13),R0
+        MOV     R0,R2
+        MOV     R1,R3
+        A       R10,R0                  * R10 increment, # of lines to blank
+        MOV     @10(R13),R4
+        MOV     R4,R9
+        S       R2,R9                   * R9 # of columns
+        INC     R9
+        MOV     @8(R13),R5
+        A       @PAGEPX,R5
+        S       R0,R4
+        S       R3,R5
+        INC     R4
+        INC     R5
+        LI      R6,6
+        MPY     R0,R6
+        MOV     R7,R0
+        A       @GRPHLF,R0
+        SLA     R1,3
+        LI      R6,6
+        MPY     R2,R6
+        MOV     R7,R2
+        A       @GRPHLF,R2
+        SLA     R3,3
+        LI      R6,6
+        MPY     R4,R6
+        MOV     R7,R4
+        SLA     R5,3
+        CLR     R6
+        LI      R7,>90
+        LI      R12,>80
+        MOV     @VIDMOD,R8
+        CI      R8,7
+        JEQ     X908Y6
+        LI      R7,>D0
+        LI      R12,>C0
+X908Y6  C       R10,R9
+        JHE     X908Z6
+        MOV     R10,R10
+        JNE     X908N6
+X908Z6  MOV     R9,R10
+        JMP     X908O6
+X908N6  BLWP    @VDCMD2
+X908O6  MOV     R5,R3
+        CI      R8,6
+        JEQ     X908P6
+        CI      R8,8
+        JEQ     X908P6
+        CI      R8,7
+        JEQ     X908Q6
+        MOV     @14(R13),R4
+        ANDI    R4,>FF
+        JMP     X908R6
+X908P6  MOV     @14(R13),R5             *
+        ANDI    R5,>FF                  *
+        MOV     R5,R4                   * Calculate color for
+        SLA     R5,4                    * blank lines
+        SOC     R5,R4                   *
+        JMP     X908R6                  *
+X908Q6  MOV     @14(R13),R5
+        ANDI    R5,>3
+        MOV     R5,R4
+        SLA     R5,2
+        SOC     R5,R4
+        MOV     R4,R5
+        SLA     R5,4
+        SOC     R5,R4
+X908R6  ORI     R4,>0400
+        MOV     @10(R13),R0
+        LI      R6,6
+        MPY     R0,R6
+        MOV     R7,R0
+        AI      R0,5
+        A       @GRPHLF,R0
+        MOV     @4(R13),R1
+        A       @PAGEPX,R1
+        SLA     R1,3
+        LI      R6,6
+        MPY     R10,R6
+        MOV     R7,R2
+        MOV     R12,R5
+        BLWP    @VDCMD1
+        RT

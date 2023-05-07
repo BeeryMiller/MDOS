@@ -1,0 +1,697 @@
+* File: L9\GENERALS
+* LDOM: May 7, 1998 Tim Tesch - Corrected Y2K leap year; 2000 IS a leap
+*       year, and should have 29 days in February.
+*
+*       Also corrected Julian date computation
+
+       UNL
+       DEF  OS#GEN
+       REF  PARSEF
+       REF  LOADF
+       REF  FORK
+*
+********************************************************************************
+*
+       COPY "\MDOS\HEAD\OSTASK"
+*
+       DORG >F130
+CLOCKC BYTE 0      R: DATA CHANGED,0,0,INTERRUPT; W: TST,CLOCK,R15SEL,INT
+TENTH  BYTE 0
+SEC1   BYTE 0
+SEC10  BYTE 0
+MIN1   BYTE 0
+MIN10  BYTE 0
+HOUR1  BYTE 0
+HOUR10 BYTE 0
+DAY1   BYTE 0
+DAY10  BYTE 0
+MON1   BYTE 0
+MON10  BYTE 0
+YEAR1  BYTE 0
+YEAR10 BYTE 0
+WEEKDA BYTE 0
+CLOKI  BYTE 0
+*
+*      DB3,DB2 => 0=LEAPYEAR DB1 = PM   DB0=24 HOUR MODE
+*
+*
+*
+*
+*
+********************************************************************************
+*
+*  XOP entry point... opcodes 0 through 9 are valid
+*
+       RORG 0
+OS#GEN MOV  *R13,R1
+       SETO *R13
+       CI   R1,SYSLST-XOPTAB/2
+       JH   ZAPXOP
+*
+       STWP R0
+       C    R0,@>40      are we being called by system?
+       JMP  XOPOK        privileged XOPS ok for system to use
+*
+       CI   R1,USRLST-XOPTAB/2
+       JH   ZAPXOP       unprivileged XOPS
+XOPOK  CLR  *R13
+       SLA  R1,1
+       MOV  @XOPTAB(R1),R1
+       BL   *R1
+ZAPXOP RTWP
+*
+XOPTAB DATA CTIME,TIMSTR,STRTIM,CDATE,DATSTR,STRDAT,JDATE
+       DATA DAYOF,PARSEF,LOADF,FORK
+USRLST EQU  $-2
+SYSLST EQU  $-2
+*
+CLKMAX BYTE 9,5,9,5,9,2
+DATMAX BYTE 9,3,9,1,9,9
+*
+******************************************************************************
+*
+*      GENERAL OP #0, CHECK TIME FOR VALIDITY
+*
+*      XOP @NINE,0            PASS:  r0=0
+*                             return: EQ bit set if time is valid
+*                                           reset if time is invalid
+*
+CTIME  LI   R1,CLKMAX
+       LI   R2,SEC1
+       JMP  CTIME2
+*
+*      OP #3             CHECK DATE FOR VALIDITY
+*
+*      XOP @NINE,0            PASS:   R0=3
+*                             return: EQ bit is set if date is valid
+*
+CDATE  MOV  R11,@CDATRT
+       BL   @CDAT00
+       JNE  CDAT99            date is really screwed
+*
+       MOVB @MON10,R7
+       SRL  R7,8
+       ANDI R7,>000F
+       MPY  @D10,R7
+       MOVB @MON1,R7
+       SRL  R7,8
+       ANDI R7,>000F
+       C    R7,@D10
+       JHE  CDAT80            bad month
+       A    R7,R8
+       JEQ  CDAT80            bad month, 0
+       CI   R8,12
+       JH   CDAT80            bad month
+*
+       MOV  R8,R2             save month
+*
+       MOVB @DAY10,R7
+       SRL  R7,8
+       ANDI R7,>000F
+       MPY  @D10,R7
+       MOVB @DAY1,R7
+       SRL  R7,8
+       ANDI R7,>000F
+       C    R7,@D10
+       JHE  CDAT80            bad day
+       A    R7,R8
+       JEQ  CDAT80            bad day, 0
+       C    R8,@MLEN(R2)
+       JH   CDAT80            bad day
+*
+       MOV  R8,R3             save day
+*
+       MOVB @YEAR10,R7
+       SRL  R7,8
+       ANDI R7,>000F
+       C    R7,@D10
+       JHE  CDAT80            bad year digit
+       MPY  @D10,R7
+       MOVB @YEAR1,R7
+       SRL  R7,8
+       ANDI R7,>000F
+       C    R7,@D10
+       JHE  CDAT80            bad year digit
+       A    R7,R8
+*
+       MOV  R8,R4
+       AI   R4,1900
+       CI   R4,1987
+       JHE  CDAT10
+       AI   R4,100
+CDAT10 BL   @JULIAN
+       DIV  @D7E4,R6
+       CLR  R6
+       INC  R7                make remainder of 0 == sunday
+       DIV  @D7,R6
+       INC  R7                day is 1..7
+*
+       MOVB @WEEKDA,R1
+       SRL  R1,8
+       ANDI R1,>000F
+       C    R1,R7
+       JEQ  CDAT90            weekday is ok
+*
+CDAT80 SETO R0
+       JMP  CDAT91
+CDAT90 CLR  R0
+CDAT91 MOV  R0,R0
+       STST R15
+*
+CDAT99 B    @0
+CDATRT EQU  $-2
+*
+CDAT00 LI   R1,DATMAX
+       LI   R2,DAY1
+*
+CTIME2 MOVB @H03,@CLOCKC      turn off test mode, if it's on
+       LI   R3,6
+CTIME3 MOVB *R2+,R0
+       ANDI R0,>0F00
+       CB   R0,*R1+
+       JH   CTIME4
+       DEC  R3
+       JNE  CTIME3
+CTIME4 MOV  R3,R3
+       STST R15
+       RT
+*
+*******************************************************************************8
+*
+*      OP #1             CONVERT TIME TO STRING
+*
+*      XOP @NINE,0            PASS:   R0=1
+*                                     R1=pointer to string in local mem
+*                                        (at least 10 bytes)
+*                             return: 8 character string
+*
+TIMSTR MOV  @2(R13),R1
+       MOV  R1,R2
+       SRL  R1,13
+       MOVB @TSKMAP(R1),@MAPPER+5
+       INC  R1
+       ANDI R1,>0007
+       MOVB @TSKMAP(R1),@MAPPER+6
+*
+       ANDI R2,>1FFF
+       AI   R2,>A000
+*
+       MOVB @H08,@-1(R2)
+       MOVB @H00,@8(R2)
+*
+       MOVB @HOUR10,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       MOVB @HOUR1,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       MOVB @COLON,*R2+
+*
+       MOVB @MIN10,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       MOVB @MIN1,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       MOVB @COLON,*R2+
+*
+       MOVB @SEC10,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       MOVB @SEC1,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       RT
+*
+COLON  TEXT ': '
+*
+********************************************************************************
+*
+*      OP #4             CONVERT DATE TO STRING
+*
+*      XOP @NINE,0            PASS:   R0=4
+*                                     R1=pointer to string in local mem
+*                                        (at least 10 bytes)
+*                             return: 8 character string
+*
+DATSTR MOV  @2(R13),R1
+       MOV  R1,R2
+       SRL  R1,13
+       MOVB @TSKMAP(R1),@MAPPER+5
+       INC  R1
+       ANDI R1,>0007
+       MOVB @TSKMAP(R1),@MAPPER+6
+*
+       ANDI R2,>1FFF
+       AI   R2,>A000
+*
+       MOVB @H08,@-1(R2)
+       MOVB @H00,@8(R2)
+*
+       MOVB @MON10,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       MOVB @MON1,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       MOVB @DASH,*R2+
+*
+       MOVB @DAY10,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       MOVB @DAY1,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       MOVB @DASH,*R2+
+*
+       MOVB @YEAR10,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       MOVB @YEAR1,R1
+       ANDI R1,>0F00
+       AI   R1,'0 '
+       MOVB R1,*R2+
+*
+       RT
+*
+DASH   TEXT '- '
+
+       LIST
+*
+********************************************************************************
+*
+*      OP #2             CONVERT STRING TO TIME
+*
+*      XOP @NINE,0            PASS:   R0=2
+*                                     R1=pointer to string in local mem
+*                                        (at least 10 bytes)
+*                             return: EQ flag set if time was valid
+*
+STRTIM MOV  @2(R13),R1
+       MOV  R1,R2
+       SRL  R2,13
+       MOVB @TSKMAP(R2),@MAPPER+5
+       INC  R2
+       ANDI R2,>0007
+       MOVB @TSKMAP(R2),@MAPPER+6
+*
+       ANDI R1,>1FFF
+       AI   R1,>A000
+*
+       MOV  R11,R12
+       BL   @PARSET
+       DATA '::'
+       JEQ  BADTIM
+*
+       MOV  R0,R0        no string given...
+       JEQ  TIMOUT
+*
+       CB   @TIME1,@H32
+       JL   GTIME5
+       JH   BADTIM
+       CB   @TIME2,@H33
+       JH   BADTIM
+GTIME5 CB   @TIME3,@H35
+       JH   BADTIM
+       CB   @TIME5,@H35
+       JH   BADTIM
+*
+       MOVB @CLOCKC,R0
+       MOVB @H07,@CLOCKC
+       MOVB @H00,@CLOKI
+*
+       MOVB @H05,@CLOCKC
+       MOVB @TIME1,@HOUR10
+       MOVB @TIME2,@HOUR1
+       MOVB @TIME3,@MIN10
+       MOVB @TIME4,@MIN1
+       MOVB @TIME5,@SEC10
+       MOVB @TIME6,@SEC1
+       MOVB @H03,@CLOCKC
+       CLR  R0
+       JMP  TIMOUT
+*
+BADTIM SETO R0
+TIMOUT MOV  R0,R0
+       STST R15
+       B    *R12
+*
+TIME1  BYTE 0
+TIME2  BYTE 0
+TIME3  BYTE 0
+TIME4  BYTE 0
+TIME5  BYTE 0
+TIME6  BYTE 0
+SPACE  TEXT ' '
+H03    BYTE >03
+H05    BYTE >05
+H07    BYTE >07
+H0D    BYTE >0D
+H0F    BYTE >0F
+H30    BYTE >30
+H32    BYTE >32
+H33    BYTE >33
+H35    BYTE >35
+H39    BYTE >39
+       EVEN
+*
+********************************************************************************
+*
+* parse up to six digits with two separators, into 3 output fields
+*
+PARSET CLR  R0
+       MOVB @-1(R1),R2
+       SRL  R2,8
+       A    R1,R2
+       CLR  @TIME1
+       CLR  @TIME3
+       CLR  @TIME5
+PAR1   CB   *R1,@SPACE
+       JNE  PAR2
+       INC  R1
+       C    R1,R2
+       JLT  PAR1
+       JMP  PARRET
+*
+PAR2   SETO R0
+       CB   *R1,@H30
+       JL   PARERR
+       CB   *R1,@H39
+       JH   PARERR
+       CB   @1(R1),*R11
+       JEQ  PAR3
+       CB   @1(R1),@1(R11)
+       JEQ  PAR3
+*
+       MOVB *R1+,@TIME1
+       CB   *R1,@H30
+       JL   PARERR
+       CB   *R1,@H39
+       JH   PARERR
+PAR3   MOVB *R1+,@TIME2
+       CB   *R1,*R11
+       JEQ  PAR4
+       CB   *R1,@1(R11)
+       JNE  PARERR
+PAR4   INC  R1
+       CB   *R1,@H30
+       JL   PARERR
+       CB   *R1,@H39
+       JH   PARERR
+       CB   @1(R1),*R11
+       JEQ  PAR5
+       CB   @1(R1),@1(R11)
+       JEQ  PAR5
+       CB   @1(R1),@SPACE
+       JEQ  PAR5
+*
+       MOVB *R1+,@TIME3
+       CB   *R1,@H30
+       JL   PARERR
+       CB   *R1,@H39
+       JH   PARERR
+PAR5   MOVB *R1+,@TIME4
+       CB   *R1,*R11
+       JEQ  PAR6
+       CB   *R1,@1(R11)
+       JEQ  PAR6
+       CB   *R1,@SPACE
+       JNE  PARERR
+PAR6   INC  R1
+       CB   *R1,@SPACE
+       JEQ  PARRET
+*
+       CB   *R1,@H30
+       JL   PARERR
+       CB   *R1,@H39
+       JH   PARERR
+*
+       CB   @1(R1),@SPACE
+       JEQ  PAR7
+       MOVB *R1+,@TIME5
+       CB   *R1,@H30
+       JL   PARERR
+       CB   *R1,@H39
+       JH   PARERR
+*
+PAR7   MOVB *R1+,@TIME6
+PAR8   C    R1,R2
+       JHE  PARRET
+       CB   *R1+,@SPACE
+       JNE  PARERR
+       JMP  PAR8
+PARRET INCT R11
+       SETO R1
+       MOV  R1,R1
+       RT
+PARERR CLR  R0
+       INCT R11
+       MOV  R0,R0
+       RT
+*
+********************************************************************************
+*
+*      OP #5             CONVERT STRING TO DATE
+*
+*      XOP @NINE,0            PASS:   R0=5
+*                                     R1=pointer to string in local mem
+*                                        (at least 10 bytes)
+*                             return: EQ flag set if date was valid
+*
+STRDAT MOV  @2(R13),R1
+       MOV  R1,R2
+       SRL  R2,13
+       MOVB @TSKMAP(R2),@MAPPER+5
+       INC  R2
+       ANDI R2,>0007
+       MOVB @TSKMAP(R2),@MAPPER+6
+*
+       ANDI R1,>1FFF
+       AI   R1,>A000
+*
+       MOV  R11,R12
+       BL   @PARSET
+       DATA '-/'
+       JEQ  BADDAT
+*
+       MOV  R0,R0
+       JEQ  DATOUT
+*
+       MOV  @TIME1,R0
+       MOV  R0,R2
+       ANDI R0,>0F00
+       SRL  R0,8
+       ANDI R2,>000F
+       MPY  @D10,R0
+       A    R1,R2
+       JEQ  BADDAT
+       CI   R2,12
+       JH   BADDAT       month too large...
+*
+       MOV  @TIME3,R0
+       MOV  R0,R3
+       ANDI R0,>0F00
+       SRL  R0,8
+       ANDI R3,>000F
+       MPY  @D10,R0
+       A    R1,R3
+       JEQ  BADDAT       day can't be zero...
+*
+       MOV  @TIME5,R0
+       MOV  R0,R4
+       ANDI R0,>0F00
+       SRL  R0,8
+       ANDI R4,>000F
+       MPY  @D10,R0
+       A    R1,R4
+*
+* CHECK THE DAY TO SEE IF IT'S VALID
+*
+       SWPB R3
+       CB   R3,@MLEN(R2)
+       JH   BADDAT
+       SWPB R3
+       CI   R2,2              February?
+       JNE  GDATE5            no, no need to check
+
+* Below lines are incorrect; Year 2000 IS a leap year.  5-5-98 TT
+*      MOV  R4,R4             YEAR IS 2000?
+*      JEQ  GDATE6            yes, 2000 is not a leap year
+
+       CZC  @H0003,R4
+       JEQ  GDATE5            YEAR IS MULTIPLE OF 4 (NOT 2000)
+GDATE6 CI   R3,28
+       JH   BADDAT
+GDATE5 AI   R4,1900
+       CI   R4,1987
+       JHE  GDATE7
+       AI   R4,100
+GDATE7 BL   @JULIAN           julian date in r6 and r7
+       DIV  @D7E4,R6
+       CLR  R6
+       INC  R7                make remainder of 0 == sunday
+       DIV  @D7,R6
+       INC  R7                day is 1..7
+*
+       MOVB @CLOCKC,R0
+       MOVB @H07,@CLOCKC
+       MOVB @H00,@CLOKI
+       MOVB @H05,@CLOCKC
+*
+       MOVB @TIME1,@MON10
+       MOVB @TIME2,@MON1
+       MOVB @TIME3,@DAY10
+       MOVB @TIME4,@DAY1
+       MOVB @TIME5,@YEAR10
+       MOVB @TIME6,@YEAR1
+       SWPB R7
+       MOVB R7,@WEEKDA
+       MOV  R4,R1
+       JNE  GDATEE
+       LI   R1,1
+GDATEE ANDI R1,>0003
+       SLA  R1,10
+       ORI  R1,>0100
+       MOVB R1,@CLOKI
+       MOVB @H03,@CLOCKC
+       CLR  R0
+       JMP  DATOUT
+*
+BADDAT SETO R0
+DATOUT MOV  R0,R0
+       STST R15
+       B    *R12
+*
+********************************************************************************
+*
+*      OP #6             CONVERT MM,DD,YYYY into julian date
+*
+*      XOP @NINE,0            PASS:   R0=6
+*                                     R1=month
+*                                     R2=day
+*                                     R3=year
+*
+*                             return: R1=MSword of julian date
+*                                     R2=LSword of julian date
+*
+JDATE  MOV  R11,R12
+       MOV  @2(R13),R2
+       MOV  @4(R13),R3
+       MOV  @6(R13),R4
+       BL   @JULIAN
+       MOV  R6,@2(R13)
+       MOV  R7,@4(R13)
+       B    *R12
+*
+* CALCULATE JULIAN DATE FROM MONTH,YEAR, AND DATE
+*
+*
+JULIAN MOV  R4,R8
+       AI   R8,4712
+       LI   R6,365
+       MPY  R8,R6
+       DEC  R8
+       SRL  R8,2
+       A    R8,R7
+       JNC  JDATE8
+       INC  R6
+JDATE8 A    R3,R7
+       JNC  JDATE9
+       INC  R6
+JDATE9 LI   R0,306
+       MPY  R2,R0        R0,R1= 30.6 * M
+       AI   R1,-300
+       CI   R2,3
+       JL   JDATEA
+       AI   R1,-23
+       CZC  @H0003,R4
+       JNE  JDATEA
+       CLR  R8
+       MOV  R4,R9
+       DIV  @D100,R8
+
+*      MOV  R9,R9        Is this the Y2K skip causing the problem?
+*      JEQ  JDATEA       let's test... Yup. REM out now.
+
+       AI   R1,10        2000 is leap year, 2100 not.  I think all Geneve
+*                        users will be long gone by then :(-
+*
+JDATEA DIV  @D10,R0
+       A    R0,R7
+       JNC  JDATEB
+       INC  R6
+JDATEB CLR  R0
+*
+       CI   R6,>0024          return immediately if JD <= 2361221
+       JL   JDATEF
+       JH   JDATEG
+       CI   R7,>0785
+       JLE  JDATEF
+*
+JDATEG MOV  R4,R1
+       AI   R1,-300
+       CI   R2,3
+       JL   JDATEC
+       DEC  R1
+JDATEC DIV  @D100,R0
+       MPY  @H0003,R0
+       SRL  R1,2
+       INC  R1
+       S    R1,R7
+       JNO  JDATEF
+       DEC  R6
+JDATEF RT                     julian date in r6 and r7
+*
+********************************************************************************
+*
+*      OP #7             return day of week
+*
+*      XOP @NINE,0            PASS:   R0=7
+*
+*                             return: R1=day of week, 1-7
+*
+DAYOF  MOVB @WEEKDA,R1
+       ANDI R1,>0700
+       SRL  R1,8
+       MOV  R1,@2(R13)
+       RT
+*
+********************************************************************************
+*
+H00
+H0003  DATA >0003
+D10    DATA 10
+D100   DATA 100
+D7     DATA 7
+D7E4   DATA 7*7*7*7
+H08    BYTE >08
+MLEN   BYTE 0
+       BYTE 31,29,31,30,31,30
+       BYTE 31,31,30,31,30,31
+*
+***************************
+*
+       END
+*
