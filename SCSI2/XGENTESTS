@@ -1,0 +1,128 @@
+* GENTESTS
+* Genmod and SCSI Revision sense routines
+* Based on MDOS\SCSI2\SECTOR_S code
+* Rudimentary display added for stand-alone support
+* Sept 24 2009  Timothy Tesch
+*
+       LWPI >F000
+       BL   @DOGENSEN
+       BL   @DETECTSCSIVER
+
+       LI   R0,>27
+       LI   R1,TITLE
+       CLR  R2
+       XOP  @SIX,0
+
+       LI   R1,GEN#0
+       ABS  @GENMOD
+       JEQ  GENDSP
+       LI   R1,GEN#1
+GENDSP CLR  R2
+       LI   R0,>27
+       XOP  @SIX,0
+
+* maybe check a CRU line for Geneve ON and if active, assume SCSI Card there?
+
+SDSD1  LI   R1,S#3
+       ABS  @SCSI#EPROM  0=no
+       JNE  SDSF
+       LI   R0,>27
+       CLR  R2
+       XOP  @SIX,0       display 'no eprom' message
+       JMP  FINISH
+
+SDSF   LI   R1,S#1       EPROM found, check revision
+       ABS  @SCSIV       1=nonPDMA or no EPROM
+       JNE  SDSP2
+       LI   R1,S#2
+
+SDSP2  LI   R0,>27
+       CLR  R2
+       XOP  @SIX,0
+
+FINISH LI   R0,>27
+       LI   R1,CRLF2
+       CLR  R2
+       XOP  @SIX,0
+       BLWP @0
+
+TITLE  BYTE 13,10
+       TEXT 'GENTEST - Simple Genmod and SCSI card detection (9.24.2009TT)'
+       BYTE 13,10,10,0
+
+GEN#0  TEXT 'Genmod:  Genmod eprom not found!'
+       BYTE 13,10,0
+GEN#1  TEXT 'Genmod:  Genmod eprom detected!'
+       BYTE 13,10,0
+
+S#1  TEXT 'SCSI:    DSR v1.5 or below detected, PDMA disabled'
+     BYTE 13,10,0
+S#2  TEXT 'SCSI:    DSR v1.6 or above detected, PDMA enabled!'
+     BYTE 13,10,0
+S#3  TEXT 'SCSI:    No EPROM detected, PDMA disabled'
+     BYTE 13,10,0
+
+CRLF2  BYTE 13,10,0
+
+       DATA 0
+SIX    DATA 6            Video
+
+*
+* GENMOD SENSE.  DETECT IF THERE IS A GENMOD IN THE SYSTEM
+*
+GENMOD DATA 0            flag
+DOGENL DATA 0
+GENPAGE BYTE >F8
+GENVAL  BYTE >39
+GENADR  EQU  >42CC
+DOGENSEN
+       CLR   @GENMOD                         RESET THE FLAG
+       MOVB  @>F112,@DOGENL                  SAVE CURRENT PAGE
+       MOVB  @GENPAGE,@>F112                 GET EPROM BANK IN.
+       CB    @GENADR,@GENVAL                 IS THE EPROM A GENMOD EPROM
+       JNE   DOGE1                           NO, SO SKIP THE FLAG SET.
+       SETO  @GENMOD                         WE MUST ONLY DO BYTE TRANSFERS
+DOGE1  MOVB  @DOGENL,@>F112                  RESTORE PAGE
+       RT                                    RETURN TO CALLER
+
+*  BL  @DETECTSCSIVER
+*  Call with Genmod Sense?
+*    Should we make no EPROM default to PDMA like tony/richard suggest?
+*
+SCSI#EPROM   DATA 0   0=NO scsi EPROM; 1=scsi EPROM
+
+HBA    DATA >BA00
+HAA    DATA >AA00
+SR12   DATA 0
+SCSIV  DATA 0            0=new; 1=old (follow PDMA setting)
+SCSIV1 BYTE '1'          '1.5-0', '1.6'  (START AT >4020)
+SCSIV5 BYTE '5'
+
+DETECTSCSIVER
+*      MOV  @SCSOVERRIDE,@SCSOVERRIDE        overide detection?
+*      JNE  DET#OV       (set by CYA or CLI use of PDMA command)
+
+       MOV  R12,@SR12
+       SETO @SCSIV       assume no EPROM, old transfer style
+       MOVB @>F112,@HBA+1
+       MOVB @HBA,@>F112
+       LI   R12,>1200
+       SBO  0
+       CLR  @SCSI#EPROM
+       CB   @>4000,@HAA  EPROM?
+       JNE  DET#RT       NOPE; assume non-PDMA
+       SETO @SCSI#EPROM  yep, found one
+
+       CB   @>4020,@SCSIV1    major version '1'?
+       JH   DET#P             >1? yes,assume PDMA capable
+       JL   DET#RT            <1? yes,assume too old for PDMA
+       CB   @>4022,@SCSIV5    =1... is it a rev5?
+       JLE  DET#RT            =<5, so non-PDMA
+DET#P  CLR  @SCSIV
+DET#RT SBZ 0
+       MOV  @SR12,R12         restore R12
+       MOVB @HBA+1,@>F112     restore mapper
+DET#OV RT                     return
+
+*      END OF FILE
+

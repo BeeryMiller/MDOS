@@ -1,0 +1,240 @@
+********************************************************************************
+* File: TIDE8S - IDE Linkage for MDOS DSR
+* Date: Oct 30, 2009
+*
+* Called:   BLWP @IDEIO
+* Input:    DATA MSWord Sector#  MSWord of 32 bit sector number
+*           DATA LSWord Sector#  LSWord of 32 bit sector number
+*           DATA 256ByteBuffer   Points to a buffer
+*           DATA RWFlag          0=write; FFFF=read
+* ### need to pass drive number somewhere. Could be in R0. Check sector_S)
+*
+* Output:   SCSIERROR    Word, MSByte contains error
+*
+* CONSIDERATIONS:
+*      1. Call DSR routine once to locate x80 routine--speedup
+*      2. Trim buffers  [done]
+*      3. Eliminate VDP dependency upon Fred's release of CPU PAB DSR [done]
+*      4. Restricted to IDE1 (unit 1) - enhance later
+*      5. See SCSI2\SECTOR_S for related CALL code
+*
+* 7-6-2019  Still problems with buffer code. Grr.
+* 7-7-2019  Corrected buffer mask/R14 increment. Direct buffer works.
+*           Assembled and linked MDOS on IDE drive. Yay!
+* 7-13-2019 routine cleanup
+*           Turn card off if there is an error
+*           -Still need to implement interrupt handler for 4A/9640 modes
+*           -Need Fred to confirm PAD usage
+;
+;3.26.2021  Beery tested TIDE5 and TIDE8; both appear to work, and since
+;           TIDE8 is the most recent/cleanest, we are going with it.
+;3.28.2021  Updated routine to use UNITNO [passed as 17-24] for IDE1-8
+;           Retained UNIT7 as IDE1 for the time being
+;        $$ Need powerup routine and cache the entry point
+;        $$ Fake WS using page EE (see H12); keep in mind if GPL goes crazy
+;        $$ IDE,RAM,SCSI dsr need some cleanup work.
+********************************************************************************
+       DEF  IDEIO
+       DEF  IDEEND
+
+IDECRU EQU  >1900        MDOS assigned CRU. TT
+IDEWS  DATA 0,0,0,0,0,0,0,>1D00    R7 for debug/stash in this page
+       DATA 0,0,0,0,0,0,0,0
+*
+*      Save mapper, save "scratchpad" in this page, then set up fake TI
+*      environment necessary for DSR operation
+*
+IDEIO  DATA IDEWS,$+2
+       LIMI 0
+       MOVB @>F111,@SAV20
+       MOVB @>F112,@SAV40
+       MOVB @>F114,@SAV80
+       MOVB @HBABA,@>F112  >4000 AREA
+       MOVB @H12,@>F114  >8000 AREA
+       MOVB @SAV80,@>F111     MIRROR BUFFER IN 2000 SPACE
+
+;      LI   R1,>8300     save and clear PAD RAM
+;      LI   R2,SAV8300   ; may be able to trim to FAC + GPLWS
+;LP1    MOV  *R1,*R2+     ; and 83d0/83d2. look closely
+;      CLR  *R1+
+;      CI   R1,>8400
+;      JL   LP1
+
+; save 70 vs 256 bytes
+      LI   R1,>8340     FAC
+      LI   R2,SAV8300+>40
+LP1B   MOV  *R1+,*R2+
+;     CLR  *R1+
+      CI   R1,>8360
+      JL   LP1B
+
+       LI   R1,>83D0     dsr+gplws
+       LI   R2,SAV8300+>D0
+LP1C   MOV  *R1,*R2+
+       CLR  *R1+
+       CI   R1,>8400
+       JL   LP1C
+;
+
+; Review DSR more closely; may no longer need r13/14/15 setup
+      LI   R1,>9800      Prepare fake GPLWS
+      MOV  R1,@>83FA     r13
+      LI   R1,>0108
+      MOV  R1,@>83FC     r14
+      LI   R1,>8C02      ; not valid in 9640 mode
+      MOV  R1,@>83FE     r15
+      LI   R1,>3FFF      ; may not need this as we aren't using VDP
+      MOV  R1,@>8370
+
+;[8352 8350]   32-bit sector number masked to 24 bit
+       MOV  *R14+,R1     HIGH sector
+       MOV  *R1,R1
+       ANDI R1,>00FF     mask down to 24-bit address
+       MOV  R1,@>8352
+
+       MOV  *R14+,R2     LOW sector
+       MOV  *R2,@>8350
+
+; This is where we will map the appropriate IDE drive #
+; possibly via Register in caller (SECTOR_S)
+
+;[834C] drive and cpu buffer flag
+;      MOVB @0(R13),R1   possible code; pass drive in MSByte caller R0
+;      ORI  R1,>8000
+
+       LI   R1,>8100     ;default unit 1 with MSBit set
+       C    @UNITNO,@UNIT7    Unit7 from old mappings?
+       JEQ  SET834C           yes, allow it...for now
+
+; 3.27.2021  New IDE1-8 mappings where y=17 to 24 [subtract 16 for base 1]
+       MOV  @UNITNO,R1   get unit (see sector_s)
+       AI   R1,-16       subtract 16 for IDE1-8
+       SLA  R1,8         msbyte
+       ORI  R1,>8000     set high bit for CPU transfers
+
+SET834C
+       MOVB R1,@>834C         set it
+
+;  enable 4a mode
+;#     LI   R12,>1EF4    TI MODE needed for VDP operations
+;#     SBZ  0            Duh. Changes mapper location, hence earlier failure
+
+;[8356] 1-byte PAB  , is this even needed now?
+       LI   R0,CPUPAB    PAB in CPU
+       MOV  R0,@>8356    set it; DSRLNK WILL force CPU via >8354
+
+;[834E] buffer
+       MOV  *R14+,R3     POINTER TO BUFFER ADDRESS
+       MOV  *R3,R0       pointer to address
+       ANDI R0,>1FFF     MASK address to 13 bits
+       AI   R0,>2000     and relocate to >2000 TO >3FFF AREA
+       MOV  R0,@>834E
+
+;[834D] read/write
+       MOVB *R14,@>834D  (0=write <>0 read)
+       INCT R14          return address
+
+       BLWP @DSRLNK      Get the sector!
+
+;      CLR  @SCSIERROR
+;      MOVB R0,@SCSIERROR     from 8350 via DSRLNK (verify)
+
+       LI   R1,SAV8300+>40   Restore fake PAD ram
+       LI   R2,>8340    >8300
+LP2A   MOV  *R1+,*R2+
+       CI   R2,>8360    >8400
+       JL   LP2A
+
+       LI   R1,SAV8300+>D0  Restore fake PAD ram
+       LI   R2,>83D0   >8300
+LP2B   MOV  *R1+,*R2+
+       CI   R2,>8400
+       JL   LP2B
+
+
+;#     LI   R12,>1EF4    back to native mode [needed?]
+;#     SBO  0
+       MOVB @SAV80,@>F114     restore IO buffer page
+       MOVB @SAV40,@>F112     restore >4000 page
+       MOVB @SAV20,@>F111
+       RTWP
+; Done. Return to integrated SCSI code
+
+SAV20  BYTE 0
+SAV40  BYTE 0
+SAV80  BYTE 0
+HBABA  BYTE >BA          DSR page
+H12    BYTE >EE          GPL PAGE (SCSI=>12buffer page; scratch for now
+;;H07    BYTE >07,00
+SIX    DATA 6
+
+SAV8300     BSS 256      save PADRAM
+
+; simulate DSRLNK
+;
+DREGS  DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+CPUPAB BYTE >01          consolidate nambuf/cpupab
+IDEOPC BYTE >80
+
+HEX20  DATA >2020
+HEXAA  DATA >AAAA
+
+DSRLNK DATA DREGS,DSR1
+DSR1   LIMI 0            protective measure
+       SZCB  @HEX20,R15  clear status bit  (retain for dsr compat)
+       CLR  @SCSIERROR   clear each time
+       LI   R4,>8001     set for call to dsr
+       MOV  R4,@>8354
+       INCT @>8356       ^after len of pab + len = +2
+; 8356 needed anymore?
+
+SROM   LWPI  >83E0       our fake "gplws"
+       LIMI  0           Safety first
+       CLR   R1
+       LI    R12,IDECRU  FORCE cru
+       MOV   R12,@>83D0  save (may be required for IDE)
+       SBO   >00         turn on card
+
+       CB   @>4000,@HEXAA     valid dsr?
+       JNE  NOIDE             no, error and return
+
+* DSR table: ^next opcode | bl linkage | routinelen |code
+
+       LI   R2,>400A     yes, force to DSR >A routines
+       JMP  DJUMP3       and scan for opcode
+
+DLOOP3 MOV   @>83D2,R2
+       SBO   >00
+DJUMP3 MOV   *R2,R2      found it?
+       JEQ  NOIDE        no, error
+
+       MOV   R2,@>83D2   save ptr for next iteration
+       INCT  R2
+       MOV   *R2+,R9     get BL
+       MOVB  @>8355,R5   get len
+       JEQ   DJUMP4      if 0, inc r1 and execute (special call?)
+       CB    R5,*R2+     compare len
+       JNE   DLOOP3      not equal, so go to next opcode
+
+       CB   @IDEOPC,*R2+ ;7-13, opcode is one byte
+       JNE  DLOOP3       ;no, check next opcode/sub
+DJUMP4 INC  R1
+
+       BL    *R9         Call Fred's DSR!
+       JMP   DLOOP3      skip device; keep looking
+       SBZ   >00         good call. turn card off and return
+
+A#OK   LWPI  DREGS
+;      MOVB  @>8350,*R13    return error condition to caller R0msbyte
+       MOVB  @>8350,@SCSIERROR
+       RTWP
+
+NOIDE  SBZ 0             turn off card
+       LWPI DREGS
+       LI   R1,>0E00      if no IDE or >80 routine, return error
+;      MOVB R1,*R13
+       MOVB R1,@SCSIERROR
+       RTWP
+
+IDEEND EQU $
+;;     END

@@ -1,0 +1,176 @@
+*-----------------------------------------------------------*
+*     Western Horizon Technologies 5380 SCSI Controller     *
+*                                                           *
+*   Subroutine for SCSI-Direct communication with devices   *
+*                                                           *
+*        Written and Copyright 1993 by Will McGovern        *
+*-----------------------------------------------------------*
+* HISTORY                                                   *
+* -------                                                   *
+*                                                           *
+* 10-Jan-93  WMC  Created this file                         *
+* 27-Oct-93  MJM modifictions for TIC host environment      *
+*              CHANGED THIS ROUTINE TO BLWP INSTEAD OF BL   *
+* 11-Sep-09  TAT, GenMOD at SCSCI7 disabled. Why? Bug?
+;
+; 4.09.2021 $This segment passes/sets an incorrect error message
+;            number that the MD command misinterprets at low
+;            level. Further review required. Corrected now?
+*-----------------------------------------------------------*
+
+*------------------------------------------------------------
+* NAME : SCSICP
+*
+* DESC : ISSUE A GENERIC SCSI COMMAND TO A TARGET UNIT
+*
+* PARM : "pad dsr" area loaded with command structure.
+*         This is simulated, and is actually passed from TIC host
+* RET  : ERROR CODES RETURNED IN "ERRCODE"
+*
+* DEST : R0,R1,R2,R3,R4,R5,R6,R7,R8,R10
+* ATTEMPT TO SELECT THE TARGET UNIT
+
+       DATA 0            ;just in case.
+
+       IF DEBUGSCSI#
+CPTEXT   TEXT '~SCSICP; UNIT: '
+         BYTE 0
+         DATA 0
+       FI
+
+TEMPWS    BSS   32   *TEMPORARY STORAGE FOR >F000-F01F
+          DATA  0
+
+LOCWSP    BSS   32   *LOCAL WORKSPACE
+          DATA  0
+
+SCSICP   DATA LOCWSP,SCSICP1
+*
+SCSICP1 MOV  R11,R10           SAVE RETURN ADDRESS
+
+;;     IF DEBUGSCSI#
+;;       BLWP @XMTEXT
+;;       DATA CPTEXT
+;;       BLWP @XMNUM
+;;       DATA SCUNIT,1
+;;     FI
+
+       MOV  @CRUBASE,R12      WE NEED CRU BASE FROM HOST
+       MOVB @SCUNIT,R8        FETCH UNIT # AND FLAGS
+       MOV  R8,R0             COPY UNIT NUMBER
+       SRL  R0,8              TO LSB
+       ANDI R0,SCUFMC         CLEAR FLAG BITS
+       BL   @SELECT           ATTEMPT TO SELECT TARGET
+       MOV  R0,R0             SUCCESS ?
+       JEQ  SCDTAS
+       B    @SCSELE            NO, SELECTION FAILED
+
+* SEND THE CDB TO THE TARGET UNIT
+
+SCDTAS MOV  @SCCDBP,R0        POINTER TO CDB
+       MOV  @SCCDBL,R1        LENGTH OF CDB IN BYTES
+       LI   R2,PHCMD          COMMAND PHASE TRANSFER
+       BL   @NWRITC           WRITE CDB FROM CPU RAM
+SCSIC2 C    @SCCDBL,R0        ALL CDB BYTES TRANSFERRED ?
+       JEQ  SCDTAT
+       B    @SCCMDE            NO, COMMAND ERROR
+
+* DATA TRANSFER PHASE
+
+SCDTAT MOV  @SCDATP,R0        POINTER TO DATA BUFFER
+       MOV  @SCDATL,R1        LENGTH OF DATA TO BE TRANSFERRED
+       JNE  SCSCI7            NO DATA PHASE IF ZERO LENGTH
+       B    @SCSIC7
+* SCSCI7 MOV  @GENMOD,@GENMOD   IS THIS A GENMOD SYSTEM?
+*      JNE  CCCCI8
+
+* 9.20.2009; appears comments are wrong. Code changed at some point? SKDMA
+*            is called if we are transferring >=256.
+SCSCI7 CI   R1,256            Are we reading greater than or equal to 256?
+       JHE  SKDMA1            NO, SKIP TO STANDARD NON-DMA READ/WRITE
+CCCCI8 MOVB @SCFLAG,R3        READ OPERATION ?
+       JNE  SCSIC4            YES, READ
+
+* WRITE DATA TO TARGET
+
+       LI   R2,PHDATO         NO, USE DATA OUT PHASE FOR WRITE
+       BL   @NWRITC           WRITE DATA FROM CPU RAM
+       JMP  SCSIC6
+
+* READ DATA FROM TARGET
+
+SCSIC4 LI   R2,PHDATI         USE DATA IN PHASE FOR READ
+       BL   @NREADC           READ DATA INTO CPU RAM
+SCSIC6 MOV  R0,@SCDATL        SAVE ACTUAL LENGTH TRANSFERRED
+       B    @SCSIC7
+*
+* SORRY, Genmod systems cannot do this!  so they have to use all polled I/O
+* for data transfers, unless Don Develops a new DMA GAL for the SCSI card.
+*
+SKDMA1 MOV  R0,@DBUFADR       GET DMA BUFFER ADDRESS
+       MOV  R1,@DLENGTH       GET AMOUNT OF BYTES TO TRANSFER
+       CLR  @DREADW           CLEAR THE DREAD
+       MOVB @SCFLAG,@DREADW+1 GET THE READ/WRITE FLAG
+       LI   R4,16
+       LI   R2,>F000     use SAVEPAD 3.11.18
+       LI   R3,TEMPWS
+SKCPY1 MOV  *R2+,*R3+
+       DEC  R4
+       JNE  SKCPY1
+       BLWP @DMARW            DO IT.
+       LI   R4,16
+       LI   R2,>F000
+       LI   R3,TEMPWS
+SKCPY2 MOV  *R3+,*R2+
+       DEC  R4
+       JNE  SKCPY2
+
+* MAKE SURE WE ARE IN STATUS PHASE
+
+SCSIC7 MOVB @RCSB,R0               FETCH SCSI BUS SIGNALS
+       ANDI R0,>1C00
+       CI   R0,>0C00               IN STATUS PHASE ?
+       JNE  SCSIC7
+
+SCSIQ1 LI   R0,SCSTAT         BYTE BUFFER IN calling block
+       LI   R1,1              ONE BYTE TO TRANSFER
+       LI   R2,PHSTAT         STATUS PHASE
+       BL   @NREADC           READ STATUS BYTE
+       DEC  R0                GET STATUS BYTE ?
+       JNE  SCBADS            NO, DIDN'T GET STATUS BYTE
+
+* READ MESSAGE BYTE FROM TARGET
+
+       LI   R0,SCMESS         BYTE BUFFER IN PAD
+       LI   R1,1              ONE BYTE TO TRANSFER
+       LI   R2,PHMSGI         MESSAGE IN PHASE
+       BL   @NREADC           READ MESSAGE BYTE
+       DEC  R0                GET MESSAGE BYTE ?
+       JNE  SCBADM            NO, DIDN'T GET MESSAGE BYTE
+
+* CHECK RETURNED SCSI STATUS BYTE FOR ERROR
+
+       MOVB @SCSTAT,R0        NON-ZERO STATUS BYTE ?
+       JNE  SCSTSE            YES, STATUS ERROR
+       CLR  R0                NO, RETURN WITH ZERO ERROR CODE
+       JMP  SCEXIT            EXIT ROUTINE
+
+* ERROR RETURNS WITH ERROR CODES
+
+SCSELE LI   R0,ERRSEL*256     SELECTION FAILED
+       JMP  SCEXIT
+SCCMDE LI   R0,ERRCMD*256     COMMAND ERROR
+       JMP  SCEXIT
+SCBADS LI   R0,ERRSTS*256     NO STATUS BYTE
+       JMP  SCEXIT
+SCBADM LI   R0,ERRMSG*256     NO MESSAGE BYTE
+       JMP  SCEXIT
+SCPHSE LI   R0,ERRPHS*256     PHASE ERROR
+       JMP  SCEXIT
+SCSTSE LI   R0,ERRBST*256     NON ZERO CODE RETURNED
+
+* RETURN TO CALLER
+
+SCEXIT MOVB R0,@ERRCODE       SAVE ERROR CODE
+       RTWP                   RETURN
+*      END OF FILE

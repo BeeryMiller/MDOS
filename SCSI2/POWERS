@@ -1,0 +1,203 @@
+; File: POWERS, SCSI Powerup and detection routines w/FINDNAME common code
+; Date: 26 June 2021
+;
+; 6.26.2021 Removed genmod/detect from SECTOR_S; updated SCSI_S and MAKEFIL
+;           Combined tests for card, version, and genmod
+;           Incorporated SCSI ID test from SCSICOM; removed from SECTOR_S
+;           (Does not yet perform any buffer/page/setup for OS)
+;
+; 6.18.2022 Consider using HD\WINDS1-S >6018 for scsi cru so we can
+;           test validity. Move page clear, etc here from OSHEAD/HDR2-P2?
+;           Then remove test/call from the read/write routines
+;
+; 6.19.2022 Add buffer clear and DEF for linkage to DSRPASS-S (add ref)
+;           Remove powerup call from read/write in SECTOR_S (and cross fingers)
+;           In theory, XOP power to DSRPASS-S has >6000 mapped in.
+;           >6018, HD.WINDS1-S, also holds SCSI CRU for dsr-related check
+;           (Consider adding flag for floppy or test for >AA)
+;          -OSHEAD1S and HEAD\HPAGES control reserved pages
+;
+; 7.15.2022 Added ASCSI detection by M.Zapf.
+;           Reset EPROM to bank 0
+;
+       DEF  SCSPWL       ;blwp
+
+
+SCSCRU   DATA 0            ;detected CRU for SCSI card
+SCS1NAME    BYTE 4
+            TEXT 'SCS1'
+            BYTE 0
+
+       IF DEBUGSCSI#
+PWRINIT     TEXT '~Powerup: SCSI Card >'
+            BYTE 0
+            DATA 0
+       FI
+
+       DATA 0
+SPWS   BSS 32            ;try it this way, for now
+*
+DOGENL DATA 0
+GENSET DATA 0            0 first time through
+GENMOD DATA 0            Default to NO Genmod
+GENPAGE BYTE >F8
+GENVAL  BYTE >39
+GENADR  EQU  >42CC
+HBA    DATA >BA00
+HAA    DATA >AA00
+SR12   DATA 0
+;SCSIV  DATA 0           (follow PDMA setting) removed 7.15.22, use SCSCRD
+SCSIV1 BYTE '1'          '1.5-0', '1.6'  (START AT >4020)
+SCSIV5 BYTE '5'
+ASCSI  TEXT 'CSI2'       ;7.15.2022 mz [bank 7, offset xx32. ASCSI2]
+ASCSIV TEXT '01'         ;             version 1.01, offset xx3E
+;
+; SCSI Powerup Routine for Geneve OS
+;   Does NOT execute the EPROM-based powerup.
+;
+SCSPWL DATA SPWS,$+2     ;blwp?
+       LIMI 0
+
+       SETO @CACHE#HIGH  invalidate read cache
+       SETO @P#S#HIGH    "    "     write 'cache'
+
+       MOV  R12,@SR12
+       MOVB @>F112,@HBA+1
+       MOVB @HBA,@>F112
+
+       BL   @FINDNAME    ;R12=CRU of card; 0 if not found
+       DATA SCS1NAME     ;if found, card is left on! <<<--important
+
+       MOV  R12,@>6018   ;see WINDS1-S; holding place for SCSI CRU
+       MOV  R12,@SCSCRU  ;save cru for device driver
+       JNE  DETECTSCSIVER     if <>0, we found the card
+       B    @DETEXIT          if ==0, exit   (card is off at this point)
+
+;------
+; Check for SCSI EPROM version;  R12 must be valid and card turned on
+; Detect and set PDMA on/off flag unless overridden by CYA
+;
+DETECTSCSIVER
+       MOV  @SCSOVERRIDE,@SCSOVERRIDE        overide detection?
+       JNE  DET#ID       (set by CYA or CLI use of PDMA command)
+
+;      SETO @SCSIV       assume no EPROM, old transfer style
+       SETO @SCSCRD      actual command flag (0=ON; <>0 OFF)
+
+; MZ: Check for ASCSI  (7.15.2022)
+; 4030 = "ASCS" (Bank 7)
+
+       SBO  8
+       SBO  9
+       SBO 10
+       C    @>4032,@ASCSI     ;not ascsi, check wht
+       JNE  DETWHT
+       C    @>4034,@ASCSI+2   ;ascsi found, pdma on
+       JNE  DETWHT
+       C    @>403E,@ASCSI+4
+       JEQ  DET#P
+
+; Test bank 0 DSR Version
+; WHT Rev E,F,G
+; Restore CRU bank address lines to 000
+; Version 1.5 or below is NON-PDMA;  Version 1.6 or higher is PDMA
+;
+DETWHT SBZ 8             ;reset to bank 0 DSR page
+       SBZ 9
+       SBZ 10
+
+       CB   @>4020,@SCSIV1    major version '1'?
+       JH   DET#P             >1? yes,assume PDMA capable
+       JL   DET#ID            <1? yes,assume too old for PDMA
+       CB   @>4022,@SCSIV5    =1... is it a rev5?
+       JLE  DET#ID            =<5, so non-PDMA
+
+DET#P  SBZ 8             ;reset to bank 0 DSR page
+       SBZ 9             ;(duped for ASCSI)
+       SBZ 10
+;      CLR  @SCSIV
+       CLR  @SCSCRD      ; command flag 0=PDMA ON
+
+; Detect SCSI Card ID (should be 7 for maximum compat)
+DET#ID STCR R0,8
+       ANDI R0,>7000
+       SRL  R0,4
+       MOVB R0,@IDNUM         ;found once in SCSILL_S
+       SBZ  0
+
+; Detect Genmod for transfer mode
+DOGENSEN
+       CLR   @GENMOD                         RESET THE FLAG
+       MOVB  @GENPAGE,@>F112                 GET EPROM BANK IN.
+       CB    @GENADR,@GENVAL                 IS THE EPROM A GENMOD EPROM
+       JNE   CLEARBUF
+       SETO  @GENMOD                         WE MUST ONLY DO BYTE TRANSFERS
+
+CLEARBUF
+       LI   R4,P_SCAC*256     ;clear SCSI buffer >E8 (or wherever it is)
+       MOVB R4,@>F115         ;this also clears DSET
+       LI   R4,>A000          ;DSRPASS-S uses this page so we are ok
+CLRBF2 CLR  *R4+              ;SCSMAP settings are NOT restored at powerup
+       CI   R4,>C000          ;   similar to REMAP. The OS remembers the dev.
+       JL   CLRBF2
+
+;;     LI   R4,>BEEF     ;7.15.22, remove.
+;;     MOV  R4,@>AFF0    ;(8ff0)test to see if we really updated page >E8
+
+; Clean up and exit
+DETEXIT
+       IF   DEBUGSCSI#
+         BLWP @INITRS    ;debug output via rs232/1
+         BLWP @XMTEXT
+         DATA PWRINIT
+
+         BLWP @XMNUM
+         DATA SCSCRU,1
+       FI
+
+       SETO @GENSET      ;set flag to indicate we performed this test
+       MOVB @HBA+1,@>F112   ;restore page
+       MOV  @SR12,R12
+
+       RTWP              ;done, return. Detection complete, parms cleared.
+
+;-------------------------
+; Find a device  (CRU 1000-1D00)
+;      bl   @findname
+;      data devlenname
+;
+; Used by SCSI and IDE powerup w/similar code in TIPI
+; Output: R12=0 or card CRU;  if card found, it is left on!
+;
+FINDNAME
+       MOV  *R11+,R3
+       LI   R12,>1000    starting cru
+
+FINDC2 SBO  0            turn on card
+       CB   @>4000,@HEXAA
+       JNE  NXTPS1       no card here
+
+       LI   R2,>4008    starting address in DSR
+LNKDSR MOV  *R2,R2       any to check?
+       JEQ  NXTPS1       no
+       MOV  R3,R4        yes, get address of device we are comparing
+
+       MOV  R2,R0        copy address for our scan
+       C    *R0+,*R0+    plus 4
+       MOVB *R4,R5       get len of OUR device
+       SRL  R5,8
+       INC  R5
+CHKDSR CB   *R0+,*R4+    len/dev match?
+       JNE  LNKDSR       no, check next name
+       DEC  R5           yes, any left?
+       JNE  CHKDSR       keep checking
+       JMP  FINDRT       LEAVE CARD ON/R12 set
+
+NXTPS1 SBZ  0            turn off card
+       AI   R12,>0100
+       CI   R12,>1E00
+       JNE  FINDC2       check next
+       CLR  R12          no cards left; clear R12
+FINDRT RT                ;return R12=0=no card; R12=card CRU
+
+** END OF FILE

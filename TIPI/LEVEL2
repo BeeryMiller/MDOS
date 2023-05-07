@@ -1,0 +1,439 @@
+; File: LEVEL2
+;
+; Original DSR Routines from TIPI DSR (c)JediMatt42
+;
+;1.31.2021  Added routines for Level 2; using MYPAD(>A000) simulated PAD
+; -------   Prep and return is handled in HDR2-P2 to avoid REF's
+;          -Review moving prep to TIPI DSR to conserve L8 space
+;           Archiver UNPROTECT worked but locked up.
+;
+; 2.5.2021 $Turn off card before exiting DSR
+;           Moved  UNIT/UNITNO saving/restoring into this DSR space
+;           Test @TIPCRU for defined card and skip if not present
+; 2.6.2021  Added powerup test to level2 entry; can't assume it is done
+;           since we call powerup from within TIPI code based on flag
+;           (primarily to conserve limited Geneve DSR space)
+;---------------------------------------------------------------------
+
+; Branch table for supported opcodes
+; Master DSR (HDR1/HDR2) does not <yet> recognize  >17,>18,>19,>1A
+;      >16 (FILES) is not allowed
+;
+TIPIL2TBL
+       DATA PROTECT,FRENAME,DIRECTINP        ;>12,>13,>14
+       DATA DIRECTOUT,BADL2A,SETPATH         ;>15,>16,>17
+       DATA CREATEDIR,DELDIR,DRENAME         ;>18,>19,>1A
+SAVEDSRR11  DATA 0
+;
+; Get here via HDR2-P2 branch via HEADER\0x6022
+;*L10 holds the correct TIPI unit number; use it instead of >834c
+;      -Preserve >834c then replace before return (both error/non error)
+;      -Get opcode from VDP via >8356 pointer
+;      -Assume the opcode valid since HDR1-P1 lvl2 table got us here
+;
+
+MYPAD  EQU  >A000        ;See L8.LAYOUTS; PAD->MYPAD in hdr2-p2:SETMOD
+;
+; BL @tipigenl2
+; UNIT # is prepped in HDR2-P2:TPTEST
+;
+TPUNIT DATA 0            save unit number and restore upon exit
+
+TIPLV2
+TIPIGENL2
+       MOV  R11,R7       SAVE RESTORE! each routine also does this
+;                        so Don't BL in this first segment!
+       MOVB @>F116,@SAVT6C    save mapper and
+       MOVB @SAVT6C+1,@>F116  map in external bus @>C000->DFFF
+
+       MOV  @UNITNO,@TPUNIT   save MYPAD UNITNO  ( UNIT in hdr2-p2 )
+       AI   R10,-22           adjust remap (22-26) to physical unit#
+       SWPB R10               (hdr2\tptest pass physical tip drv in R10Lsb)
+       MOVB R10,@UNITNO       Now we have 0-4 in our fake MYPAD
+
+       CLR  @RAWERROR    2.6, this code mirrors level3
+       ABS  @TIPIPOWER        since we could perform l2 first
+       JNE  SKIP2X            let's initialize both places
+       BL   @TIPIPOWERUP
+
+SKIP2X CLR  R1           ;MYPAD in effect
+       MOVB @OPCODE,R1   ;prepped by hdr2\UNTEST [9640 pab REF]
+
+;      CI   R1,>1200     ;probably unnecessary to test the opcode
+;      JL   BADL2A        "   "
+;      CI   R1,>1A00      "   "
+;      JH   BADL2A        "   "
+
+       AI   R1,->1200    ;opcode, base 0
+       SRL  R1,7         ;convert to index
+
+       MOV  @TIPCRU,R12     TIPI CRU enabled?
+       JEQ  BADL2A       no, error
+       SBO  0            yes, turn on card!
+
+       MOV  @TIPIL2TBL(R1),R1   ;get address from table
+       B    *R1                 ;and execute
+
+BADL2A LI   R0,>E000
+       MOVB R0,@L2STAT
+       B    @L2DERR
+
+PROT_MSG    BYTE >12
+FREN_MSG    BYTE >13
+DINP_MSG    BYTE >14
+DOUT_MSG    BYTE >15
+;       tipi FILES not supported by GenDSR
+PATH_MSG    BYTE >17
+CDIR_MSG    BYTE >18
+DDIR_MSG    BYTE >19
+RDIR_MSG    BYTE >1A
+     EVEN
+;
+; The following PAD (>8300) equates are simulated in the >A000 memory
+;      space. SETMOD and level 2 entry copy values into this area for the DSR
+;      routines; it is later copied back to the caller's PAD space
+
+L2STAT EQU MYPAD+>50     ; >8350   ERROR CODES
+BUFCNT EQU MYPAD+>4C     ; >834C   PARAMETERS
+UNITNO   EQU MYPAD+>4C   ; >834C ;1-31-2021, must preserve/replace for rema
+PROTVAL  EQU MYPAD+>4D   ; >834D
+BLOCKCNT EQU PROTVAL     ; >834D   * NUMBER OF BLOCKS TO READ/WRITE
+WFILNAM  EQU MYPAD+>4E   ; >834E          * (VDP ADDR) NOTE, FILENAMES ARE 10 CH
+*                                   SPACE ADDED IN THIS CONTEXT.
+WOLDNAM  EQU MYPAD+>50   ; >8350  * (VDP ADDR) IF TWO NAMES ARE USED, THIS IS T
+PATHNAM  EQU WFILNAM     ; >834E  * (VDP ADDR) PATH NAME FOR SET PATH OPERATION
+
+* CONVENIENCE
+;;GPLR0LB EQU >83E1        ;$$$$ DANGER, GPLWS hardcode
+
+*                          * SET OR UNSET PROTECT BIT ON A FILE
+PROTECT
+     LIMI   0
+     MOV    R11,R7
+     LI     R0,1
+     LI     R1,PROT_MSG
+     BL     @SENDMSG     * SEND PROTECT FILE REQUEST TYPE
+     LI     R0,2
+     LI     R1,UNITNO
+     BL     @SENDMSG     * SEND UNIT NUMBER AND PROTECT VALUE
+     LI     R0,10
+     MOV    @WFILNAM,R1
+     BL     @VSENDMSG    * SEND FILENAME TO MODIFY
+     B      @GETL2RESP
+
+FRENAME
+*                        * RENAME A FILE ON A DEVICE IN THE CURRENT PATH
+     LIMI   0
+     MOV    R11,R7
+     LI     R0,1
+     LI     R1,FREN_MSG
+     BL     @SENDMSG     * SEND RENAME REQUEST HEADER
+     LI     R0,1
+     LI     R1,UNITNO
+     BL     @SENDMSG     * SEND UNIT NUMBER
+     LI     R0,10
+     MOV    @WFILNAM,R1
+     BL     @VSENDMSG    * SEND NEW FILENAME
+     LI     R0,10
+     MOV    @WOLDNAM,R1
+     BL     @VSENDMSG    * SEND OLD FILENAME
+     B      @GETL2RESP
+
+DIRECTINP
+*                        * READ FILE BYTES
+     LIMI   0
+     MOV    R11,R7
+     LI     R0,1
+     LI     R1,DINP_MSG
+     BL     @SENDMSG     * SEND DIRECT INPUT HEADER
+     LI     R0,2
+     LI     R1,UNITNO
+     BL     @SENDMSG     * SEND UNIT NUMBER AND NUMBER OF BLOCKS TO READ
+     LI     R0,10
+     MOV    @WFILNAM,R1
+     BL     @VSENDMSG    * SEND NAME OF FILE TO READ
+     CLR    R8
+     MOVB   @L2STAT,R8
+     SWPB   R8
+;;   AI     R8,>8300     * CAPTURE INFO ADDRESS
+     AI     R8,MYPAD     1.31.2021
+
+     LI     R0,2
+     MOV    R8,R1
+     INCT   R1
+     BL     @SENDMSG     * SEND STARTING BLOCK NUMBER TO READ.
+     LI     R0,1
+     LI     R1,L2STAT
+     BL     @RECVMSG     * RECEIVE ERROR CODE INTO >8350
+
+     CLR    R3
+     MOVB   @L2STAT,R3
+     SWPB   R3
+     CI     R3,SUCCESS
+     JEQ    DISUC
+     SRC    R3,3
+     MOVB   R3,@L2STAT
+     B      @L2DERR
+DISUC
+     MOVB   R3,@L2STAT   * CLEAR ERROR STATUS ON SUCCESS
+
+     LI     R0,8
+     MOV    R8,R1
+     INCT   R1           * SET READ BUFFER FOR FILE 'INFO'
+     BL     @RECVMSG     * READ
+
+     LI     R0,1
+     LI     R1,BLOCKCNT
+     BL     @RECVMSG     * READ BLOCKCNT ACTUALLY READ FROM PI
+
+     MOVB   @BLOCKCNT,@BLOCKCNT
+     JEQ    L2DERR       * FINISHED IF NUMBER OF BLOCKS TO READ WAS 0
+
+     LI     R0,256       * THIS IS ACTUALLY IGNORED. SET MAXIMUM BYTES TO REA
+     MOV    *R8,R1
+     BL     @VRECVMSG    * READ BLOCKS INTO VDP BUFFER
+     B      @L2DERR      * RETURN AS HANDLED
+
+DIRECTOUT
+*                       * WRITE FILE BYTES
+     LIMI   0
+     MOV    R11,R7
+     LI     R0,1
+     LI     R1,DOUT_MSG
+     BL     @SENDMSG     * SEND DIRECT OUTPUT HEADER
+     LI     R0,2
+     LI     R1,UNITNO
+     BL     @SENDMSG     * SEND UNIT NUMBER AND NUMBER OF BLOCKS TO WRITE
+     LI     R0,10
+     MOV    @WFILNAM,R1
+     BL     @VSENDMSG     * SEND NAME OF FILE TO WRITE
+     CLR    R8
+     MOVB   @L2STAT,R8
+     SWPB   R8
+
+;;   AI     R8,>8300     * CAPTURE INFO ADDRESS
+       AI  R8,MYPAD      1.31.2021
+
+     LI     R0,8
+     MOV    R8,R1
+     INCT   R1
+     BL     @SENDMSG     * SEND START BLOCK AND FILE INFO
+
+     LI     R0,1
+     LI     R1,L2STAT
+     BL     @RECVMSG     * RECEIVE ERROR CODE INTO >8350
+
+     CLR    R3
+     MOVB   @L2STAT,R3
+     SWPB   R3
+     CI     R3,SUCCESS
+     JEQ    DOSUC
+     SRC    R3,3
+     MOVB   R3,@L2STAT
+     B      @L2DERR       * RETURN NOW IF THERE WAS ERROR
+DOSUC
+     CLR    R0
+     MOVB   @BLOCKCNT,R0  * BLOCK COUNT * 256 ( BY BEING IN THE MSB )
+     JEQ    L2DONE        * SKIP SENDING BLOCKS IF BLOCK COUNT WAS 0
+     MOV    *R8,R1
+     BL     @VSENDMSG     * SEND THE DATA BLOCKS
+
+     LI     R0,1
+     LI     R1,L2STAT
+     BL     @RECVMSG      * GET DATA WRITE CONFIRMATION
+L2DONE
+     CLR    R3
+     MOVB   @L2STAT,R3
+     SWPB   R3
+     CI     R3,SUCCESS
+     JEQ    DOSUC2
+     SRC    R3,3
+     MOVB   R3,@L2STAT
+     B      @L2DERR
+DOSUC2
+     MOVB   R3,@L2STAT     * TURN SUCCESS INTO 0
+
+     B      @L2DERR
+
+L2DERR B  @RETL2ERR      ;2.5.2021 consolidate
+*                         * HANDLE ERRORS FROM DIRECT INPUT OR DIRECT OUTPUT
+;    MOV    R7,R11
+;    INCT   R11
+;      MOVB @SAVT6C,@>F116  restore mapper
+;    RT
+
+SETPATH
+*                        * SET CURRENT DIRECTORY FOR A UNIT/DRIVE
+     LIMI   0
+     MOV    R11,R7
+     LI     R0,1
+     LI     R1,PATH_MSG
+     BL     @SENDMSG     * SEND SET PATH REQUEST HEADER
+     LI     R0,1
+     LI     R1,UNITNO
+     BL     @SENDMSG     * SEND UNIT NUMBER
+     MOV    @PATHNAM,R1
+
+*    .SETVDPRA R1
+***** SETVDPRA R1 MACRO
+     SWPB   R1
+     MOVB   R1,@VDPWA
+     SWPB   R1
+     MOVB   R1,@VDPWA
+*************************
+
+     CLR    R0
+     MOVB   @VDPRD,R0
+     SWPB   R0          * GET LENGTH OF STRING
+     MOV    @PATHNAM,R1
+     INC    R1
+     BL     @VSENDMSG     * SEND PATH STRING
+     B      @GETL2RESP
+
+CREATEDIR
+*                         * CREATE A SUBDIRECTORY
+     LIMI   0
+     MOV    R11,R7
+     LI     R0,1
+     LI     R1,CDIR_MSG
+     BL     @SENDMSG     * SEND SET PATH REQUEST HEADER
+     LI     R0,1
+     LI     R1,UNITNO
+     BL     @SENDMSG     * SEND UNIT NUMBER
+     LI     R0,10
+     MOV    @WFILNAM,R1
+     BL     @VSENDMSG    * SEND NEW DIRECTORY NAME
+     B      @GETL2RESP
+
+DELDIR
+*                        * DELETE A DIRECTORY
+     LIMI   0
+     MOV    R11,R7
+     LI     R0,1
+     LI     R1,DDIR_MSG
+     BL     @SENDMSG     * SEND SET PATH REQUEST HEADER
+     LI     R0,1
+     LI     R1,UNITNO
+     BL     @SENDMSG     * SEND UNIT NUMBER
+     LI     R0,10
+     MOV    @WFILNAM,R1
+     BL     @VSENDMSG    * SEND NEW DIRECTORY NAME
+     B      @GETL2RESP
+
+DRENAME
+*                        * DIRECTORY RENAME
+     LIMI   0
+     MOV    R11,R7
+     LI     R0,1
+     LI     R1,RDIR_MSG
+     BL     @SENDMSG     * SEND RENAME REQUEST HEADER
+     LI     R0,1
+     LI     R1,UNITNO
+     BL     @SENDMSG     * SEND UNIT NUMBER
+     LI     R0,10
+     MOV    @WFILNAM,R1
+     BL     @VSENDMSG    * SEND NEW NAME
+     LI     R0,10
+     MOV    @WOLDNAM,R1
+     BL     @VSENDMSG    * SEND OLD NAME
+     B      @GETL2RESP
+
+
+; L2DERR branches here too
+RETL2ERR
+     MOV     R7,R11
+     INCT    R11
+
+       MOV  @TIPCRU,R12     2.5, turn off card before returning
+       JEQ  RETCR2           if no card defined, skip
+       SBZ  0
+RETCR2 MOVB @SAVT6C,@>F116    restore mapper
+       MOVB @TPUNIT,@UNITNO   restore original unit number (Byte only!)
+     RT                  * ERROR ALREADY STORED IN L2STAT
+
+;RETL2SK                  ;Should NEVER be called 1-31.2021
+;    MOV     R7,R11       ;we do NOT allow TIPI to pass to other devs
+;    RT                   ;in the remap environment
+
+GETL2RESP
+     LI     R0,1
+     LI     R1,L2STAT
+     BL     @RECVMSG     * RECEIVE ERROR CODE INTO >8350
+     MOVB   @L2STAT,@L2STAT
+;    JEQ    RETL2SK      * PI DIDN'T HANDLED REQUEST
+       JNE  HAND22
+       LI   R0,>E000     ;;set error if pI didn't handle this
+       JMP  RETL2ERR     ;;and report error to DSR
+
+HAND22
+     CLR    R0
+;;   MOVB   @L2STAT,@GPLR0LB
+       MOVB @L2STAT,R0   ;can't assume GPLWS !~!
+       SRL  R0,8         ;fix for LSByte
+
+     CI     R0,SUCCESS
+     JEQ    L2SUC
+     SRC    R0,3
+     MOVB   R0,@L2STAT
+     B      @RETL2ERR
+L2SUC
+     MOVB   R0,@L2STAT    * CLEAR SPECIAL PI SUCCESS CODE AND PROCEED TO RETU
+     B      @RETL2ERR
+
+*                         * BUFFER ALLOCATION ROUTINE
+
+; 1.31.2021, disabled; Geneve OS powerup manages 0x8370
+;SETFILES
+;    LIMI   0
+;    MOV    R11,R7
+;    CI     R12,>1100     * CHECK IF IS FILLING IN FOR FLOPPY CONTROLLER.
+;    JNE    RETL2SK       *   IF NOT, SKIP, HOPING REAL FDC WILL GET CALLED.
+;    BL     @DOFILES
+;    B      @RETL2ERR
+;
+;DOFILES
+;    CLR    R1
+;    MOVB   @BUFCNT,R1
+;    SWPB   R1
+;    CI     R1,0          * CHECK FOR BAD PARAMETERS
+;    JEQ    FILESERR
+;    CI     R1,>0F
+;    JGT    FILESERR
+;    MPY    @PERFILE,R1   * COMPUTE BUFFER
+;    MOV    R2,R1         * RESULT SHOULD BE SMALL ENOUGH FOR 1 WORD.
+;    AI     R1,6          * SUBTRACT AN ADDITION 5 + 1
+;    LI     R2,>3DEF
+;    S      R1,R2         * COMPUTE NEW VALUE
+;    MOV    R2,@VDPSTACK
+;    MOV    R2,R1
+;    INC    R1
+;    ORI    R1,VDWRITE
+;    SWPB   R1
+;    MOVB   R1,@VDPWA
+;    SWPB   R1
+;    MOVB   R1,@VDPWA
+;
+;    LI     R2,>AA3F
+;    MOVB   R2,@VDPWD
+;    SWPB   R2
+;    MOVB   R2,@VDPWD
+;
+;    LI     R2,>FF11
+;    MOVB   R2,@VDPWD
+;    SWPB   R2
+;    MOVB   R2,@VDPWD
+;
+;    MOVB   @BUFCNT,@VDPWD
+;    CLR    R1
+;    JMP    FILESRET
+;
+;FILESERR
+;    LI     R1,1
+;FILESRET
+;    MOVB   R1,@L2STAT
+;    RT
+;
+;PERFILE DATA 518          * SIZE OF BUFFER PER FILE
+;BASESTK DATA >3DEF
+
+

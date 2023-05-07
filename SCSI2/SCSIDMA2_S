@@ -1,0 +1,297 @@
+*-----------------------------------------------------------*
+*     Western Horizon Technologies 5380 SCSI Controller     *
+*                                                           *
+*        Written and Copyright 1993 by Will McGovern        *
+*-----------------------------------------------------------*
+* HISTORY
+* -------
+* Filename : SCSIDMA2_S
+*
+* 10-Jan-93  WMC  Created this file (AS SCSISECT/S)
+* 08-Nov-93  MJM  altered to work under C environment
+* 18-Dec-94  MJM  altered to work with GENMOD systems
+* 23-JUN-99  MBM  altered to support P-DMA properly
+* 21-MAR-99  MBM  altered to support EOP, WXF etc. properly
+* 25-MAR-99  MBM  altered with time-stamp
+* 19-APR-01  APK  altered to support both SCSI cards
+* 01-may-01  TAT  Moved SCSI card Flag (SCSCRD) to SECTOR_S
+*                 to facilite new PDMA on/off command
+*                 Modified use of flag to 0/1 w/ABS function
+* 11-Sep-09  TAT  Consolidated transfer loops, entry code
+* 20-Sep-09  TAT  Consolidated PDMA/"non-PDMA"
+* 30-Sep-09  TAT  Finished IO consolidation
+; 16-Jul-22  TAT  Reminder: PDMA on/off is really Block mode on/off
+;                 Updated some of the comments based on MZapf translation
+;
+*------------------------------------------------------------
+* NAME : DMARW
+*
+* DESC : DMA read/Write function for SCSI (generic)
+* PARM : in defined RAM data areas.
+* RET  : Hopefully, successfully transferred data!
+* DEST : R0,R1,R2,R3,R4,R5,R6,R7,R8,R10
+* SCSCRD : 0=pdma block mode; <>0 pdma non block mode (SECTOR_S)
+
+DRCINS  EQU  >DC96        MOVB *R6,*R2+
+QRCINS  EQU  >CC96        MOV  *R6,*R2+
+DWCINS  EQU  >D5B2        MOVB *R2+,*R6
+QWCINS  EQU  >C5B2        MOV  *R2+,*R6
+*
+DBUFADR DATA 0            *DMA BUFFER ADDRESS
+DREADW  DATA 0            * READ=1, WRITE=0
+DLENGTH DATA 0            *NUMBER OF BYTES TO TRANSFER
+DMAWS   EQU  >F000        *use the workspace in the chip (saved before call)
+*
+* 9.29, PDMA/Non-PDMA is a misnomer. Both transfer routines utilize PDMA
+*
+DMARW   DATA DMAWS,DMAENTR    9.20 consolidation
+DMAENTR MOV  @CRUBASE,R12      *GET THE CRU BASE OF THE CARD
+        MOV  @DBUFADR,R2
+        MOV  @DLENGTH,R7       *LENGTH OF BLOCK TO READ/WRITE
+        MOV  @DREADW,@DREADW   *READ MODE?
+        JEQ  SECRW31
+SECRW21 LI   R3,DRCINS         *TRANSFER FROM SCSI TO CPU RAM
+        LI   R8,QRCINS
+        LI   R4,PHDATI*256
+        LI   R6,RDMA
+        JMP  DMATYPE
+SECRW31 LI   R3,DWCINS         *TRANFER FROM CPU RAM TO SCSI
+        LI   R8,QWCINS
+        LI   R4,PHDATO*256
+        LI   R6,WDMA
+
+DMATYPE ABS  @SCSCRD     9.20 TEST FOR SCSI CARD TYPE FLAG (0=PDMA;<>0 NOT pdma)
+        JNE  NONPDMA          <>0?  perform DMA non-block transfer "non-pdma"
+        B    @ISPDMA            =0, perform DMA Block mode transfer "pdma"
+
+*=======================================
+* PDMA *NON-BLOCK* MODE
+* Unmodified cards and WHT Rev E only
+*
+NONPDMA
+SECW5B1 LI   R0,MR2DMA*256     DMA (WITHOUT BLOCK) mode enable
+        BL   @MODEENABLE
+        SBO  PDMA              Enable P-DMA auto handshake
+
+        MOV  @GENMOD,@GENMOD
+        JEQ  SECRW81
+* 9.11.09: combine loops
+        MOV  R3,R8       change R8 to a BYTE oriented move
+        SLA  R7,1        Adjust counter x2 to use the WORD oriented loop
+        JMP  SECRWW1     and begin the transfer
+
+SECRW81 X    R3          first
+        X    R3          2 bytes then..
+        SBO  WXFR        ENABLE WORD TRANSFERS
+        JMP  SECREW1     and skip the first word since we xferred 2x bytes above
+SECRWW1 X    R8     32 (base 1)
+SECREW1 X    R8     31
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8
+        X    R8     0
+        AI   R7,-64
+        JNE  SECRWW1
+        C   R3,R8        9.11.09 were we using GENMOD mode?  (R3 would equal R8)
+        JEQ GENRVE1      9.11.09 yes, skip WordXFeR SBO
+
+SECRWV1 SBZ  WXFR
+GENRVE1 SBZ  PDMA        (both genmod/non end here) Disable P-DMA auto handshake
+        MOVB @RRPI,R3          Clear any pending interrupt conditions
+        MOVB R7,@WMR2          Disable DMA transfer
+        MOVB R7,@WICR          Deassert data for writes
+        RTWP
+
+*--------------------------------------------------------
+* PDMA: PDMA BLOCK MODE - ASCSI and updated WHT cards
+*
+; 7.16.2022 This routine matches the ASCSI DSR.
+;           Byte/word logic added for Geneve
+;
+ISPDMA
+SECW5B LI   R0,MR2DMA+MR2BLK*256     DMA mode & Block Mode enable <MB>
+       BL   @MODEENABLE
+       SBO  BLK               Turn on block mode hardware (bit 6)
+       SBO  PDMA               Enable P-DMA auto handshake (bit 2)
+
+; ASCSI and Geneve DSR both send IRQ error condition to end of dma routine
+;   Error condition not captured. It is possible the subsequent routines
+;   detect the error. Noting for further review. 7/16/2022tt
+;
+
+*      CLR  R7           9.30-add timeout (too short a loop?)
+SECRW8 TB   IRQ                test for error condition
+       JEQ  GENRVE             if error, finito! neither read/write, but end
+       TB   DRQ                Wait for DRQ at start of block (bit 1)
+       JNE  SECRW8             wait for DRQ
+
+*      TB   DRQ          9.30 commented out for now
+*      JEQ  SECRW82      9.30 uncertain if a timeout here is appropriate
+*      INC  R7           9.30
+*      JNE  SECRW8       9.30
+*      B    @SCBADS      9.30
+
+SECRW82 MOV  @GENMOD,@GENMOD   Genmod?
+        JEQ  SECRW9            0=NO; perform word transfers
+
+       MOV  R3,R8        Set R8 (X) for word transfers
+       SRC  R7,4 [byte]  account for byte transfers (loop x2)
+       DEC  R7           account for last block (15 versus 16)
+       JMP  SECRWW       Bypass WordXFR set (transfer BYTES for Genmod)
+
+SECRW9 SRC  R7,5  [word]       aus Anzahl der byte, Anzahl der 16er-Schleifen.
+*                              nur halb-soviel wegen Word-acess!
+       DEC  R7                 -1, den letzten Block mit Sonderbehandlung
+       SBO  WXFR               ENABLE WORD TRANSFERS
+* common for Genmod/non-Genmod
+SECRWW X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8  16 WORDS/BYTES THIS LOOP
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       DEC  R7
+       JNE  SECRWW
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8  15 WORDS/BYTES THIS GROUP (last group)
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+       X    R8
+*
+       SBO  EOP          Release EOP for following access
+       X    R8           process final byte (512)
+       SBZ  EOP          ...and lock again!
+*
+GENEND SBZ  PDMA         necessary, as reading BSR will trigger DACK!
+       SBZ  BLK            Turn block mode off
+       SBZ  WXFR           Turn off word mode generally
+*
+       CLR  R7             Initialize timeout
+PDMA10 MOVB @RBSR,R3
+       ANDI R3,BSRED*256     Is End-Of-DMA set? (>80)
+       JNE  GENRVE           Yes, finish
+       INC  R7                 No, increment timeout counter
+       JNE  PDMA10             loop until timeout
+       B    @SCBADS          Time-Out, error #3 (whatever, just get out here!)
+*
+GENRVE SBZ  PDMA             Disable P-DMA auto handshake
+       SBZ  BLK              Disable blockmode-hardware
+       SBZ  WXFR             Disable word-transfer
+*
+       CLR  R7
+       MOVB R7,@WMR2         Turn off DMA and Block mode
+       MOVB @RRPI,R3         clear any interrupt
+       MOVB R7,@WMR2         Disable DMA transfer
+       MOVB R7,@WICR         Deassert data for writes
+       RTWP
+
+* 9/30/2009 Consolidated.  In: R0=transfer mode
+; 7.15.2022, compared w/ASCSI bank 7. OK. TT
+MODEENABLE
+        MOVB R4,@WTCR          Set data in/out phase for transfer
+        JNE  SECRW61           Jump if data in phase
+        LI   R1,ICRBUS*256     Assert data bus for data out phase
+        MOVB R1,@WICR          Assert data bus
+        MOVB R0,@WMR2          Enable data DMA transfer
+        CLR  R0                (MZ: any value will do, 0 is ok)
+        MOVB R0,@WSDS          Start DMA write
+        JMP  SECRWRT          9.30
+
+SECRW61 MOVB R0,@WMR2          Enable data DMA transfer
+        CLR  R0
+        MOVB R0,@WSDI          Start DMA receive (address 7)
+SECRWRT RT
+
+* This rough calculation code was considered for speed increases. Not likely to
+* pursue unless we leverage internal data moves for the tasks  TT
+*
+*all on 9995:
+*      x (mov) = 2+3=5 * 256=1280 + 16*2(3)(jmp/dec) =1280+96=1380
+*      3*256=768 + 256*2 *3= 1548
+*                  16*2*3 =96 =864cycles
+
+* if we do one word per loop:
+*      dec=256*3=768
+*      jne=256*3=768
+*      mov=256*3=768
+*      x  =256*2=512
+*      total: ~2800
+
+*if we only loop 16 times (with 16 moves per loop)
+*      dec=16*3=48
+*      jne=16*3=48
+*      mov=256*3=768
+*      x  =256*2=512
+*  **  with X: 1400
+*  **  without X : 1400-512=864
+*
+*      A rolled direct move is 3.5x faster
+*      Even reducing the rollout from 16 to 8 increases to 960
+*
+*      Could require a save of more bytes in 9995 ram
+*
+*      mov  *r6,*r2+     qrcins
+*      dec  r7
+*      jne  loopy
+*      B    *r1
+*quick load into registers
+*then branch to F000 space at
+*      LI   R1,LPDON1    return from loop
+*      LI   R8,>CC96     mov *r6,*r2+
+*      LI   R9,>CC96     "    "
+*      LI   R10,>        dec r7
+*      LI   R11,>        jne $-2
+*      LI   R1,>         b *r1  (lpdon1)
+*      B    @>F010
+*LPDON1
+*
+* pdma changes '(c) Harald Glaab & Michael Becker 25.03.1999 20:11'
+*      AORG $/16*16+16
+*
+*      EOF

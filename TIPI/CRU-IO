@@ -1,0 +1,372 @@
+; File: CRU-IO  (was tipi-io)
+;
+; Changed ports to work with TIPI mapped at >C000
+;      This will break TIPI XOP code
+;
+; 12.6      Added flag to RECVMSG and SENDMSG
+;           Allow us to get payload length and then loop
+
+* TIPI IO PORTS
+
+;TDOUT    EQU     >5FFF          * TI DATA (OUTPUT)
+;TCOUT    EQU     >5FFD          * TI CONTROL SIGNAL (OUTPUT)
+;RDIN     EQU     >5FFB          * PI DATA (INPUT)
+;RCIN     EQU     >5FF9          * PI CONTROL SIGNAL (INPUT)
+*
+TDOUT    EQU     >DFFF          * TI DATA (OUTPUT)
+TCOUT    EQU     >DFFD          * TI CONTROL SIGNAL (OUTPUT)
+RDIN     EQU     >DFFB          * PI DATA (INPUT)
+RCIN     EQU     >DFF9          * PI CONTROL SIGNAL (INPUT)
+*
+
+* TIPI SIGNAL CONSTANTS
+TSRSET   EQU     >F100          * RESET SYN VALUE
+TSWB     EQU     >0200          * WRITE BYTE SYN VALUE
+TSRB     EQU     >0600          * READ BYTE SYN VALUE
+
+*** MACRO: HANDSHAKE TSWB OR HANDSHAKE TSRB TO SIGNAL AND INCREMENT SYN/ACK IN
+* IN R2,  ALSO DESTROYS R3.
+
+*    .DEFM TRANSMIT
+*    MOVB     R2,@TCOUT
+*FF  MOVB     @RCIN,R3
+*    CB     R2,R3
+*    .IFNDEF EMULATION
+*    JNE     FF
+*    .ELSE
+*    NOP
+*    .ENDIF
+*    AI     R2,>0100
+*    ANDI   R2,>0100
+*    ORI    R2,#1
+*    .ENDM
+
+*** MACRO: RESET, SUPER SIMPLE HANDSHAKE WITH NO ROLLING OF BITS.
+
+*    .DEFM RESET
+*    LI     R2,TSRSET
+*    MOVB   R2,@TCOUT
+*GG  CB     @RCIN,R2
+*    .IFNDEF EMULATION
+*    JNE     GG
+*    .ELSE
+*    NOP
+*    .ENDIF
+*    .ENDM
+
+*** SEND A MESSAGE TO THE RPI - SENDS A WORD CONTAINING THE LENGTH OF MESSAGE,
+* THEN THE BYTES OF THE MESSAGE.
+* REGISTER USAGE:
+*   R0 - CONTAINS LENGTH OF MESSAGE. RESULT IS 0 IF ALL BYTES SENT.
+*   R1 - CPU ADDRESS OF BYTES TO SEND.
+*   DESTROYS R2, R3, AND POTENTIALLY THE FIRST AND LAST WORD OF BYTES TO SEND.
+
+SENDALL     DATA 0       0=yes; 1=just get R4 then call RNEXT
+SAVR2S      DATA 0
+
+SENDMSGTOP               ;for pasdat looping
+       SETO @SENDALL     Stop before SNEXT
+       JMP  SENDBYP      12.6, duh, forgot to jump over the clear..
+
+SENDMSG CLR @SENDALL     Send it all normally
+SENDBYP
+******* RESET ****
+     LI     R2,TSRSET
+     MOVB   R2,@TCOUT
+AA1  CB     @RCIN,R2
+     JNE    AA1
+******************
+
+     LI     R2,TSWB
+     MOVB   R0,@TDOUT
+
+*    .TRANSMIT TSWB
+***** TRANSMIT TSWB ***
+     MOVB   R2,@TCOUT
+BB1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    BB1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSWB
+**********************
+
+     SWPB   R0
+     MOVB   R0,@TDOUT
+
+*    .TRANSMIT TSWB
+***** TRANSMIT TSWB ***
+     MOVB   R2,@TCOUT
+CC1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    CC1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSWB
+***********************
+
+     SWPB   R0
+     CI     R0,0
+     JEQ    SDONE
+
+     MOV    R2,@SAVR2S
+     ABS    @SENDALL     12.6, Just want payload total
+     JNE    SDONE             we'll call SNEXT in a loop
+
+; R0=len                ;If calling from load/save/bread/etc set R0/R1
+; R1=^buffer            ;remember, caller must track total bytes sent via R0
+SNEXT
+     MOVB   *R1,@TDOUT
+
+***** TRANSMIT TSWB ***
+     MOVB   R2,@TCOUT
+DD1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    DD1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSWB
+***********************
+
+     INC     R1          ;could use *R1+ above
+     DEC     R0
+     JNE     SNEXT
+SDONE
+     RT
+
+
+*** SEND A MESSAGE TO THE RPI - SENDS A WORD CONTAINING THE LENGTH OF MESSAGE,
+*   THEN THE BYTES OF THE MESSAGE.
+* REGISTER USAGE:
+*   R0 - CONTAINS LENGTH OF MESSAGE. RESULT IS 0 IF ALL BYTES SENT.
+*   R1 - VDP ADDRESS OF BYTES TO SEND.
+*   DESTROYS R2, R3, AND POTENTIALLY THE FIRST AND LAST WORD OF BYTES TO SEND.
+VSENDMSG
+
+*    .RESET
+
+******* RESET ****
+     LI     R2,TSRSET
+     MOVB   R2,@TCOUT
+EE1  CB     @RCIN,R2
+     JNE    EE1
+******************
+
+     LI     R2,TSWB
+     MOVB   R0,@TDOUT
+
+*    .TRANSMIT TSWB
+***** TRANSMIT TSWB ***
+     MOVB   R2,@TCOUT
+FF1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    FF1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSWB
+***********************
+
+     SWPB   R0
+     MOVB   R0,@TDOUT
+
+*    .TRANSMIT TSWB
+***** TRANSMIT TSWB ***
+     MOVB   R2,@TCOUT
+GG1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    GG1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSWB
+***********************
+
+     SWPB   R0
+     CI     R0,0
+     JEQ    VSDONE
+
+*    .SETVDPRA R1
+***** SETVDPRA R1 MACRO
+     SWPB   R1
+     MOVB   R1,@VDPWA
+     SWPB   R1
+     MOVB   R1,@VDPWA
+*************************
+
+VSNEXT
+     MOVB   @VDPRD,@TDOUT
+
+*    .TRANSMIT TSWB
+***** TRANSMIT TSWB ***
+     MOVB   R2,@TCOUT
+HH1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    HH1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSWB
+***********************
+
+     DEC    R0
+     JNE    VSNEXT
+VSDONE
+     RT
+
+
+*** REQUEST A MESSAGE FROM THE RPI - EXPECTS A WORD CONTAINING THE LENGTH OF THE
+*   MESSAGE FOLLOWED BY THE PAYLOAD.
+* REGISTER USAGE:
+*   R0 - RECEIVE BUFFER SIZE. RESULT IS NUMBER OF BYTES LOADED INTO BUFFER.
+*   R1 - CPU ADDRESS OF BUFFER
+*   DESTROYS R0 - R8
+
+RECVALL     DATA 0       0=yes; 1=just get R4 then call RNEXT
+SAVR2T      DATA 0
+
+RECVMSGTOP
+       SETO @RECVALL     Stop before RNEXT
+       JMP  RECVBYP      12.6, duh, forgot to jump over the clear..
+
+RECVMSG CLR @RECVALL     Receive it all
+RECVBYP
+*      .RESET              * CONDUCT THE HANDSHAKE OPERATION
+******* RESET ****
+     LI     R2,TSRSET
+     MOVB   R2,@TCOUT
+II1  CB     @RCIN,R2
+     JNE    II1
+******************
+
+     LI     R2,TSRB      * SET READ MODE
+
+*    .TRANSMIT TSRB      * WAIT FOR BYTE READY
+***** TRANSMIT TSRB ***
+     MOVB   R2,@TCOUT
+JJ1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    JJ1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSRB
+***********************
+
+     MOVB     @RDIN,R4   * READ MSB OF DATA SIZE
+     SWPB     R4
+
+*    .TRANSMIT TSRB      * WAIT FOR BYTE READY
+***** TRANSMIT TSRB ***
+     MOVB   R2,@TCOUT
+KK1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    KK1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSRB
+***********************
+
+     MOVB     @RDIN,R4   * READ LSB OF DATA SIZE
+     SWPB     R4
+     CLR      R0         * RESET BYTE COUNTER
+     CI       R4,>0000   * IF SIZE IS 0, THEN BE DONE
+     JEQ      RRT
+
+     MOV    R2,@SAVR2T
+     ABS    @RECVALL     12.6, Just want payload total
+     JNE    RRT               we'll call RNEXT in a loop
+;---
+RNEXT
+*    .TRANSMIT TSRB       * WAIT FOR BYTE READY
+***** TRANSMIT TSRB ***
+     MOVB   R2,@TCOUT
+LL1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    LL1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSRB
+***********************
+
+     MOVB  @RDIN,*R1+     * COPY BYTE FROM TIPI TO RAM
+     INC   R0             * COUNT THE READ OPS
+     C     R0,R4
+     JNE   RNEXT          * IF NOT DONE THEN GO BACK AND READ NEXT
+RRT
+     RT
+
+*** REQUEST A MESSAGE FROM THE RPI - EXPECTS A WORD CONTAINING THE LENGTH OF THE
+* MESSAGE FOLLOWED BY THE PAYLOAD.
+* REGISTER USAGE:
+*   R0 - RECEIVE BUFFER SIZE. RESULT IS NUMBER OF BYTES LOADED INTO BUFFER.
+*   R1 - VDP ADDRESS OF BUFFER
+*   DESTROYS R2, R3, AND R4
+VRECVMSG
+
+*    .RESET               * CONDUCT THE HANDSHAKE OPERATION
+******* RESET ****
+     LI     R2,TSRSET
+     MOVB   R2,@TCOUT
+MM1  CB     @RCIN,R2
+     JNE    MM1
+******************
+
+     LI     R2,TSRB       * SET READ BYTE MODE
+
+*    .TRANSMIT TSRB       * WAIT FOR BYTE READY
+***** TRANSMIT TSRB ***
+     MOVB   R2,@TCOUT
+NN1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    NN1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSRB
+***********************
+
+     MOVB     @RDIN,R4    * READ MSB OF DATA SIZE
+     SWPB     R4
+
+*    .TRANSMIT TSRB       * WAIT FOR NEXT BYTE
+***** TRANSMIT TSRB ***
+     MOVB   R2,@TCOUT
+OO1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    OO1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSRB
+***********************
+
+     MOVB     @RDIN,R4    * READ LSB OF DATA SIZE
+     SWPB     R4
+     CLR      R0          * SET COUNTER FOR READ DATA
+     CI       R4,>0000    * IF SIZE IS 0, THEN BE DONE.
+     JEQ      VRRT
+
+*   .SETVDPWA R1          * SET DESTINATION FOR THE DATA WE READ
+**** SETVDPWA R1 ******
+     ORI    R1,VDWRITE
+     SWPB   R1
+     MOVB   R1,@VDPWA
+     SWPB   R1
+     MOVB   R1,@VDPWA
+***********************
+
+VRNEXT
+
+*    .TRANSMIT TSRB        * WAIT FOR BYTE READY
+***** TRANSMIT TSRB *
+     MOVB   R2,@TCOUT
+PP1  MOVB   @RCIN,R3
+     CB     R2,R3
+     JNE    PP1
+     AI     R2,>0100
+     ANDI   R2,>0100
+     ORI    R2,TSRB
+******************
+
+     MOVB   @RDIN,@VDPWD   * COPY BYTE FROM TIPI TO VDP
+     INC    R0             * COUNT THE READ OPS
+     C      R0,R4
+     JNE    VRNEXT         * IF NOT READ EXPECTED SIZE THEN READ NEXT
+VRRT
+     RT
+

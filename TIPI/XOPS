@@ -1,0 +1,1764 @@
+* 07.10.2021  UPDATED R13 RETURN FOR ALL OPCODE CALLS
+* 12.13.2021  BM - Added handle byte for multiple TIPI connections
+* 01.01.2022  BM - Updated Opcode >10 to reflect Video Opcode >0032
+* 01.17.2022  BM - Updated Opcode >0D to pass string length in R2
+* 01.18.2022  BM - Updated Opcode >0D for better process mapping
+* 02.02.2022  BM - Cleaned up code from unneeded routines
+* 05.09.2022  TT - added ref/def for cru and find routine
+*                  Maximum TIPCRU scan changed from >2000 to >1E00
+* 05.10.2022  TT - Moved TIPI Find routine to TPOWERS
+*                  Updated opcodes 0,1
+*
+* 05.12.2022  BM - Removed LIMI 0/2 to avoid potential interrupts within XOP
+*
+* 11.20.2022  BM - Fixed TIPI TCP Close connection. Typo in string length
+* 11.20.2022  BM - Added TIPI String send for greater than 10 chars opcode >12
+* 11.20.2022  BM - Added UDP Support with opcodes >13, >14, >15, >16
+*                  as open, close, write, read
+* 03.25.2023  BM - Updated Opcodes >12 through >16
+* 03.25.2023  BM - Added TLS Opcodes >17 through >1A
+* 03.25.2023  BM - Added TIPI LOG Extension Opcode >1B
+* 03.26.2023  BM - Created MAPPAGES routine to reduce code usage
+
+       DEF  TIPXOP
+       DEF  XOPEND
+       DEF  TIPEND
+       REF  TIPCRU       ;5.9.2022: HEADER
+
+TSKMAP EQU >8114            TASK MAPPED PAGES IN PAGE 0 OF TASK AT >8000
+MAPPER EQU >F110
+
+XOPENT DATA XOPENT0
+
+*
+* TIPI Library Branch Table
+*
+
+OPCODES
+       DATA RESETTIPI         OPCODE 0
+       DATA IDENTIFYCRU       OPCODE 1
+       DATA TIPI_O            OPCODE 2
+       DATA TIPI_R            OPCODE 3
+       DATA TIPI_S            OPCODE 4
+       DATA TIPI_C            OPCODE 5
+       DATA RECEIVESTRING     OPCODE 6
+       DATA ANSIUP            OPCODE 7
+       DATA ANSIDOWN          OPCODE 8
+       DATA ANSILEFT          OPCODE 9
+       DATA ANSIRIGHT         OPCODE A
+       DATA ANSIPGUP          OPCODE B
+       DATA ANSIPGDN          OPCODE C
+       DATA SERVER_BIND       OPCODE D
+       DATA SERVER_UNBIND     OPCODE E
+       DATA SERVER_ACCEPT     OPCODE F
+       DATA MOUSE             OPCODE >10
+       DATA TIPISENDSTRING    OPCODE >11
+       DATA TIPISENDSTRINGE   OPCODE >12
+       DATA UDPOPEN           OPCODE >13
+       DATA UDPCLOSE          OPCODE >14
+       DATA UDPWRITE          OPCODE >15
+       DATA UDPREAD           OPCODE >16
+       DATA TLSOPEN           OPCODE >17
+       DATA TLSCLOSE          OPCODE >18
+       DATA TLSWRITE          OPCODE >19
+       DATA TLSREAD           OPCODE >1A
+       DATA TIPILOGEXTENSION  OPCODE >1B
+
+
+
+MAXLIB EQU  $-OPCODES/2       NUMBER OF OPCODE ROUTINES
+
+*
+* TIPI Library XOP Handler
+*
+*
+* Call:    XOP  @TIPI,0
+*
+* Workspace:  >A000 to >FFFF
+*
+*
+* Pass:    R0  Routine Number
+*
+* Return:  Variable as defined
+*
+* Note:    All Addresses are EXECUTION ADDRESSES
+*          Unless Explicitly Stated Otherwise.
+*
+*          Fast Ram >F040 through >F07F is Reserved
+*          for Library Use.  DO NOT USE!
+*
+*
+
+
+TIPXOP
+XOPENT0
+       MOV  *R13,R12     Get routine number
+       CI   R12,MAXLIB   Invalid routine number?
+       JLE  XOPENT1      Yes, return error code
+       JMP  ERROR
+
+* Get Routine Number and Execute
+
+XOPENT1
+       SLA  R12,1               No, Get index into vector table
+       MOV  @OPCODES(R12),R10   Get routine address
+       B    *R10                Execute proper routine
+
+* Return Error Code in R0 to Caller's R0
+
+ERROR  SETO R0
+
+       MOV  R0,*R13      Return error code to caller
+       ORI  R15,>2000    Set caller's EQ status bit
+       RTWP              Return to caller
+
+
+TIPINAME
+       BYTE >04,'T','I','P','I'
+       EVEN
+
+TIPICLOSE
+       BYTE >22
+PORT2  BYTE >01
+       DATA >0200
+
+RECEIVEBUFFER      DATA 0
+TIPISENDCHARBUFFER BSS 2
+
+TIPIWRITEMSGBACK
+       BYTE >22
+PORT3  BYTE >01
+       BYTE >03,>01,>01
+       EVEN
+
+TIPIWRITEMSG
+       BYTE >22
+PORT4  BYTE >01
+       BYTE >03,>01,>01
+       EVEN
+
+*************************
+* MAP WORKSPACE ROUTINE
+
+MAPWS
+       CLR  @RECEIVEBUFFER   Clearing buffer to reduce code usage
+
+       MOV  R13,@MAPWS2
+       MOV  R13,R10
+       CI   R10,>E000    DON'T WANT TO CHANGE IF WS IN ONBOARD RAM
+       JHE  MAPWS1
+       MOV  R10,R2
+       MOV  R2,R3
+       SRL  R2,13
+       ANDI R3,>1FFF
+       MOVB @TSKMAP(R2),@MAPPER+1
+       AI   R3,>2000
+       MOV  R3,R10
+MAPWS1
+       MOV  R10,R13
+       RT
+
+MAPWS2 DATA 0            HOLDING ONTO OLD WS POINTER
+
+MAPWSRESTORE
+       MOV  @MAPWS2,R13
+       RT
+
+******************************************************
+* Maps String Page content into >A000 to >DFFF range *
+
+******************************************************
+MAPPAGES
+       MOV  @2(R13),R10
+
+       CI   R10,>A000
+       JHE  MAPPAGES1
+       MOV  R10,R2
+       MOV  R2,R3
+       SRL  R2,13
+       ANDI R3,>1FFF
+       MOVB @TSKMAP(R2),@MAPPER+5
+       INC  R2
+       MOVB @TSKMAP(R2),@MAPPER+6
+       AI   R3,>A000
+       MOV  R3,R10
+MAPPAGES1
+       RT
+
+*******************************************************************
+* OPCODE:  >0000                             Reset TIPI           *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*                                                                 *
+*                                                                 *
+*******************************************************************
+
+RESETTIPI
+
+       MOV  @TIPCRU,R12     SET CRU
+       SBO  0            TURN ON CARD
+
+       CLR  @TDOUT       CLEAR TIPI DATA OUTPUT
+       CLR  @TCOUT       CLEAR CONTROL OUTPUT
+
+       SBZ  0            TURN OFF CARD
+
+       RTWP              RETURN
+
+*******************************************************************
+* OPCODE:  >0001                             IDENTIFY CRU OF TIPI *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*                                                                 *
+* Return:  R0  CRU Address
+*                                                                 *
+*******************************************************************
+
+IDENTIFYCRU
+
+       BL   @MAPWS
+
+       MOV  @TIPCRU,@0(R13)
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+
+*******************************************************************
+* OPCODE:  >0002                         TCP Open URL             *
+*                                                                 *
+* Workspace    >A000 to >FFFF                                     *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  URL:PORT Pointer to open in >A000 to >FFFF range   *
+*          R2  Length of R1                                       *
+*          R3  MSB handle byte                                    *
+*                                                                 *
+* Return:  R1  >FFFF if connect                                   *
+*              >0000 if no connection                             *
+*                                                                 *
+*******************************************************************
+
+
+SPACE   DATA >2020
+OPENURL
+TIPI_O
+
+       MOVB @SETUPTIPIOPEN+0,@TIPIOPEN+0
+       MOVB @SETUPTIPIOPEN+1,@TIPIOPEN+1
+       MOVB @SETUPTIPIOPEN+2,@TIPIOPEN+2
+
+       BL   @MAPWS
+
+       MOVB @6(R13),@PORT1
+
+       LI   R1,TIPIOPEN1
+       LI   R2,80
+       LI   R3,SPACE
+OPENURL1
+       MOVB *R3,*R1+
+       DEC  R2
+       JNE  OPENURL1
+
+       BL   @MAPPAGES
+
+       LI   R1,TIPIOPEN1
+       LI   R2,80
+
+
+OPENURL2
+       MOVB *R3+,*R1+
+       DEC  R2
+       JNE  OPENURL2
+
+OPENURL3
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       MOV  @4(R13),R0
+       AI   R0,3
+
+       LI   R1,TIPIOPEN
+
+       BL   @SENDMSG     6.7.2019
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+       BL   @RECVMSG
+
+       MOV  @RECEIVEBUFFER,@RECEIVEBUFFER
+       JNE  OPENURL6
+       CLR  R1
+       JMP  OPENURL7
+OPENURL6
+       SETO R1
+OPENURL7
+       MOV  @RECEIVEBUFFER,R2
+
+       MOV  R2,@0(R13)
+       MOV  R1,@2(R13)
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+
+*******************************************************************
+* OPCODE:  >0003                         TCP Receive TIPI Message *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Handle byte (MSB)
+*                                                                 *
+* Return:  R0  0=no character, >FFFF if character                 *
+* Return:  R1  Received character (MSB)                           *
+*                                                                 *
+*******************************************************************
+
+TIPI_R
+       BL   @MAPWS
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       MOVB @2(R13),@PORT5
+       MOVB @2(R13),@PORT6
+
+       MOV  @TIPIRECEIVEMSGBACK+0,@TIPIRECEIVEMSG+0
+       MOV  @TIPIRECEIVEMSGBACK+2,@TIPIRECEIVEMSG+2
+       MOV  @TIPIRECEIVEMSGBACK+4,@TIPIRECEIVEMSG+4
+
+       LI   R0,5
+       LI   R1,TIPIRECEIVEMSG
+
+       BL   @SENDMSG     6.7.2019
+
+       CLR  @TIPIRECEIVEMSG
+
+       LI   R0,1
+       LI   R1,TIPIRECEIVEMSG
+
+       BL   @RECVMSG
+
+       MOV  R0,R0
+       JEQ  NOCHAR
+
+       SETO @0(R13)
+
+       CLR  R12
+       MOVB @TIPIRECEIVEMSG,R12
+       MOV  R12,@2(R13)
+
+
+       JMP  GOTCHAR
+NOCHAR
+       CLR  R0
+       MOV  R0,@0(R13)
+
+GOTCHAR
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+TIPIRECEIVEMSG
+       BYTE >22
+PORT5  BYTE >01
+       BYTE >04,>00,>01,0
+       EVEN
+
+TIPIRECEIVEMSGBACK
+       BYTE >22
+PORT6  BYTE >01
+       BYTE >04,>00,>01,0
+       EVEN
+
+*******************************************************************
+* OPCODE:  >0004                            TCP Send TIPI Message *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Character to send (MSB)                            *
+*          R2  MSB handle byte                                    *
+*******************************************************************
+
+TIPI_S
+
+       BL   @MAPWS
+
+       MOV  @TIPCRU,R12
+       MOVB @4(R13),@PORT4
+       MOVB @4(R13),@PORT3
+
+       SBO  0
+       MOV  @TIPIWRITEMSGBACK+0,@TIPIWRITEMSG+0
+       MOV  @TIPIWRITEMSGBACK+2,@TIPIWRITEMSG+2
+       MOV  @TIPIWRITEMSGBACK+4,@TIPIWRITEMSG+4
+
+       MOV  @2(R13),@TIPISENDCHARBUFFER
+
+       MOVB @TIPISENDCHARBUFFER,@TIPIWRITEMSG+3
+
+       LI   R0,4
+       LI   R1,TIPIWRITEMSG
+
+       BL   @SENDMSG     6.7.2019
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+
+       BL   @RECVMSG
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+*******************************************************************
+* OPCODE:  >0005                        TCP Close TIPI Connection *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Handle byte (MSB)                                  *
+*                                                                 *
+* Return:  R0  Not applicable                                     *
+*                                                                 *
+*******************************************************************
+
+TIPI_C
+       BL   @MAPWS
+
+       MOV  @TIPCRU,R12
+       MOVB @2(R13),@PORT2
+
+       SBO  0
+
+       LI   R0,3                             11.21.2022 CHANGED FROM 25 TO 3
+       LI   R1,TIPICLOSE
+
+       BL   @SENDMSG
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+
+       BL   @RECVMSG
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+*******************************************************************
+* OPCODE:  >0006                        TCP  Receive String       *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  String pointer to open in >A000 to >FFFF range     *
+*              Max length 8K                                      *
+*          R2  String length                                      *
+*          R3  Handle byte (MSB)                                  *
+*                                                                 *
+* Return:  R0  String length                                      *
+*                                                                 *
+*******************************************************************
+
+STRINGPOINTER DATA 0
+
+RECEIVESTRING
+
+       BL   @MAPWS
+
+       MOVB @6(R13),@PORT7
+       MOVB @6(R13),@PORT8
+
+       BL   @MAPPAGES
+
+       MOV  R3,@STRINGPOINTER
+       JMP  RECEIVESTRING2
+RECEIVESTRING1
+       MOV  R10,@STRINGPOINTER
+
+RECEIVESTRING2
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       MOV  @TIPIRECEIVEMSGBACK1+0,@TIPIRECEIVEMSG1+0
+       MOV  @TIPIRECEIVEMSGBACK1+2,@TIPIRECEIVEMSG1+2
+       MOV  @4(R13),R1
+
+       MOVB R1,@TIPIRECEIVEMSG1+3
+       SWPB R1
+       MOVB R1,@TIPIRECEIVEMSG1+4
+
+       LI   R0,5
+       LI   R1,TIPIRECEIVEMSG1
+
+       BL   @SENDMSG
+
+       CLR  @TIPIRECEIVEMSG1
+
+       MOV  @4(R13),R0
+       MOV  @STRINGPOINTER,R1
+
+       BL   @RECVMSG
+
+       MOV  R0,@0(R13)      pass string length back
+       JEQ  RECEIVESTRING3
+
+
+RECEIVESTRING3
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+TIPIRECEIVEMSG1
+       BYTE >22
+PORT7  BYTE >01
+       BYTE >04,>00,>01,0
+       EVEN
+
+TIPIRECEIVEMSGBACK1
+       BYTE >22
+PORT8  BYTE >01
+       BYTE >04,>00,>01,0
+       EVEN
+
+
+*******************************************************************
+* OPCODE:  >0007                            TCP Send ANSI UP      *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Handle byte                                        *
+*                                                                 *
+*******************************************************************
+
+ANSIUP
+       BL   @MAPWS
+
+       MOV  @TIPCRU,R12
+       MOVB @2(R13),@PORT13
+
+       SBO  0
+
+       LI   R0,6
+       LI   R1,ANSI_UP
+
+* The ACTONANSI label is used by opcodes 7,8,9,A,B, and C
+
+ACTONANSI
+       BL   @SENDMSG
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+
+       BL   @RECVMSG
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+       RTWP
+
+*******************************************************************
+* OPCODE:  >0008                            TCP Send ANSI DOWN    *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Handle byte                                        *
+*                                                                 *
+*******************************************************************
+
+ANSIDOWN
+
+       BL   @MAPWS
+       MOV  @TIPCRU,R12
+       MOVB @2(R13),@PORT14
+       SBO  0
+       LI   R0,6
+       LI   R1,ANSI_DOWN
+
+       B    @ACTONANSI
+
+
+*******************************************************************
+* OPCODE:  >0009                            TCP Send ANSI LEFT    *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Handle byte                                        *
+*                                                                 *
+*******************************************************************
+
+ANSILEFT
+
+       BL   @MAPWS
+       MOV  @TIPCRU,R12
+       MOVB @2(R13),@PORT11
+       SBO  0
+       LI   R0,6
+       LI   R1,ANSI_LEFT
+
+       B    @ACTONANSI
+
+
+*******************************************************************
+* OPCODE:  >000A                            TCP Send ANSI RIGHT   *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Handle byte                                        *
+*                                                                 *
+*******************************************************************
+
+ANSIRIGHT
+       BL   @MAPWS
+       MOV  @TIPCRU,R12
+       MOVB @2(R13),@PORT12
+       SBO  0
+       LI   R0,6
+       LI   R1,ANSI_RIGHT
+
+       B    @ACTONANSI
+
+
+*******************************************************************
+* OPCODE:  >000B                            TCP Send ANSI PG UP   *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Handle byte                                        *
+*                                                                 *
+*******************************************************************
+
+ANSIPGUP
+       BL   @MAPWS
+       MOV  @TIPCRU,R12
+       MOVB @2(R13),@PORT16
+       SBO  0
+       LI   R0,6
+       LI   R1,ANSI_PGUP
+
+       B    @ACTONANSI
+
+*******************************************************************
+* OPCODE:  >000C                            TCP Send ANSI PG-DOWN *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Handle byte                                        *
+*                                                                 *
+*******************************************************************
+
+ANSIPGDN
+
+       BL   @MAPWS
+       MOV  @TIPCRU,R12
+       MOVB @2(R13),@PORT15
+       SBO  0
+       LI   R0,6
+       LI   R1,ANSI_PGDN
+
+       B    @ACTONANSI
+
+
+**********************************************************************
+* OPCODE:  >000D                            TCP Server BIND port     *
+*                                                                    *
+* Pass:    R0  Routine Number                                        *
+*          R1  URL:PORT Pointer to open in >A000 to >FFFF range      *
+*          R2  Server URL:Port length                                *
+*          R3  Server handle byte (MSB)                              *
+*                                                                    *
+* Return:  R0  >FFFF if BINDing successful                           *
+*              >0000 if BINDing not successful                       *
+*                                                                    *
+**********************************************************************
+
+SERVER_BIND
+
+       MOVB @SETUPTIPIBIND+0,@TIPIOPEN+0
+       MOVB @SETUPTIPIBIND+1,@TIPIOPEN+1
+       MOVB @SETUPTIPIBIND+2,@TIPIOPEN+2
+
+       BL   @MAPWS
+
+       MOVB @6(R13),@PORT9
+
+       LI   R1,TIPIBIND1
+
+       LI   R2,80
+       LI   R3,SPACE
+
+TIPI_BIND1
+
+       MOVB *R3,*R1+
+       DEC  R2
+       JNE  TIPI_BIND1
+
+       BL   @MAPPAGES
+
+TIPI_BIND10
+
+       LI   R1,TIPIBIND1
+       LI   R2,80
+TIPI_BIND11
+       MOVB *R3+,*R1+
+       DEC  R2
+       JNE  TIPI_BIND11
+
+TIPI_BIND3
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       MOV  @4(R13),R0
+       AI   R0,3
+
+       LI   R1,TIPIBIND
+
+       BL   @SENDMSG
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+       BL   @RECVMSG
+
+       MOV  @RECEIVEBUFFER,@RECEIVEBUFFER
+       JEQ  NOBIND
+       SETO @0(R13)
+       JMP  GOTBIND
+
+NOBIND
+       CLR  R0
+       MOV  R0,@0(R13)
+GOTBIND
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+       RTWP
+
+*******************************************************************
+* OPCODE:  >000E                            TCP Server UNBIND     *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Server socket (MSB)                                *
+*                                                                 *
+*******************************************************************
+
+SERVER_UNBIND
+
+       BL   @MAPWS
+
+       MOVB @2(R13),@PORT10
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       LI   R0,3
+       LI   R1,TIPIUNBIND
+
+       BL   @SENDMSG
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+       BL   @RECVMSG
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+TIPIUNBIND
+       BYTE >22
+PORT10 BYTE >00
+       BYTE >06
+       EVEN
+
+*******************************************************************
+* OPCODE:  >000F                            TCP Server ACCEPT     *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Server Socket (MSB)                                *
+*                                                                 *
+* Return:  R0  0 if no incoming socket, 1-254 if handle connected *
+*              In MSB                   255 if invalid            *
+*******************************************************************
+
+SERVER_ACCEPT
+
+       BL   @MAPWS
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       MOVB @2(R13),@PORT18
+
+       LI   R0,3
+       LI   R1,SERV_ACCEPT
+
+       BL   @SENDMSG
+
+       LI   R0,1
+       LI   R1,TIPIRECEIVEMSG
+
+       BL   @RECVMSG
+
+       CLR  R0
+       MOV  R0,@0(R13)
+       MOVB @TIPIRECEIVEMSG,R0
+
+       MOV  R0,@0(R13)
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+
+************************************************************************
+* OPCODE:  >0010                     TIPI USB Mouse movement           *
+*                                                                      *
+* Pass:    R0  Routine Number                                          *
+*                                                                      *
+* Return:  R1  x delta                                                 *
+* Return:  R2  y delta                                                 *
+* Return:  R3  button state   b1 b2 b3 0 xxxx xxxx xxxx (highest bits) *
+*              >01 BIT LEFT   b1                                       *
+*              >02 BIT MIDDLE b2                                       *
+*              >04 BIT RIGHT  b3                                       *
+************************************************************************
+
+MOUSE
+
+       BL   @MAPWS
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       MOVB @MOUSEMSGBACK1,@MOUSEMSG
+
+       LI   R0,1
+       LI   R1,MOUSEMSG
+
+       BL   @SENDMSG
+
+       LI   R0,3
+       LI   R1,MOUSEMSGBACK
+
+       BL   @RECVMSG
+
+       CLR  R1
+       CLR  R2
+       CLR  R3
+       CLR  R4
+       MOVB @MOUSEMSGBACK+2,R4
+
+BUTTON1
+       COC  @MBMID,R4    Middle button
+       JNE  BUTTON2
+       AI   R3,>2000
+BUTTON2
+       COC  @MBRIGHT,R4  Right button
+       JNE  BUTTON3
+       AI   R3,>4000
+BUTTON3
+       COC  @MBLEFT,R4   LEFT BUTTON
+       JNE  BUTTONEXIT
+       AI   R3,>8000
+BUTTONEXIT
+       MOV  R1,@2(R13)
+       MOV  R1,@4(R13)
+       MOV  R3,@6(R13)
+
+       MOVB @MOUSEMSGBACK+0,R1
+       MOVB @MOUSEMSGBACK+1,R2
+
+       SRA  R1,8
+       SRA  R2,8
+
+
+       MOV  R1,@2(R13)
+       MOV  R2,@4(R13)
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+MBLEFT  DATA >0100
+MBRIGHT DATA >0200
+MBMID   DATA >0400
+
+MOUSEMSG
+       BYTE >20
+MOUSEMSGBACK1
+       BYTE >20
+       EVEN
+
+MOUSEMSGBACK
+       BYTE >00,>00,>00,>00
+       EVEN
+
+
+*******************************************************************
+* OPCODE:  >0011                         TCP Send String          *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Length of String contained in R2,R3,R4,R5,R6       *
+*          R7  Handle byte                   (max 10 bytes)       *
+*          R2,R3,R4,R5,R6 bytes of string                         *
+*******************************************************************
+
+
+TIPISENDSTRING
+
+       BL   @MAPWS
+
+       MOV  @4(R13),@AIPIOPEN1+0
+       MOV  @6(R13),@AIPIOPEN1+2
+       MOV  @8(R13),@AIPIOPEN1+4
+       MOV  @10(R13),@AIPIOPEN1+6
+       MOV  @12(R13),@AIPIOPEN1+8
+       MOVB @14(R13),@PORT17
+
+APENURL3
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       MOV  @2(R13),R0
+       AI   R0,3
+
+       LI   R1,LOCATION
+
+       BL   @SENDMSG     6.7.2019
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+       BL   @RECVMSG
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+       BYTE 0            EMPTY BYTE FOR EASY MOV INSTEAD OF MOVB INSTRUCTION
+LOCATION
+       BYTE >22
+PORT17 BYTE >01
+       BYTE >03
+AIPIOPEN1
+       DATA 0,0,0,0,0,0
+
+
+*******************************************************************
+* OPCODE:  >0012                         TCP Send String          *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  String pointer to write                            *
+*              String defined as such:                            *
+*              1st byte >22    TCP                                *
+*              2nd byte >xx    handle byte >01 to >FF             *
+*              3rd byte >03    write                              *
+*              4th string up to 255 bytes                         *
+*          R2  String length                                      *
+*                                                                 *
+*******************************************************************
+
+
+TIPISENDSTRINGE
+
+       BL   @MAPWS
+
+       BL   @MAPPAGES
+
+       MOV  R10,R1
+       MOV  @4(R13),R0
+       AI   R0,>0003
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       BL   @SENDMSG
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+
+       BL   @RECVMSG
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+
+*******************************************************************
+* OPCODE:  >0013                             Open UDP URL         *
+*                                                                 *
+* Workspace    >A000 to >FFFF                                     *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  URL:PORT Pointer to open                           *
+*          R2  Length of R1                                       *
+*          R3  MSB handle byte                                    *
+*                                                                 *
+* Return:  R1  >FFFF if connect                                   *
+*              >0000 if no connection                             *
+*                                                                 *
+*******************************************************************
+
+UDPOPEN
+
+       MOVB @SETUPUDPOPENA+0,@TIPIOPEN+0
+       MOVB @SETUPUDPOPENA+1,@TIPIOPEN+1
+       MOVB @SETUPUDPOPENA+2,@TIPIOPEN+2
+
+       BL   @MAPWS
+
+       CLR  @SENDBUFFER
+
+       MOVB @6(R13),@UDPPORTA
+
+       LI   R1,UDPOPEN1
+       LI   R2,80
+       LI   R3,SPACE
+UDPOPENURL1
+       MOVB *R3,*R1+
+       DEC  R2
+       JNE  UDPOPENURL1
+
+       BL   @MAPPAGES
+
+UDPOPENURL4
+
+       LI   R1,UDPOPEN1
+       LI   R2,80
+
+UDPOPENURL2
+       MOVB *R3+,*R1+
+       DEC  R2
+       JNE  UDPOPENURL2
+
+UDPOPENURL3
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       MOV  @4(R13),R0
+       AI   R0,3
+
+       LI   R1,UDPOPENA
+
+       BL   @SENDMSG     6.7.2019
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+       BL   @RECVMSG
+
+       MOV  @RECEIVEBUFFER,@RECEIVEBUFFER
+       JNE  UDPOPENURL6
+       CLR  R1
+       JMP  UDPOPENURL7
+UDPOPENURL6
+       SETO R1
+UDPOPENURL7
+       MOV  @RECEIVEBUFFER,R2
+
+       MOV  R2,@0(R13)
+       MOV  R1,@2(R13)
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+SENDBUFFER DATA 0
+
+
+
+*******************************************************************
+* OPCODE:  >0014                        UDP Close TIPI Connection *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Handle byte (MSB)                                  *
+*                                                                 *
+* Return:  R0  Not applicable                                     *
+*                                                                 *
+*******************************************************************
+
+UDPCLOSE
+       BL   @MAPWS
+
+       CLR  @RECEIVEBUFFER                   3.24.2023 ADDED
+
+       MOV  @TIPCRU,R12
+       MOVB @2(R13),@UDPPORTC
+
+       SBO  0
+
+       LI   R0,25
+       LI   R1,UDPCLOSE1
+
+       BL   @SENDMSG
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+
+       BL   @RECVMSG
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+UDPCLOSE1
+         BYTE >23
+UDPPORTC BYTE >01
+         DATA >0200
+
+
+*******************************************************************
+*                                                                 *
+* OPCODE:  >0015                         UDP Write String         *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  String pointer to write                            *
+*              String defined as such:                            *
+*              1st byte >23    UDP                                *
+*              2nd byte >xx    handle byte >01 to >FF             *
+*              3rd byte >03    write                              *
+*              4th string up to 8K bytes                          *
+*          R2  String length                                      *
+*                                                                 *
+*                                                                 *
+*******************************************************************
+
+UDPWRITE
+
+       BL   @MAPWS
+
+       BL   @MAPPAGES
+
+       MOV  R10,R1
+       MOV  @4(R13),R0
+       AI   R0,>0003
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       BL   @SENDMSG
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+
+       BL   @RECVMSG
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+
+*******************************************************************
+* OPCODE:  >0016                         UDP Receive String       *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  String pointer to open                             *
+*              Max length 8K                                      *
+*          R2  String length                                      *
+*          R3  Handle byte (MSB)                                  *
+*                                                                 *
+* Return:  R0  String length                                      *
+*                                                                 *
+*******************************************************************
+
+UDPSTRINGPOINTER DATA 0
+
+UDPREAD
+
+       BL   @MAPWS
+
+       MOVB @6(R13),@UDPPORT7
+       MOVB @6(R13),@UDPPORT8
+
+       BL   @MAPPAGES
+
+       MOV  R3,@UDPSTRINGPOINTER
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       MOV  @UDPTIPIRECEIVEMSGBACK1+0,@UDPTIPIRECEIVEMSG1+0
+       MOV  @UDPTIPIRECEIVEMSGBACK1+2,@UDPTIPIRECEIVEMSG1+2
+       MOV  @4(R13),R1
+
+       MOVB R1,@UDPTIPIRECEIVEMSG1+3
+       SWPB R1
+       MOVB R1,@UDPTIPIRECEIVEMSG1+4
+
+       LI   R0,5
+       LI   R1,UDPTIPIRECEIVEMSG1
+
+       BL   @SENDMSG
+
+       CLR  @UDPTIPIRECEIVEMSG1
+
+       MOV  @4(R13),R0
+       MOV  @UDPSTRINGPOINTER,R1
+
+       BL   @RECVMSG
+
+       MOV  R0,@0(R13)      pass string length back
+       JEQ  UDPRECEIVESTRING3
+
+
+UDPRECEIVESTRING3
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+UDPTIPIRECEIVEMSG1
+          BYTE >23
+UDPPORT7  BYTE >01
+          BYTE >04,>00,>01,0
+          EVEN
+
+UDPTIPIRECEIVEMSGBACK1
+          BYTE >23
+UDPPORT8  BYTE >01
+          BYTE >04,>00,>01,0
+          EVEN
+
+*******************************************************************
+* OPCODE:  >0017                             Open TLS URL         *
+*                                                                 *
+* Workspace    >A000 to >FFFF                                     *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  URL:PORT Pointer to open                           *
+*          R2  Length of R1                                       *
+*          R3  MSB handle byte                                    *
+*                                                                 *
+* Return:  R1  >FFFF if connect                                   *
+*              >0000 if no connection                             *
+*                                                                 *
+*******************************************************************
+
+TLSOPEN
+
+       MOVB @SETUPTLSOPENA+0,@TIPIOPEN+0
+       MOVB @SETUPTLSOPENA+1,@TIPIOPEN+1
+       MOVB @SETUPTLSOPENA+2,@TIPIOPEN+2
+
+       BL   @MAPWS
+
+       CLR  @SENDBUFFER
+
+       MOVB @6(R13),@TLSPORTA
+
+       LI   R1,TLSOPEN1
+       LI   R2,80
+       LI   R3,SPACE
+TLSOPENURL1
+       MOVB *R3,*R1+
+       DEC  R2
+       JNE  TLSOPENURL1
+
+       BL   @MAPPAGES
+
+       LI   R1,TLSOPEN1
+       LI   R2,80
+
+TLSOPENURL2
+       MOVB *R3+,*R1+
+       DEC  R2
+       JNE  TLSOPENURL2
+
+TLSOPENURL3
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       MOV  @4(R13),R0
+       AI   R0,3
+
+       LI   R1,TLSOPENA
+
+       BL   @SENDMSG     6.7.2019
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+       BL   @RECVMSG
+
+       MOV  @RECEIVEBUFFER,@RECEIVEBUFFER
+       JNE  TLSOPENURL6
+       CLR  R1
+       JMP  TLSOPENURL7
+TLSOPENURL6
+       SETO R1
+TLSOPENURL7
+       MOV  @RECEIVEBUFFER,R2
+
+       MOV  R2,@0(R13)
+       MOV  R1,@2(R13)
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+
+*******************************************************************
+* OPCODE:  >0018                        TLS Close TIPI Connection *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  Handle byte (MSB)                                  *
+*                                                                 *
+* Return:  R0  Not applicable                                     *
+*                                                                 *
+*******************************************************************
+
+TLSCLOSE
+       BL   @MAPWS
+
+       MOV  @TIPCRU,R12
+       MOVB @2(R13),@TLSPORTC
+
+       SBO  0
+
+       LI   R0,25
+       LI   R1,TLSCLOSE1
+
+       BL   @SENDMSG
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+
+       BL   @RECVMSG
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+TLSCLOSE1
+         BYTE >24
+TLSPORTC BYTE >01
+         DATA >0200
+
+*******************************************************************
+*                                                                 *
+* OPCODE:  >0019                         TLS Write String         *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  String pointer to write                            *
+*              String defined as such:                            *
+*              1st byte >24    TLS                                *
+*              2nd byte >xx    handle byte >01 to >FF             *
+*              3rd byte >03    write                              *
+*              4th string up to 8K bytes                          *
+*          R2  String length                                      *
+*                                                                 *
+*                                                                 *
+*******************************************************************
+
+
+TLSWRITE
+
+       BL   @MAPWS
+
+       BL   @MAPPAGES
+
+       MOV  R10,R1
+       MOV  @4(R13),R0
+       AI   R0,>0003
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       BL   @SENDMSG
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+
+       BL   @RECVMSG
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+*******************************************************************
+* OPCODE:  >001A                         TLS Receive String       *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  String pointer to open                             *
+*              Max length 8K                                      *
+*          R2  String length                                      *
+*          R3  Handle byte (MSB)                                  *
+*                                                                 *
+* Return:  R0  String length                                      *
+*                                                                 *
+*******************************************************************
+
+TLSSTRINGPOINTER DATA 0
+
+TLSREAD
+
+       BL   @MAPWS
+
+       MOVB @6(R13),@TLSPORT7
+       MOVB @6(R13),@TLSPORT8
+
+       BL   @MAPPAGES
+
+       MOV  R3,@TLSSTRINGPOINTER
+
+TLSRECEIVESTRING2
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       MOV  @TLSTIPIRECEIVEMSGBACK1+0,@TLSTIPIRECEIVEMSG1+0
+       MOV  @TLSTIPIRECEIVEMSGBACK1+2,@TLSTIPIRECEIVEMSG1+2
+       MOV  @4(R13),R1
+
+       MOVB R1,@TLSTIPIRECEIVEMSG1+3
+       SWPB R1
+       MOVB R1,@TLSTIPIRECEIVEMSG1+4
+
+       LI   R0,5
+       LI   R1,TLSTIPIRECEIVEMSG1
+
+       BL   @SENDMSG
+
+       CLR  @TLSTIPIRECEIVEMSG1
+
+       MOV  @4(R13),R0
+       MOV  @TLSSTRINGPOINTER,R1
+
+       BL   @RECVMSG
+
+       MOV  R0,@0(R13)      pass string length back
+       JEQ  TLSRECEIVESTRING3
+
+
+TLSRECEIVESTRING3
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+TLSTIPIRECEIVEMSG1
+          BYTE >23
+TLSPORT7  BYTE >01
+          BYTE >04,>00,>01,0
+          EVEN
+
+TLSTIPIRECEIVEMSGBACK1
+          BYTE >23
+TLSPORT8  BYTE >01
+          BYTE >04,>00,>01,0
+          EVEN
+
+*******************************************************************
+* OPCODE:  >001B                         TIPI Log Extension       *
+*                                                                 *
+* Pass:    R0  Routine Number                                     *
+*          R1  String pointer to write                            *
+*              String defined as such:                            *
+*              1st byte >25    TIPI Log Extension                 *
+*              2nd string up to 255 bytes                         *
+*          R2  String length                                      *
+*                                                                 *
+*******************************************************************
+
+TIPILOGEXTENSION
+
+       BL   @MAPWS
+
+       BL   @MAPPAGES
+
+SENDSTRING1F
+       MOV  R10,R1
+       MOV  @4(R13),R0
+       INC  R0           Increase count by 1 byte for Extension byte
+
+       MOV  @TIPCRU,R12
+       SBO  0
+
+       BL   @SENDMSG
+
+       LI   R0,1
+       LI   R1,RECEIVEBUFFER
+
+       BL   @RECVMSG
+
+       MOV  @TIPCRU,R12
+       SBZ  0
+
+       BL   @MAPWSRESTORE
+
+       RTWP
+
+
+
+ANSI_LEFT   BYTE >22
+PORT11      BYTE >01,>03,27,91,'D'
+
+ANSI_RIGHT  BYTE >22
+PORT12      BYTE >01,>03,27,91,'C'
+
+ANSI_UP     BYTE >22
+PORT13      BYTE >01,>03,27,91,'A'
+
+ANSI_DOWN   BYTE >22
+PORT14      BYTE >01,>03,27,91,'B'
+
+ANSI_PGDN   BYTE >22
+PORT15      BYTE >01,>03,27,91,'6'
+
+ANSI_PGUP   BYTE >22
+PORT16      BYTE >01,>03,27,91,'5'
+            EVEN
+
+SERV_ACCEPT BYTE >22
+PORT18      BYTE >00,>07
+            EVEN
+
+***************************************************
+*
+*  TIPI RECVMSG Code lifted from DSR
+
+TSRSET EQU  >F100
+TSRB   EQU  >0600
+TSWB   EQU  >0200
+
+TCOUT  EQU  >5FFD
+TDOUT  EQU  >5FFF
+RDIN   EQU  >5FFB
+RCIN   EQU  >5FF9
+
+
+RECVMSG
+
+       LI   R2,TSRSET
+       MOVB R2,@TCOUT
+
+RM44   CB   @RCIN,R2
+       JNE  RM44
+       LI   R2,TSRB
+
+       MOVB R2,@TCOUT
+       JMP  RM2
+
+*                          Below mod used for opening a connection
+*                          to avoid a long timeout issue
+RECVMSG1
+
+       SETO R5             Timer routine
+       LI   R6,3           Six iterations x>FFFF
+
+       LI   R2,TSRSET    ;test for connection
+       MOVB R2,@TCOUT
+
+REST11 DEC  R5
+       JNE  KEEP23
+       DEC  R6
+       JEQ  EXPIRED      ;expired, no connection found; go reset
+
+KEEP23
+RM1    CB   @RCIN,R2     ;got something?
+       JNE  REST11       ;no, keep trying
+
+       LI   R2,TSRB      ;yes, good to go
+       MOVB R2,@TCOUT
+
+RM2    MOVB @RCIN,R3
+       CB   R2,R3
+       JNE  RM2
+
+       AI   R2,>0100
+       ANDI R2,>0100
+       ORI  R2,TSRB
+
+       MOVB @RDIN,R4
+       SWPB R4
+       MOVB R2,@TCOUT
+
+RM3    MOVB @RCIN,R3
+       CB   R2,R3
+       JNE  RM3
+
+       AI   R2,>0100
+       ANDI R2,>0100
+
+       ORI  R2,TSRB
+       MOVB @RDIN,R4
+       SWPB R4
+       CLR  R0
+       CI   R4,>0000
+
+       JEQ  RRT
+
+RNEXT  MOVB R2,@TCOUT
+
+RM4    MOVB @RCIN,R3
+       CB   R2,R3
+       JNE  RM4
+
+       AI   R2,>0100
+       ANDI R2,>0100
+       ORI  R2,TSRB
+
+       MOVB @RDIN,R3
+       MOVB R3,*R1+
+
+       INC  R0
+       C    R0,R4
+       JNE  RNEXT
+RRT    RT
+
+
+EXPIRED
+       CLR  @TDOUT       Clear TIPI data output
+       CLR  @TCOUT       Clear control output
+
+       SBO  1            trigger reset signal to RPi
+       LI   R1,>0200
+RESTA9 DEC  R1
+       JNE  RESTA9
+       SBZ  1            Turn off the reset signal to RPi service can finish
+       RT
+
+SENDMSG
+
+       LI   R2,TSRSET
+       MOVB R2,@TCOUT
+SM11   CB   @RCIN,R2
+       JNE  SM11
+       NOP
+
+       LI   R2,TSWB
+       MOVB R0,@TDOUT
+
+***********************
+* .TRANSMIT TSWB
+
+       MOVB R2,@TCOUT
+SM33   MOVB @RCIN,R3
+       CB   R2,R3
+       JNE  SM33
+       NOP
+       AI   R2,>0100
+       ANDI R2,>0100
+       ORI  R2,TSWB
+       MOVB @RDIN,R4
+**********************
+
+       SWPB R0
+       MOVB R0,@TDOUT
+
+***********************
+* .TRANSMIT TSWB
+
+       MOVB R2,@TCOUT
+SM44   MOVB @RCIN,R3
+       CB   R2,R3
+       JNE  SM44
+       NOP
+       AI   R2,>0100
+       ANDI R2,>0100
+       ORI  R2,TSWB
+       MOVB @RDIN,R4
+**********************
+
+       SWPB R0
+       CI   R0,0
+       JEQ  SDONE
+SNEXT
+       MOVB *R1,@TDOUT
+
+***********************
+* .TRANSMIT TSWB
+
+       MOVB R2,@TCOUT
+SM55   MOVB @RCIN,R3
+       CB   R2,R3
+       JNE  SM55
+       NOP
+       AI   R2,>0100
+       ANDI R2,>0100
+       ORI  R2,TSWB
+       MOVB @RDIN,R4
+**********************
+
+       INC  R1
+       DEC  R0
+       JNE  SNEXT
+
+
+SDONE  RT
+
+SETUPTIPIOPEN BYTE >22,>01,>01
+SETUPTIPIBIND BYTE >22,>00,>05
+SETUPTLSOPENA BYTE >24,>01,>01
+SETUPUDPOPENA BYTE >23,>01,>01
+
+
+TIPIOPEN
+TIPIBIND
+TLSOPENA
+UDPOPENA
+       BYTE >22
+
+TLSPORTA
+UDPPORTA
+PORT1
+PORT9  BYTE >00
+       BYTE >05
+
+TIPIOPEN1
+TLSOPEN1
+UDPOPEN1
+TIPIBIND1
+       TEXT '                                        '
+       TEXT '                                        '
+       EVEN
+
+XOPEND EQU  $
+TIPEND EQU  $
+       END
+

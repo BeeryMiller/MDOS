@@ -1,0 +1,43 @@
+* SCSI_S, Dec 30, 1997
+* Reordered files, copy statements now contained here  TAT
+*
+; 6.27.2021 Eliminated BUFEQU2_S in favor of HD\EQUATES
+;           Added PAGENUMS for page references (clean up hardcoded pgnums)
+;
+; 5.28.2022 Conditional assembly for Debug statements and RS232 debug code
+; 6.18.2022 Verified SCSIDATA_S is no longer used; removed.
+;
+
+DEBUGSCSI#  EQU 0        ;0=disable    ;conditional assembly 5.28.2022
+
+***;   COPY "\MDOS\SCSI2\BUFEQU"
+***;   COPY "\MDOS\SCSI2\BUFEQU2_S"  ;consider referring to HF.BUFEQU
+
+       REF  SCNOFF                  ;required! MSB Sector # & status op
+
+       COPY "\MDOS\HEAD\PAGENUMS"
+       COPY "\MDOS\HD\EQUATES"      ;6.27.2021, use HFDC reference file
+
+;--------------------------------
+       COPY "\MDOS\SCSI2\SECTOR_S"
+       COPY "\MDOS\SCSI2\POWERS"     ;6.26.2021, new powerup stub
+       COPY "\MDOS\SCSI2\INTS"       ;6.28.2022, new interrupt handler
+
+       COPY "\MDOS\SCSI2\SCSIEQU_S"
+       COPY "\MDOS\SCSI2\SCSIDELY_S"
+       COPY "\MDOS\SCSI2\SCSILL_S"
+       COPY "\MDOS\SCSI2\SCSIDRCT_S"
+       COPY "\MDOS\SCSI2\SCSIDMA2_S"  9.11.09; DMA2 consolidated/cleanup
+       COPY "\MDOS\SCSI2\HRDSCSIS"    3.17.2018, Re-integrate large ramdisk
+
+*      COPY "\MDOS\SCSI2\TIDE8S"     ;3-25-2021
+       COPY "\MDOS\SCSI2\TIDE9S"     ;6-26-2021, not yet tested/confirme
+
+       IF   DEBUGSCSI#
+         COPY "\MDOS\SCSI2\RS232DEBUG" ;12.30.2020
+       FI
+
+
+SLAST  EQU $
+       END
+

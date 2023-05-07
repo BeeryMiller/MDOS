@@ -1,0 +1,199 @@
+*-----------------------------------------------------------*
+*     Western Horizon Technologies 5380 SCSI Controller     *
+*                                                           *
+*        Equates for low level SCSI code for NCR5380        *
+*                                                           *
+*        Written and Copyright 1993 by Will McGovern        *
+*-----------------------------------------------------------*
+* HISTORY                                                   *
+* -------                                                   *
+*                                                           *
+* 10-Jan-93  WMC  Created this file                         *
+* 06-Feb-94  jhw                                            *
+* 09-Feb-94  mjm  modified for new register bases           *
+* 18-Feb-94  mjm  modified for MDOS registers at >8000-9FFF *
+* 21-Mar-99  MBM  modified for new DMA-Hardware             *
+*-----------------------------------------------------------*
+ 
+* 5380/8490 REGISTER EQUATES ( READ )
+ 
+RCSD   EQU  >4FE0             CURRENT SCSI DATA
+RICR   EQU  >4FE2             INITIATOR COMMAND
+RMR2   EQU  >4FE4             MODE
+RTCR   EQU  >4FE6             TARGET COMMAND
+RCSB   EQU  >4FE8             CURRENT SCSI BUS STATUS
+RBSR   EQU  >4FEA             BUS AND STATUS
+RIDR   EQU  >4FEC             INPUT DATA REGISTER
+RRPI   EQU  >4FEE             RESET PARITY/INTERRUPTS
+RISR   EQU  >4FEE             INTERRUPT STATUS ( 8490 ONLY )
+ 
+* 5380/8490 REGISTER EQUATES ( WRITE )
+ 
+WODR   EQU  >4FF0             OUTPUT DATA
+WICR   EQU  >4FF2             INITIATOR COMMAND
+WMR2   EQU  >4FF4             mode register
+WTCR   EQU  >4FF6             target command
+WSER   EQU  >4FF8             SELECT ENABLE
+WSDS   EQU  >4FFA             START DMA SEND
+WSDT   EQU  >4FFC             START DMA TARGET RECEIVE
+WSDI   EQU  >4FFE             START DMA INITIATOR RECEIVE
+WEMR   EQU  >4FFE             ENHANCED MODE ( 8490 ONLY )
+WIMR   EQU  >4FFE             INTERRUPT MASK ( 8490 ONLY )
+ 
+* PSEUDO-DMA DATA REGISTER ADDRESS
+ 
+RDMA   EQU  >4FEC             READ DMA ADDRESS
+WDMA   EQU  >4FF0             WRITE DMA ADDRESS
+ 
+* CRU ASSIGNMENTS ( READ )
+ 
+IRQ    EQU   0                INTERRUPT REQUEST
+DRQ    EQU   1                DMA REQUEST
+READY  EQU   2                READY
+DIP0   EQU   3                FUTURE EXPANSION
+DIP1   EQU   4                SCSI ID BIT 0
+DIP2   EQU   5                SCSI ID BIT 1
+DIP3   EQU   6                SCSI ID BIT 2
+DIP4   EQU   7                SWAP BYTE SELECT (0=99/4A,1=GENEVE/OTHER)
+ 
+* CRU ASSIGNMENTS ( WRITE )
+ 
+CARD   EQU   0                CARD ENABLE
+SHADOW EQU   1                SRAM SHADOW
+PDMA   EQU   2                PSEUDO DMA HANDSHAKE
+EOP    EQU   3                END OF PROCESS
+WXFR   EQU   4                WORD TRANSFER
+SRAMBK EQU   5                SRAM BANK (0=>5000,1=>4000)
+BLK    EQU   6                Block-Mode Enable <MB>
+PGM    EQU   7                PGM-Enable (ASCSI-only!) <MB>
+E13    EQU   8                EPROM A13
+E14    EQU   9                EPROM A14
+E15    EQU   10               EPROM A15
+E16    EQU   11               (EPROM A16)
+S12    EQU   12               SRAM A12
+S13    EQU   13               SRAM A13
+S14    EQU   14               SRAM A14
+S15    EQU   15               (SRAM A15)
+ 
+* BIT DEFINITIONS FOR ICR REGISTER
+ 
+ICRRST EQU   >80              ASSERT RST*
+ICRAIP EQU   >40              ARBITRATION IN PROGRESS
+ICRMOD EQU   >40              OPERATING MODE ( 8490 ONLY )
+ICRLA  EQU   >20              LOST ARBITRATION
+ICRDIF EQU   >20              DIFFERENTIAL ENABLE
+ICRACK EQU   >10              ASSERT ACK*
+ICRBSY EQU   >08              ASSERT BSY*
+ICRSEL EQU   >04              ASSERT SEL*
+ICRATN EQU   >02              ASSERT ATN*
+ICRBUS EQU   >01              ASSERT DATA BUS
+ 
+* BIT DEFINITIONS FOR MODE REGISTER
+ 
+MR2BLK EQU   >80              BLOCK MODE DMA
+MR2TRG EQU   >40              TARGET/INITIATOR MODE
+MR2PAR EQU   >20              PARITY CHECKING
+MR2PI  EQU   >10              PARITY INTERRUPT
+MR2EOP EQU   >08              EOP* INTERRUPT
+MR2BSY EQU   >04              BSY* MONITOR
+MR2DMA EQU   >02              DMA MODE
+MR2ARB EQU   >01              ARBITRATE
+ 
+* BIT DEFINITIONS FOR TARGET COMMAND REGISTER
+ 
+TCRTED EQU   >80              TRUE END OF DMA ( 8490 ONLY )
+TCRREQ EQU   >08              ASSERT REQ*
+TCRMSG EQU   >04              ASSERT MSG*
+TCRCD  EQU   >02              ASSERT C/D*
+TCRIO  EQU   >01              ASSERT I/O*
+ 
+* BIT DEFINITIONS FOR CURRENT SCSI BUS STATUS REGISTER
+ 
+CSBRST EQU   >80              RST*
+CSBBSY EQU   >40              BSY*
+CSBREQ EQU   >20              REQ*
+CSBMSG EQU   >10              MSG*
+CSBCD  EQU   >08              C/D*
+CSBIO  EQU   >04              I/O*
+CSBSEL EQU   >02              SEL*
+CSBDBP EQU   >01              DBP*
+ 
+* BIT DEFINITIONS FOR BUS AND STATUS REGISTER
+ 
+BSRED  EQU   >80              END OF DMA
+BSRDRQ EQU   >40              DMA REQUEST
+BSRSPR EQU   >20              SCSI PARITY ERROR
+BSRINT EQU   >10              INTERRUPT REQUEST
+BSRPHM EQU   >08              PHASE MATCH
+BSRBSY EQU   >04              BUSY ERROR
+BSRATN EQU   >02              ATN*
+BSRACK EQU   >01              ACK*
+ 
+* BIT DEFINITIONS FOR ENHANCED MODE REGISTER ( 8490 ONLY )
+ 
+EMRAPM EQU   >80              ANY PHASE MISMATCH
+EMRMPE EQU   >40              uP PARITY ENABLE
+EMRMPO EQU   >20              uP PARITY POLARITY
+EMRSPO EQU   >10              SCSI PARITY POLARITY
+EMRLP  EQU   >08              LOOPBACK MODE
+EMREF1 EQU   >04              EXTERNAL FUNCTION 1
+EMREF0 EQU   >02              EXTERNAL FUNCTION 0
+EMRARB EQU   >01              EXTENDED ARBITRATION
+ 
+* BIT DEFINITIONS FOR INTERRUPT STATUS REGISTER ( 8490 ONLY )
+ 
+ISRSPE EQU   >80              SCSI PARITY ERROR
+ISRMPE EQU   >40              uP PARITY ERROR
+ISRED  EQU   >20              END OF DMA
+ISRDPS EQU   >10              DMA PHASE MISMATCH
+ISRAPS EQU   >08              ANY PHASE MISMATCH
+ISRBSY EQU   >04              BUSY LOSS
+ISRSEL EQU   >02              SELECTION/RESELECTION
+ISRARB EQU   >01              ARBITRATION COMPLETE
+ 
+* TIMING EQUATES THAT MAY NEED ADJUSTING
+* *6 to slow down for Geneve
+RSTCNT EQU  200*6            RESET DELAY COUNT
+ARBCNT EQU  1*6              ARBITRATION DELAY COUNT 2.2us
+BSCNT  EQU  2*6              BUS SETTLE DELAY COUNT  600ns
+BCCNT  EQU  2*6              BUS CLEAR DELAY COUNT   600ns
+BSYCNT EQU  200*6            BSY* WAIT DELAY COUNT   200ms
+ 
+* SCSI PHASE EQUATES
+ 
+PHDATO EQU  0                 DATA OUT
+PHDATI EQU  1                 DATA IN
+PHCMD  EQU  2                 COMMAND
+PHSTAT EQU  3                 STATUS
+PHMSGO EQU  6                 MESSAGE OUT
+PHMSGI EQU  7                 MESSAGE IN
+ 
+* ERROR CODES RETURNED BY SCSI ROUTINES
+ 
+MINERR EQU  1                 STARTING ERROR CODE
+ERRSEL EQU  MINERR            SELECTION FAILED
+ERRCMD EQU  MINERR+1          SCSI COMMAND ERROR
+ERRSTS EQU  MINERR+2          NO SCSI STATUS PHASE
+ERRMSG EQU  MINERR+3          NO SCSI MESSAGE PHASE
+ERRBST EQU  MINERR+4          BAD SCSI STATUS RETURNED
+ERRRTO EQU  MINERR+5          READY TIMEOUT
+ERRBSE EQU  MINERR+6          BLOCK SIZE ERROR
+ERRTYP EQU  MINERR+7          DEVICE TYPE ERROR
+ERRVAL EQU  MINERR+8          BAD VALIDATION STRING
+ERRPHS EQU  MINERR+9          SCSI PHASE ERROR
+ERRSSC EQU  MINERR+10         SECTOR SIZE CHANGED
+ 
+* FLAG BITS DEFINED FOR THE SCUNIT BYTE
+ 
+CDBCPU EQU  >80               CDB IS IN CPU RAM
+DATCPU EQU  >40               DATA BUFFER IS IN CPU RAM
+SCUFM  EQU  >C0               MASK FOR ALL FLAG BITS
+SCUFMC EQU  >3F               COMPLEMENT OF PREVIOUS
+ 
+* FLAG BITS DEFINED FOR THE UNIT BYTE FOR SECTOR READ/WRITE
+ 
+SECCPU EQU  >80               SECTOR DATA BUFFER IN CPU RAM
+SKNOWN EQU  >40               SECTOR SIZE IS KNOWN
+SRWFM  EQU  >C0               MASK FOR ALL FLAG BITS
+SRWFMC EQU  >3F               COMPLEMENT OF PREVIOUS
+*      END OF FILE

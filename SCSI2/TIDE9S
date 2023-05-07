@@ -1,0 +1,281 @@
+********************************************************************************
+* File: TIDE9S - IDE Linkage for MDOS DSR
+* Date: Oct 30, 2009
+*
+* Called:   BLWP @IDEIO
+* Input:    DATA MSWord Sector#  MSWord of 32 bit sector number
+*           DATA LSWord Sector#  LSWord of 32 bit sector number
+*           DATA 256ByteBuffer   Points to a buffer
+*           DATA RWFlag          0=write; FFFF=read
+* ### UNITNO holds mapped drive#; consider passing from SECTOR_S via R14
+*
+* Output:   SCSIERROR    Word, MSByte contains error
+*
+* CONSIDERATIONS:
+*      1. Call DSR routine once to locate x80 routine--speedup
+*      2. Trim buffers  [done]
+*      3. Eliminate VDP dependency upon Fred's release of CPU PAB DSR [done]
+*      4. Restricted to IDE1 (unit 1) - enhance later
+*      5. See SCSI2\SECTOR_S for related CALL code
+*
+* 7-6-2019  Still problems with buffer code. Grr.
+* 7-7-2019  Corrected buffer mask/R14 increment. Direct buffer works.
+*           Assembled and linked MDOS on IDE drive. Yay!
+* 7-13-2019 routine cleanup
+*           Turn card off if there is an error
+*           -Still need to implement interrupt handler for 4A/9640 modes
+*           -Need Fred to confirm PAD usage
+;
+;3.26.2021  Beery tested TIDE5 and TIDE8; both appear to work, and since
+;           TIDE8 is the most recent/cleanest, we are going with it.
+;3.28.2021  Updated routine to use UNITNO [passed as 17-24] for IDE1-8
+;           Retained UNIT7 as IDE1 for the time being
+;        $$ Need powerup routine and cache the entry point
+;        $$ Fake WS using page EE (see H12); keep in mind if GPL goes crazy
+;        $$ IDE,RAM,SCSI dsr need some cleanup work.
+;
+;4.18.2021  WARNING:
+;           Do not cache entry point; IDE DSR update in-fligh could modify
+;           the address!
+;
+;4.18.2021  Added Powerup routine and DEFs (where are the REFs?)
+;6.19.2021 -Removed setting gplws r13/14/15 and 8370 (not tested)
+;        $$$Using 0xEE for scratchpad; if Fred's IDE strays into space
+;        $$$we don't save/restore, that data will get corrupted!
+;
+;          +Added opcode cache to powerup;fixed powerup
+;          +Removed opcode search from dsrlink; cleanup
+;          +DSRLNK moved inline with IDEIO; no separate DSRLNK required
+;6.26.2021  Fixed ide locator; incorporated powers:findname routine
+;           Added IDE DSR powerup and debug output
+;
+;5.6.2022   Consider whether we can map the SCSI dsr page into >8000 instead
+;           of >EE; then, in theory, DORG simulated scratchpad in the
+;           unused SCSI DSR space at x300-x3FF. (SCSI dsr aorg's at >0400)
+;           Benefits: (1) no GPL PAD save/restore (2) reduced code/buffer
+;
+;6.19.2022  Integrate IDEPWL to DSRPASS-S
+;           Future: Copy IDECRU into WINDS1-S table >601A (?)
+********************************************************************************
+       DEF  IDEIO
+       DEF  IDEEND
+       DEF  IDECRU       4.17.2021
+       DEF  IDEPWL       4.17.2021  BLWP
+
+IDECRU DATA >1900        Default, MDOS assigned CRU until powerup established
+IDEWS  DATA 0,0,0,0,0,0,0,>1D00    R7 for debug/stash in this page
+       DATA 0,0,0,0,0,0,0,0
+
+IDE1NAME BYTE 4
+         TEXT 'IDE1'
+         BYTE 0            even
+
+       IF   DEBUGSCSI#
+PWIDET TEXT '~Powerup: IDE1 >'
+       DATA 0
+       FI
+
+
+;4.18.2021
+;;; Do we need a FIND routine and a POWERUP routine for dsrpass/hdr2-p2?
+;      Really think about the methodology here; how does HFDC handle this
+
+;
+;Find IDE cru.  [should powerup card; ide and tipi need it]
+;
+IDEPWL DATA IDEWS,$+2
+       LIMI 0
+       MOVB @>F112,@SAV40
+       MOVB @HBABA,@>F112
+       CLR  @CACHEOP80   start with no cached opcode!
+
+       BL   @FINDNAME         check for IDE1
+       DATA IDE1NAME
+       MOV  R12,@IDECRU       set IDE cru; was the card found ?
+       JEQ  IDENRT            R12=0, abort.  otherwise, address of card
+;
+; Card is still on...
+; Let's find >80 opcode and cache it
+; DSR table: ^next opcode | bl linkage | routinelen |code
+;
+IDEFIND80
+       LI   R2,>400A     yes, force to DSR >A routines
+       JMP  DJUMP3       and scan for opcode
+
+DLOOP3 MOV   @FAKE83D2,R2
+
+DJUMP3 MOV   *R2,R2      found it?
+       JEQ  IDENF1       no, turn off card and exit
+
+       MOV   R2,@FAKE83D2   save ptr for next iteration
+       INCT  R2
+       MOV   *R2+,R9     get BL address
+
+       CB   @H01,*R2+         ;len 1?
+       JNE  DLOOP3            ;no, keep scanning
+       CB   @IDEOPC,*R2+      ;opcode match?
+       JNE  DLOOP3            ;no, keep scanning
+       MOV  R9,@CACHEOP80
+
+IDEPWR MOV  @>4004,R0    powerup list present?
+       JEQ  IDENF1       no
+
+; Is this needed? Review. 6.19.2022
+;;     INCT R0            get address
+;;     BL   *R0           branch and execute powerup
+
+IDENF1 SBZ  0            turn off card
+
+IDENRT NOP
+       IF  DEBUGSCSI#
+         BLWP @XMTEXT      ;debug, show powerup occurred!
+         DATA PWIDET
+         BLWP @XMNUM
+         DATA IDECRU,1
+       FI
+
+       MOVB @SAV40,@>F112   restore mapper  (can't turn off CRU=0)
+       RTWP
+
+*
+*      Save mapper, save "scratchpad" in this page, then set up fake TI
+*      environment necessary for DSR operation
+*
+IDEIO  DATA IDEWS,$+2
+       LIMI 0
+       MOVB @>F111,@SAV20
+       MOVB @>F112,@SAV40
+       MOVB @>F114,@SAV80
+       MOVB @HBABA,@>F112  >4000 AREA
+       MOVB @H12,@>F114  >8000 AREA
+       MOVB @SAV80,@>F111     MIRROR BUFFER IN 2000 SPACE
+
+; save 70 vs 256 bytes entire scratchpad
+      LI   R1,>8340     FAC
+      LI   R2,SAV8300+>40
+LP1B   MOV  *R1+,*R2+
+;     CLR  *R1+
+      CI   R1,>8360
+      JL   LP1B
+
+       LI   R1,>83D0     dsr+gplws
+       LI   R2,SAV8300+>D0
+LP1C   MOV  *R1,*R2+     save and
+       CLR  *R1+         clear it...
+       CI   R1,>8400
+       JL   LP1C
+;
+;[8352 8350]   32-bit sector number masked to 24 bit
+;
+       MOV  *R14+,R1     HIGH sector
+       MOV  *R1,R1
+       ANDI R1,>00FF     mask down to 24-bit address
+       MOV  R1,@>8352
+
+       MOV  *R14+,R2     LOW sector
+       MOV  *R2,@>8350
+;
+;[834C] drive and cpu buffer flag
+;      MOVB @0(R13),R1   possible code; pass drive in MSByte caller R0
+;      ORI  R1,>8000
+
+       LI   R1,>8100     ;default unit 1 with MSBit set
+       C    @UNITNO,@UNIT7    Unit7 from old mappings?
+       JEQ  SET834C           yes, allow it...for now
+
+; 3.27.2021  New IDE1-8 mappings where y=17 to 24 [subtract 16 for base 1]
+       MOV  @UNITNO,R1   get unit (see sector_s)
+       AI   R1,-16       subtract 16 for IDE1-8
+       SLA  R1,8         msbyte
+       ORI  R1,>8000     set high bit for CPU transfers
+
+SET834C
+       MOVB R1,@>834C         set it
+
+;[8356] 1-byte PAB  , is this even needed now?
+       LI   R0,CPUPAB    PAB in CPU
+       MOV  R0,@>8356    set it; DSRLNK WILL force CPU via >8354
+
+;[834E] buffer
+       MOV  *R14+,R3     POINTER TO BUFFER ADDRESS
+       MOV  *R3,R0       pointer to address
+       ANDI R0,>1FFF     MASK address to 13 bits
+       AI   R0,>2000     and relocate to >2000 TO >3FFF AREA
+       MOV  R0,@>834E
+
+;[834D] read/write
+       MOVB *R14,@>834D  (0=write <>0 read)
+       INCT R14          return address
+
+; inline 6-19-2021
+;=======================================
+       CLR  @SCSIERROR   clear each time
+       LI   R4,>8001     set for call to dsr
+       MOV  R4,@>8354
+       INCT @>8356       ^after len of pab + len = +2    ;8356 relevant?
+
+SROM   LWPI  >83E0       WARNING: now in fake GPLWS area
+       LIMI  0           Safety first
+
+       MOV  @IDECRU,R12       get cru
+       JEQ  NOIDE
+       MOV  @CACHEOP80,R9     get cached opcode
+       JEQ  NOIDE             0? no ide
+
+       MOV   R12,@>83D0  save (may be needed by dsr, review)
+       SBO   >00         turn on card
+
+       BL    *R9         Call Fred's DSR!
+       JMP  IDEERR       skipped dev (error for master dsr)
+
+       SBZ  0            call ok, card off
+       MOVB @>8350,R1    return error code to caller
+       JMP  SROMRT
+
+IDEERR SBZ  0            ;skipped dev; turn off card
+NOIDE  LI   R1,>E000     ;device not found; R12 indeterminate
+SROMRT MOVB R1,@SCSIERROR  ;pass error to common routine
+
+       LWPI IDEWS        ;WATCH OUT; workspace restore
+
+;=======================================
+
+RESTOREIT1
+       LI   R1,SAV8300+>40   Restore fake PAD ram
+       LI   R2,>8340    >8300
+LP2A   MOV  *R1+,*R2+
+       CI   R2,>8360    >8400
+       JL   LP2A
+
+       LI   R1,SAV8300+>D0  Restore fake PAD ram
+       LI   R2,>83D0   >8300
+LP2B   MOV  *R1+,*R2+
+       CI   R2,>8400
+       JL   LP2B
+
+       MOVB @SAV80,@>F114     restore IO buffer page
+       MOVB @SAV40,@>F112     restore >4000 page
+       MOVB @SAV20,@>F111
+       RTWP
+; Done. Return to integrated SCSI code (SECTOR_S)
+
+SAV20  BYTE 0
+SAV40  BYTE 0
+SAV80  BYTE 0
+HBABA  BYTE >BA          DSR page
+H12    BYTE >EE          GPL PAGE (SCSI=>12buffer page; scratch for now
+       DATA 0
+CACHEOP80   DATA 0       cached opcode >80; ==0, no routine found
+FAKE83D2    DATA 0
+
+SAV8300     BSS 256      save PADRAM
+
+H01
+CPUPAB BYTE >01          consolidate nambuf/cpupab
+IDEOPC BYTE >80
+
+HEX20  DATA >2020
+HEXAA  DATA >AAAA
+       DATA 0
+IDEEND EQU $
+;;     END

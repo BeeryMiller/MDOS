@@ -1,0 +1,175 @@
+; File: TIPI.POWERUP          5/10/2022
+;
+; Called by XOP via OSHEAD1S/OSHEAD2S
+; Called by DSRPASS-S [review linkage and verify]
+;
+; 5.28.2022 added conditional debug
+;
+; 6.20.2022 TIPIPOWER flag can be cleared (see HDR2-P2) to trigger a powerup
+;           when the device is accessed via level 2 or 3 dsr. Might want to
+;           change this to a direct call in the future.
+;
+; 6.20.2022 Re-enabled the control line reset in the powerup, and added
+;           debug output to reflect this
+;
+; 6.26.2022 Corrected error with detection routine. External bus was mapped
+;           to >C000-DFFF so that both the XOP and DSR routine could be
+;           called consistently, however, the addresses were set to >4000
+;           range due to the XOP cleanup work. Beery noticed that exiting
+;           MyWord (among other things) would inhibit TIPI operation, this was
+;           due to the powerup code seeing the MASTER DSR at >4000 versus the
+;           external bus at >C000.
+;
+; 7.23.2022 Corrected RESET to only turn off CRU offset zero if card present
+;           GPL does not execute this powerup for some reason. INSPECT code.
+;           Instead, it must be clearing the special powerup flag.
+;
+;************************************
+; Find TIPI, set CRU, perform powerup
+;************************************
+
+;DSR powerup entry via dsrpass-s
+TIPPWL      ;DEF'd
+
+       IF   DEBUGTIPI#
+         BLWP @INITRS      if we don't init, we get 300baud! lol
+         BLWP @XMTEXT
+         DATA POWERDSR
+       FI
+
+       JMP  TPPP2
+
+;xop powerup entry via osheadx BL @>2000
+TIPIPOWERUP              ;save R11 if you BL here
+       IF   DEBUGTIPI#
+         BLWP @INITRS      if we don't init, we get 300baud! lol
+
+         BLWP @XMNUM
+         DATA >F110,4    ;show mapper
+
+         BLWP @XMTEXT
+         DATA POWERXOP
+       FI
+
+TPPP2  MOVB @>F116,@SAVP6C    Save the mapper to restore when done
+       MOVB @SAVP6C+1,@>F116  and page in the external bus >BA at >C000-dfff
+
+       SETO @TIPIPOWER        ;fake powerup for now
+       MOV  R12,@SAVR12
+
+       BLWP @TIPI_FIND  ;CRU=0 not found; otherwise TIPI cru
+
+       IF DEBUGTIPI#
+         BLWP @XMNUM
+         DATA >F110,4    ;show mapper
+         BLWP @XMNUM       ;show CRU
+         DATA TIPCRU,1
+       FI
+
+       MOV  @TIPCRU,R12
+       JEQ  TPURT        ;skip control rest if no TIPI
+
+       SBO  0            Enable TIPI
+       CLR  @TDOUT       tipi data output
+       CLR  @TCOUT       control output
+       SBO  1            trigger reset signal to RPI
+;;     LI   R1,>0200*6   play safe with timeout
+       LI   R1,>2000*6   7.22.2022, TIPI DSR is >2000 not >0200!
+TIPUL1 DEC  R1
+       JNE  TIPUL1
+       SBZ  1            turn off reset signal
+
+       IF DEBUGTIPI#
+         BLWP @XMTEXT
+         DATA POWERCRU
+
+         BLWP @XMCRLF
+         BLWP @XMNUM       ;show what we think is DSR
+         DATA >4000,20
+         BLWP @XMCRLF
+         BLWP @XMNUM       ;show what is >C000 too
+         DATA >C000,20
+       FI
+
+       SBZ  0            ;7.23.2022, turn off card only if present!
+
+;;TPURT  SBZ 0
+TPURT  MOV  @SAVR12,R12  restore
+       MOVB @SAVP6C,@>F116
+       RT
+
+
+       IF   DEBUGTIPI#
+POWERDSR TEXT '~Powerup: TIPI DSR >'
+         BYTE 0
+POWERXOP TEXT '~Powerup: TIPI XOP >'
+         BYTE 0
+POWERCRU TEXT '  Control lines reset~'
+         BYTE 0
+         DATA 0
+       FI
+
+
+;
+; Device find routine. Hardcoded, per Matt, TIPI device loc won't change.
+;
+; 6.26.22 MUST look in >C000 bank! Don't rely on XOP's setting >BA in >4000!
+;
+TIPIWS3 BSS 32
+TIPINAME
+       BYTE >04,'T','I','P','I'
+       EVEN
+
+TIPI_FIND   DATA TIPIWS3,TIPI_F    TIPI FIND CRU ADDRESS
+TIPI_F
+       LIMI 0            1.13.2020
+       LI   R12,>1000
+       CLR  @TIPCRU
+ISDSR
+       SBO  0
+;;     SBZ  2
+;;     SBZ  3
+
+     IF DEBUGTIPI#
+       BLWP @XMCRLF           ;cycle through memory for each device
+       BLWP @XMNUM            ;with cru prefix
+       DATA TIPIWS3+24,1   ;r12
+       BLWP @XMNUM
+       DATA >C000,15
+     FI
+
+       LI   R0,>AA00
+       CB   @>C000,R0
+       JNE  NEXTCARD     NO DSR ROM HEADER
+       MOV  @>C008,R0
+       JEQ  NEXTCARD     END OF DSR LIST
+       AI   R0,4         R0 NOW POINTS TO DSR NAME
+       AI   R0,>C000->4000    ;OFFSET
+       LI   R1,TIPINAME
+       LI   R2,5         COMPARE 5 BYTES OF NAME STRING
+TEST
+       CB   *R0+,*R1+
+       JNE  NEXTCARD
+       DEC  R2
+       JNE  TEST
+       SBZ  0            FOUND TIPI
+       MOV  R12,@TIPCRU
+       RTWP
+
+NEXTCARD
+       SBZ  0
+       AI   R12,>0100
+       CI   R12,>1E00
+       JL   ISDSR
+       CLR  @TIPCRU
+       RTWP
+
+;---------------------
+
+; tipi reset code from xop - slightly different so compare
+;       SBO  0            TURN ON CARD
+;       CLR  @TDOUT       CLEAR TIPI DATA OUTPUT
+;       CLR  @TCOUT       CLEAR CONTROL OUTPUT
+;       SBZ  0            TURN OFF CARD
+
+; end tipi powerup routine

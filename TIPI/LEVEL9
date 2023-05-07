@@ -1,0 +1,1387 @@
+; File: TIPI\LEVEL9
+;      All /9640 mode opcodes (level2+direct IO); not the best filename
+;
+; Started December 2020
+; BWM/TT
+;         - Device name TIP1.
+;         - OS-restricted maximum path.filename length of 40 characters
+;         - Level three operates on path.filename
+;         - Level 2 will require parsing the path and using setpath routine
+;           Also requires unit 0
+;         - TIPI DSR code will utilize PASSDAT and other DSR routines
+;         - Review other devices and needs after file IO is working
+;
+; 12.3.2020 - Entry into TIPI DSR is in HEADER (offset >6020)
+;             Called within L8.HDR2-P2 along with page mappings
+; 12.4.2020 - Changed page load from >2000 to >6000
+;             Necessary so that we can use the existing DSR routines
+; 12.5.2020 - Implemented Open, Close, Read, Write, Restore, Delete,Status
+;             Potential difference w/how Matt ignores files when not present.
+;             otherwise, the opcodes seem to be functioning
+;           - Modify TIP1 to TIPI within DSR for RPI
+;           - TIPI-PEB is now accessed from >C000-DFFF space
+; 12.6.2020 x LOAD Opcode written; data not transferring.  Debug
+;             Fixed; was passing wrong value to TI/TIPI PAB
+;           - Modified TIPI-IO RECVMSG routine to allow for re-entrance
+;           - Directory Catalog works w/FIXED 38 len.
+;           $ Directory catalog will need to fake the larger rec size
+;             before we can use a program like Directory Manager
+;           - Cleanup HEADER-TIM file
+;           - 6 hours of debugging LOAD due to an ODD address. GenASM bug?
+;           - Activated SAVE opcode for testing; working
+;
+;12.7.2020  - Added most of the bread/bwrite DSR code for OS side
+;           + Still need to pi code, addinfo/fileID translation
+;           - Added SETPATH routine; dual purpose
+;           - Level2 error return partially complete
+;           - File is getting pretty big...
+;12.10      - Fixed Directory kludge; IF146 file now works enough for
+;             DM to traverse the TIPI. Date/time fields injected during
+;             record IO with float 0
+;12.12      - wrangled with level2; prot and setpath working
+;           - rename FILE working; not worring about directory for now
+;12.13      - Matt updated TIPI to pass Update date/time. Removed hack code
+;           $ Sequential record IO not working right;clear RECNUM on close
+;             investigate normal ops; TIPI might be allowing recnum during
+;             seq. IO that should be ignored.
+;           - Continued building BREAD/BWRITE support.
+;           - Directory Create/Delete added via opcode 6/7
+;12.15.2020 - BREAD implemented; worked on first attempt! (base offsetwrong)
+;             bwrite code close to activation
+;           - Catalog file acting strange; result of seq/rel code ?
+;           - Review other DSR options and cleanup; retain Vmsg/vrcv for
+;             use with GPL mode and passthrough to well-known addresses
+;12.18.2020 $ See SETR9D, setting BREAD error >A000 for read past file
+;             Fixes BLOB, but is this the right action. Must test TIPI return
+;           $ Playing with RECNUM in open/close opcode; GENASM error/lockup
+;             Identified fixed/relative record IO problem in TIPI. Reported.
+;12.19.2020 - Bwrite active (why are comments missing)
+;             Added PI., URI. devices; cleaned up dsr entry code
+;           + Added Latch cleanup at DSR exit (i.e., BL @CLEANUP)
+;
+;12.21.2020 + BREAD was reporting wrong remaining Sector count on return.
+;             fixed PAB+12 and added >A000 error. COPYS now works tip->hfdc
+;           + Added RAWERROR to debug.
+;           $ TRNERR for lvl3 is passing TIPI error, not Geneve! review.
+;           + Removed some of the debug ops to clean the code
+;           + THOPFX, test for load/save >>64k and error
+;12.22.2020 + Improved BREAD/BWRITE debug. Problem found w/Memex Card
+;
+;12.23.2020 + Cleaned up ROM; removed multiple TIPI eprom files
+;           + Incorporated Powerup
+;           + SCSI2\BUFEQU2 (8000-9fff) not currently used
+;12.25.2020 +Status upcode add special response for DIR existence
+;12.26.2020 $Powerup timing issue; removed until we discuss w/Matt
+;           +Rename Directory implemented
+; 2.06.2021 Moved REF's to tipi\header
+;           Redirection added to DSK device w/restore before SYSRT1
+; 2.08.2021 TRNERZ changed error code to >E000; may need to revert to >6000
+;           however, >6000 isn't supported in the Genprog error code list.
+; 5.10.2022 Moved powerup to POWERUP
+; 5.28.2022 Added conditional DEBUGTIPI#
+;
+;---------
+; WARNINGS:
+;      - Review potential DSR dependencies in >8000 space
+;---------
+; ACTION ITEMS:
+;      - Add TIPI powerup routine (oshead? )
+;      - OPEN routine, inspect LRECLN MSbyte. Did I make a mistake
+;      - Does write(3) need to increment record cound? See read (2)
+;      - Add TIPI enable/disable flag (consolidate flags for scs/hf/etc?)
+;
+*
+* 9640 pab LAYOUT. The OS manipulates 9640/4A on entry/return
+*
+* OPCODE BYTE 0   0        OPCODE BEING PERFORMED
+* FLGSTS BYTE 0   1        FLAGS AND STATUS BITS
+* PABERR BYTE 0   2        RETURN ERROR CONDITION
+* BUFADH BYTE 0   3        HIGH BYTE OF BUFFER ADDRESS
+* BUFADR DATA 0   4,5      BUFFER LOCATION FOR DATA
+* RECNUM DATA 0   6,7      RECORD NUMBER FOR I/O
+* LRECLN DATA 0   8,9      LOGICAL RECORD LENGTH AS GIVEN BY PAB [or imagesiz
+*                          Also used for -returned- image Size with Byte 7
+* CPUFLG BYTE 0   10       THIS FLAG DOES EXIST ELSEWHERE AS CPUVDP
+* CHRCNH BYTE 0   11       HIGH BYTE OF CHARACTER COUNT
+* CHRCNT DATA 0   12,13    CHARACTER COUNT FOR # OF BYTES TO TRANSFER
+* SCNOFF BYTE 0   14       Used for status(opcode 9) and bread/bwrite MSB sector
+* OPTLEN BYTE 0   15       LENGTH OF PATHNAME  (OPTLN EQU OPTLEN)
+* *
+* PATHNM TEXT 'DSK.volumename.@filename@'  PATHNAME...
+*        TEXT '6789 123456789 '
+
+; Some general data
+TIPTXT TEXT 'TIP1'       transformed to 'TIPI'
+URITXT TEXT 'URIx'       1-3
+PITXT  TEXT 'PI'         n/a
+DSKTXT TEXT 'DSK1'       0-4
+MINMAX TEXT '04'         disk min max for TIPI
+
+DPT    BYTE '.'
+CBH00  BYTE >00
+IIIIII TEXT 'II'         ;to fool the PI
+SAVT6C DATA >00BA        ;to save mapper page @>F116 (C000-DFFF)
+SAVP6C DATA >00BA        ;powerup save, temporary
+THOP5  BYTE 5            OPCODE TEST
+THOP6  BYTE 6            OPCODE TEST
+HBAA   BYTE >AA
+SAVR12 DATA 0
+LVL3ONLY DATA 0          0=n0; 1=yes
+DSKFLAG  DATA 0          0=no; 1=yes         needed to help w/DSK ops
+
+; These live in >8000 page; can we make them local?
+MYUADL DATA 0            used to pass address w/PASDAT
+MYUADH DATA 0            "                   "
+
+TIPERROR    DATA 0       ;used for various stuff
+TIPIUNITLOC DATA 0       save pointer for later restoration;if 0, skip
+TIPIUNITNUM DATA 0       save unit# for later restoration
+
+;Fake PAB for TIPI messaging
+; We manipulate the 9640 PAB (via REF'd labels) whenever possible
+TOPCODE     BYTE 0       0
+TFLGSTS     BYTE 0       1
+TBUFADR     DATA 0       2,3  (note: presumes local 64K/16K vdp addressing)
+TRECLEN     BYTE 0       4
+TCHRCNT     BYTE 0       5    ;how does this work for LOAD/save?    t
+TRECNUM     DATA 0       6,7
+TSCNOFF     BYTE 0       8
+TUNUSED     BYTE 0       9, unused but transferred to TIPI!
+            DATA 0       ;just in case TIPI writes something more
+
+;####
+;TIPI DSR Entry at >6020 via hdr2-p2 see TIPI.HEADER
+;####  Check for powerup and TIPI
+
+TIPLV3                   ;DEF entry
+TIPIDSRENT
+; Warning: when we implement FULL powerup, be sure card is ON (SBO 0)
+       MOVB @>F116,@SAVT6C    Save the mapper to restore when done
+       MOVB @SAVT6C+1,@>F116  and page in the external bus >BA at >C000-dfff
+;;      MOVB @CBHBA,@MAP968  ;peripheral at >8000 page (for now)
+
+       CLR  @TIPIUNITLOC      prep for DSK redirect
+
+       CLR  @RAWERROR         Debug TIPI raw error
+       ABS  @TIPIPOWER        powerup done?
+       JNE  SKIPWR            yes
+       BL   @TIPIPOWERUP      no, do it (allows us to clear flag)
+
+SKIPWR MOV  @TIPCRU,R12          tipi initialized?
+       JEQ  ERRK2             No, this means none was found! Abort!
+       SBO 0                  Yes, lights on!
+
+; The following code mirrors HDR2-P2 routines to an extent
+;      - Verify devices/periods/ DIR status/lvl3 status
+;      - Set address/transfer
+;      - Copy 9640 PAB to TIPI fake PAB
+;      - Send PAB to TIPI/handle errors
+;      - branch to opcode for remaining work
+;
+; Check path len and prep error trap
+DSRENK MOVB @CBH00,@PABERR    ZERO OUT ERROR FLAGS
+       LI   R0,>6000   [3]    BADOP OPCODE
+       LI   R3,OPTLN    ;equated to OPTLEN !
+       MOVB *R3+,R1           GET THE LENGTH OF THE PATHNAME
+       JNE  DSRNNN            CAN NOT BE LENGTH OF 0
+ERRK2  B    @BADOP6      ;>6000 error
+NAMERR B    @BADOP
+
+DSRNNN SRL  R1,8
+PART1  MOV  R1,R5             SO R5 IS THE PATHNAME LENGTH
+       CI   R1,5              PATHNAME MUST BE AT LEAST 5 CHARS
+       JL   ERRK2
+       CI   R1,40             BUT NO MORE THAN 40
+       JH   ERRK2
+;
+;  12.12.2020-Adjust for DSKx remap as needed later
+;
+       MOV  R3,R4        Save OPTLN+1 for each dev test
+
+       SETO @LVL3ONLY    PI,URI lvl3 only;no lvl2 ops!
+       CLR  @DSKFLAG     start as if this is NOT a DSK call
+       LI   R2,PITXT     PI
+       CB   *R2+,*R3+
+       JNE  CHKURI
+       CB   *R2+,*R3+
+       JEQ  SETDR1       skip unit,special
+
+CHKURI MOV  R4,R3        Reset for URI
+       LI   R7,3         high drive #
+       LI   R2,URITXT
+       CB   *R2+,*R3+         U
+       JNE  CHKDSK
+       CB   *R2+,*R3+         R
+       JNE  CHKDSK
+       CB   *R2+,*R3+         I
+       JEQ  SETDR             check period,unit#
+
+CHKDSK MOV  R4,R3
+       LI   R7,4
+       CLR  @LVL3ONLY         ;allow level 2 IO via Geneve PAB
+       LI   R2,DSKTXT
+       CB   *R2+,*R3+         D
+       JNE  CHKTIP
+       CB   *R2+,*R3+         S
+       JNE  CHKTIP
+       CB   *R2+,*R3+         K
+       JNE  CHKTIP            check period,unit#
+
+;2.6.2021, redirection
+       CB   *R3,@DPT          NO VOLUME search allowed at this time
+       JEQ  NAMERR
+
+       MOV  R3,@TIPIUNITLOC    save address of the tipi unit#
+       MOVB *R3,@TIPIUNITNUM   save the unit num
+       AI   R10,>30           make it a number
+       SWPB R10               and update PAB
+       MOVB R10,*R3+          From HDR2, NUM$OK: 0,1,2,3,4
+       JMP  SETDR1            skip unit test and proceed
+
+
+; Probably use R10 from caller to set the TIPI device#
+;  Inspect HDR2-P2 CALTIP routine; must convert logical to physical here
+;      MOVB @DSKTXT+3,*R3+    SET TO DSK1 FOR NOW
+;      CB   *R3,@MINMAX       <0?
+;      JL   NAMERR            error
+;      CB   *R3+,@MINMAX+1    >4?
+;      JH   NAMERR            error
+
+       JMP  SETDR             good to go, TEST DSK. and DSK#.
+
+; TIPI must be last
+CHKTIP CLR  @LVL3ONLY    allow all ops
+       MOV  R4,R3        reset R3
+       LI   R7,1         high drive #
+       LI   R2,TIPTXT
+       CB   *R2+,*R3+         T
+       JNE  NAMERR
+       CB   *R2+,*R3+         I
+       JNE  NAMERR
+       CB   *R2+,*R3+         P
+       JNE  NAMERR
+       CB   *R2+,*R3          1
+       JNE  NAMERR
+       MOVB @IIIIII,*R3+      ;FIX for TIP1 vs. TIPI ; fix R3 if you remove
+       JMP  SETDR1       skip unit test
+
+SETDR  CB   *R3,@DPT          A DECIMAL POINT?
+       JEQ  NAMERR     ERR000  YES, no volume search allowed. Error.
+
+; Unit test for URI only
+SETDRU MOVB *R3+,R6           TRY A DRIVE    (*R3+  IF IIIII removed)
+       SRL  R6,8
+       AI   R6,->0030    0? (FIX FOR DSK LATER)
+;;     JEQ  NAMERR         ERR000
+       C    R6,R7             R7==1 drives max
+       JH   NAMERR        ERR000
+
+;common routines follow
+SETDR1
+       CB   *R3+,@DPT         MUST BE A DECIMAL, IN BOTH CASES NOW..
+       JNE  NAMERR       ERR000
+
+* Check PATH.FILENAME; if there is a period at the end, assume it is
+*    a Directory-specific operation, not a file operation
+*
+       CLR  @ISDIR       0=not Directory
+       CB   @OPTLN(R5),@DPT   is the last character a "." (if so then
+       JNE  PBVC3             NO, standard dsr           direct access)
+       SETO @ISDIR            it is some type of special access
+
+;PBVC3  BLWP @RDCMTM           READ COMPRESSED TIME  (retain for future)
+PBVC3
+; Copy PAB to a holding place for debug (page >0D offset >xx20 or so)
+
+; Debug start <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<6
+     IF   DEBUGTIPI#
+       MOV  R5,@DEBPLN  ;len of path.file for debug
+       BLWP @XMTEXT
+       DATA PABXM
+       BLWP @XMNUM
+       DATA OPCODE,8     ;/2 show pab
+       BLWP @XMTLEN
+       DATA PATHNM       show path in easy-to-read
+DEBPLN DATA 0
+     FI
+;-end debug
+
+; Copy Geneve PAB into TIPI fake PAB
+; Pass converted PAB to TIPI
+
+       MOV  @BUFADR,@MYUADL   SET THE BUFFER ADDRESS (used later)
+       MOV  @PABERR,@MYUADH   ACTUALLY PABERR/BUFADH (in pasdat loops)
+       MOVB @CPUFLG,@PASVDP   SET IF CPU OR VDP RAM I/O
+
+;12.19, do not allow URI/PI to use level2
+       CB   @OPCODE,@CBH09    is opcode level 3 (0-9)
+;;     JH   HANDLEOP          no, skip pab and go direct to op table
+       JLE  HOP80             >9 so check is it...
+       ABS  @LVL3ONLY         level3 only?
+       JEQ  HANDLEOP            no, must be TIPI/DSK lvl2
+       B    @BADOP              yes, error
+
+HOP80
+       ABS  @ISDIR            ok, it's level 3 but.. is it special DIR op?
+       JEQ  FAKPAB            NO
+
+; Geneve uses trailing period for create/delete (and possibly rename) dir
+       CB   @OPCODE,@CBH06    YES, is it Create Directory?
+       JNE  HOP90
+       B    @MAKEDIR
+HOP90  CB   @OPCODE,@CBH07    YES, is it Delete Dir?
+       JNE  FAKPAB            no, so it might be a directory read
+       B    @REMOVEDIR
+
+; This is only valid for level 3 !
+FAKPAB MOVB @OPCODE,@TOPCODE
+       MOVB @FLGSTS,@TFLGSTS
+       CLR  @TBUFADR          ;not needed
+       MOV  @LRECLN,R1        ;$$ 16-bit for GenOS;
+       SWPB R1
+       MOVB R1,@TRECLEN       ;fix for 8-bit
+;hack removed
+       MOV  @CHRCNT,R1
+       SWPB R1
+       MOVB R1,@TCHRCNT       ;fix for 8-bit
+;;     MOVB @CHRCNT,@TCHRCNT  ;$$ 16-bit for GenOS; "      "
+
+       MOV  @RECNUM,@TRECNUM  ;for record IO
+
+       CB   @OPCODE,@THOP5     ;HOWEVER,Geneve image size is in diff spot
+       JEQ  THOPFX            ;if opcode 5/6, grab CHRCNT
+       CB   @OPCODE,@THOP6
+       JNE  THOPK
+THOPFX MOV  @CHRCNT,@TRECNUM  ;and place into PAB where TI/TIPI wants it
+       MOVB @CHRCNH,R0
+       JNE  TRNERZ       ;$12.21, if MSByte<>0, error. Max load/save=64k
+
+THOPK  MOVB @SCNOFF,@TSCNOFF  ;used for status
+
+; At this point we should do the TIPI preparation and send the PAB, process
+; any results, etc. SENDMSG/RECVMSG are cpu transfers R0=len, R1=address
+;                                   destroys r2,r3
+;
+       LI   R0,10        10 byte
+       LI   R1,TOPCODE   Location of what we are sending
+       BL   @SENDMSG     CPU messaging
+
+       MOVB @OPTLN,R0
+       SRL  R0,8
+       LI   R1,OPTLN   +1  device.filename
+       INC  R1
+       BL   @SENDMSG
+
+       LI   R0,1              ;1 byte transfer
+       CLR  @TIPERROR         ;clear target
+       LI   R1,TIPERROR+1     ;LSByte address for compare. Ugh.
+       BL   @RECVMSG           and get the response
+
+;$     LI   R0,>6000     ;prep for error
+       LI   R0,>E000     12.19 test
+
+       MOV  @TIPERROR,R1
+       CI   R1,EDVNAME        ;dev name error
+;      JEQ  RETSKIP      ;$$$umm.. can't really do this w/Geneve dsr
+       JNE  TRAN3
+
+;;TRNERZ LI   R0,>6000     generic error for now
+TRNERZ LI   R0,>E000     12.19 test
+
+TRNERR B    @BADOP
+
+TRAN3  CI   R1,SUCCESS   ok?
+       JEQ  HANDLEOP     yes, so try to do the operation
+
+;careful, watch the register juggle
+       MOV  R1,R0        was it 0?
+       JEQ  TRNERZ         yes,err anyway ( 0 is we didn't handle the call)
+       SRC  R0,3         not 0, so report the error
+       MOV  R0,@RAWERROR      ;12.21, debug (also lvl2)
+;$ Hey... we are passing TIPI error, not Geneve error!
+       JMP  TRNERR            from TIPI
+
+; No errors, good to go...
+HANDLEOP
+       MOV  @OPCODE,R6        GET OPCODE AND FLAGS
+       ANDI R6,>3FFF          MASK OFF ANY STRAY BITS
+       MOV  R6,R11
+       LI   R0,>6000
+;;     LI   R0,>E000     12.19 test
+       SRL  R11,8
+       CI   R11,>000D         ERROR OUT ON FORMAT
+       JH   ERROPT            ;max opcodes in table
+
+       SLA  R11,1
+       MOV  @OPTBL(R11),R11
+       B    *R11
+
+*
+OPTBL  DATA T96OPEN,T96CLOSE,T96READ,T96WRITE,T96RESTOR    level 3
+       DATA T96LOAD,T96SAVE,T96DELETE,T96BADOP,T96STATUS   level 3
+       DATA T96BREAD,T96BWRITE,T96PROTCT,T96RENAME       9640level 2
+
+ERROPT B   @BADOP
+
+C146   BYTE 146          Geneve directory record
+C38    BYTE 38           tipi directory record
+GENEVEDIR  DATA 0        EVEN
+H4000  DATA >4000
+H0014  DATA >0014
+H0A    DATA >0A0A
+CBH01  DATA >0101
+CBH02  DATA >0202
+CBH03  DATA >0303
+CBH06  DATA >0606        save/create dir
+CBH07  DATA >0707        del/remove dir
+CBH09  DATA >0909
+CBH20  DATA >2020
+PERIOD TEXT '..'
+H0808  DATA >0808
+H0100  DATA >0100        256 bytes/sector
+;
+; Each routine handles any necessary OS PAB update and data moves
+;      using PASDAT and REFerences
+
+;========================
+; Opcode 0: Open, return lrec
+T96OPEN
+       LI   R0,1              ;get confirmed reclen from TIPI
+;$$    LI   R1,LRECLN         ;TI=byte; Geneve=word so...
+       LI   R1,CHRCNT    ;$$Genref says return actual here! test 12.19
+       INC  R1                ;point to LSByte of Geneve DSR to set it
+       BL   @RECVMSG          ; (this is how Matt 'hacks' it)
+       MOV  @CHRCNT,@LRECLN   ;$$Make both same 12.19 test
+; Warning: if programmer sets record in pab at open, and doesn't
+;          set on read/write, possibly issue
+T96OPR CLR  @RECNUM      ensure rec0 on open
+       B    @SYSRTN
+
+;========================
+; Opcode 1: Close
+T96CLOSE
+;;;      CLR @RECNUM     ;12-13 fix for programs that don't reset seq. rec
+;$$$$ removed for testing Genasm fix; OPEN may be sufficient
+         B   @SYSRTN      ;nothing more to do
+
+;===============
+; Opcode 2: Read, with hack for OS Directory
+T96READ
+       CLR  R0           ;not used to call routine
+       LI   R1,FAKEBUF   (256 max) to prep for pasdat
+       BL   @RECVMSG
+       MOV  R0,@CHRCNT        ;LSByte of count for record IO
+;
+       CLR  @PASRW       ;0=read (from DSR to user)  1=write (from user->DSR)
+       MOV  R0,@PASCNT    ;chars to pass <=256
+       MOV  @MYUADL,@PASADL                  buffer address(user)
+       MOVB @MYUADH+1,@PASADH   movb!        buffer address(user)
+
+       LI   R1,FAKEBUF   ;
+       MOV  R1,@PASDSR   ;local DSR pointer
+
+HACKR2 BLWP @PASDAT      ;transfer record to user/task
+
+;      MOV  R2,R6
+;      BLWP @ADDADR      not needed since we only pass once per read
+;      A    R6,R10       used for record size>>256 in WindsX code
+
+;$ Geneve requires updated rec return in PAB
+UPRWREC
+;;     MOV  @OPCODE,R1        test status byte
+;;     ANDI R1,1              for Relative mode
+;;     JEQ  UPRWRT
+
+       INC  @RECNUM           ;Must update Geneve pab with next record
+
+       MOVB @CBH00,@CHRCNH    ;$$test 12.19
+
+UPRWRT B    @SYSRTN           ;but some programs like DM not clearing!!!
+;                             ;so we will clear on CLOSE
+
+;===========================
+; Write a record
+;   Read opcode INC's record number; does write need it too?
+;
+T96WRITE
+       CLR  R0
+       MOVB @FLGSTS,R1   Status
+       ANDI R1,>1000     Variable or Fixed?
+       JNE  T96WVR
+
+       MOVB @TRECLEN,R0  FIXED; get reclen from fake PAB
+       JMP  T96FIN
+
+T96WVR MOVB @TCHRCNT,R0   16-bit for Gen :(
+*      ANDI R0,>00FF     $$might need this
+
+T96FIN SWPB R0           length of data to write
+
+       SETO @PASRW       ;1=WRITE (FROM USER to DSR) (0=from DSR to user)
+       MOV  R0,@PASCNT    ;chars to pass <=256
+       MOV  @MYUADL,@PASADL                  buffer address(user)
+       MOVB @MYUADH+1,@PASADH   movb!        buffer address(user)
+       LI   R1,FAKEBUF        ;our dsr/fake buffer
+       MOV  R1,@PASDSR
+       BLWP @PASDAT           transfer from user to DSR and...
+
+;      R0 is still set with count and data is in buffer; send to TIPI!
+
+       LI   R1,FAKEBUF   buffer filled via PASDAT
+       BL   @SENDMSG
+
+;Test for write error:
+       LI   R0,1              ;1 byte transfer
+       CLR  @TIPERROR         ;clear target
+       LI   R1,TIPERROR+1     ;LSByte address for compare. Ugh.
+       BL   @RECVMSG           and get the response
+
+       MOV  @TIPERROR,R0
+       CI   R0,SUCCESS        ;good write,
+       JEQ  UPRWREC           ;so update PAB (via read code)
+
+       SRC  R0,3              Error, fix and
+T96WER B    @BADOP            report to OS
+
+;---------------------
+T96RESTOR
+; do we need to update Geneve PAB?
+       B    @SYSRTN       ;PAB <should> use the updated recnum next pass
+
+;=======================
+;Load is special. We need to transfer pasdat in 256-byte chunks
+;  The PAB should already have initiated the load; we just need to get it
+;
+T96LOAD                  ;Winds3-s see NOPNOT, LOAD1
+       MOV  @CHRCNT,R0
+       MOV  @BUFADR,R1
+       BL   @RECVMSGTOP  ;special call, get payload size in R4
+
+       MOV  R4,R5        Copy payload ;is size 0?
+       JEQ  T96WER   ;ERR00        yes, for now, we will error
+
+;      MOV  R4,@CHRCNT   ;$$update PAB for user$$
+       CLR  @RECNUM      ;12.6, high byte for count(plus more,try it)
+       MOV  R4,@LRECLN   ;12.6, actual image size returned here
+
+;----  R5 now holds maximum payload ---
+
+       LI   R6,256       256 byte chunk iterations
+
+T96L1  MOV  R6,R4        Assume RNEXT will count to 256 via R4
+       CI   R5,256       But do we have >=256 left?
+       JHE  T96L2        Yes
+       MOV  R5,R4        No, set R4 to remaining bytes
+       MOV  R5,R6        and set PASDAT transfer count to remainder
+       JEQ  T96LEND       0? End! Nothing to do (should never be 0)
+
+T96L2  CLR  R0           IO read counter
+       LI   R1,FAKEBUF   256 byte max buffer
+;        MOV @SAVR2T,R2
+       BL   @RNEXT       R4=max to read from TIPI
+;Data is now in local buffer
+;Send to User
+       CLR  @PASRW       ;0=read (from DSR to user)  1=write (from user->DSR)
+;      MOV  R0,@PASCNT    ;chars to MAX 256
+       MOV  R6,@PASCNT   Either R6(256) or R5 remaining
+       MOV  @MYUADL,@PASADL                  buffer address(user)
+;12.6, movb!
+       MOVB @MYUADH+1,@PASADH           ,    buffer address(user)
+       LI   R1,FAKEBUF   ;
+       MOV  R1,@PASDSR   ;local DSR pointer
+       BLWP @PASDAT      ;transfer record to user/task
+;R6    adjust final count [do we need to send back in PAB? I think so]
+       BLWP @ADDADR      ;uses R6 to increase MYUADL/MYUADH
+
+       CI   R5,256       was this the last pass?
+       JLE  T96LEND       yes, <=256 bytes
+       AI   R5,-256      No, so subtract buffer size
+       JMP  T96L1        and continue
+
+T96LEND
+;      MOV  @MYUADL,@BUFADR   might be required for MDOS task
+;      MOV  @MYUADH,@BUFADH   to know the next available buffer loc
+; GenREF states the actual file size should be returned in bytes 7-9
+
+       B    @SYSRTN
+
+;///////////////////////////////
+PAYLOADS DATA 0          ;debug
+;
+; Send length of payload via R0
+
+; Opcode 6: SAVE file
+;           Create Directory (special lvl2)
+T96SAVE
+       ABS  @ISDIR       trailing period?
+       JEQ  T96SOK       no, this is a file
+       B    @MAKEDIR    yes, <Create Directory>>
+
+T96SOK MOV  @CHRCNT,R0   (is this the correct word?)
+       MOV  @BUFADR,R1
+       BL   @SENDMSGTOP  ;special call, get payload size in R4
+
+       MOV  R0,R5        ;payload size from R0
+       JEQ  T96SER       ;error if ZERO
+
+;;L    CLR  @RECNUM      ;12.6, high byte for count(plus more,try it)
+;;L    MOV  R4,@LRECLN   ;12.6, actual image size returned here
+
+;----  R5 now holds maximum payload to Send to TIPI
+
+; Loop SENDMSG to save file
+
+       LI   R6,256       256 byte chunk iterations
+
+T96S1  MOV  R6,R0        Assume RNEXT will count to 256 via R4
+       CI   R5,256       But do we have >=256 left?
+       JHE  T96S2        Yes
+       MOV  R5,R0        No, set R4 to remaining bytes
+       MOV  R5,R6        and set PASDAT transfer count to remainder
+       JEQ  T96SEND       0? End! Nothing to do (should never be 0)
+;
+;Copy data from task to local buffer
+;
+T96S2  SETO @PASRW       ; 1=write (from user->DSR)
+;      MOV  R0,@PASCNT    ;chars to MAX 256
+       MOV  R6,@PASCNT   Either R6(256) or R5 remaining
+       MOV  @MYUADL,@PASADL                  buffer address(user)
+       MOVB @MYUADH+1,@PASADH    movb!       buffer address(user)
+       LI   R1,FAKEBUF   ;
+       MOV  R1,@PASDSR   ;local DSR pointer
+       BLWP @PASDAT      ;transfer record to user/task
+;R6    adjust final count [do we need to send back in PAB? I think so]
+       BLWP @ADDADR      ;uses R6 to increase MYUADL/MYUADH
+
+;Now write data to TIPI
+       LI   R1,FAKEBUF   ;dsr buffer
+       BL   @SNEXT       ;write R0 bytes to TIPI
+
+
+;;   IF DEBUGTIPI#
+;;     MOV  R6,@XMFAK2   ;$DEBUG
+;;     BLWP @XMTEXT
+;;     DATA FAKXM
+;;     BLWP @XMNUM
+;;     DATA FAKEBUF
+;;XMFAK2 DATA 0
+;;   FI
+
+       CI   R5,256       was this the last pass?
+       JLE  T96SEND       yes, <=256 bytes
+       AI   R5,-256      No, so subtract buffer size
+       JMP  T96S1        and continue
+
+;Test for SAVE error (not sure if this is in the right place)
+T96SEND
+       LI   R0,1              ;1 byte transfer
+       CLR  @TIPERROR         ;clear target
+       LI   R1,TIPERROR+1     ;LSByte address for compare. Ugh.
+       BL   @RECVMSG           and get the response
+
+       MOV  @TIPERROR,R0
+       CI   R0,SUCCESS        ;good write,
+       JEQ  T96SRT            ;so update PAB (via read code)
+
+       SRC  R0,3              Error, fix and
+T96SER B    @BADOP            report to OS
+
+T96SRT B    @SYSRTN           Cleanup and return
+
+;------------------
+;Opcode 7: Delete
+;          Remove Directory (special lvl2)
+T96DELETE                ;DONE
+       ABS  @ISDIR       trailing period?
+       JEQ  T96DOK       no, this is a file
+       B    @REMOVEDIR  yes, <<REMOVE Directory>>
+
+T96DOK B    @SYSRTN           ;nothing further to do
+
+;------------------
+;Opcode 8: scratch
+T96BADOP
+       LI   R0,>C000          ;scratch record not supported
+       B    @BADOP
+
+;------------------
+;Opcode 9: Status
+H54    DATA >5400        ;special Directory exist code
+T96STATUS                     ;DONE
+       LI   R0,1              ;get confirmed reclen from TIPI
+       LI   R1,SCNOFF         ;return STATUS via this byte
+       BL   @RECVMSG
+;      BL   @CLEANUP
+
+; $ Temporary MDOS//TIPI fix: 12.25.2020 for XCOPY, Folder existence
+       ABS  @ISDIR       dir?
+       JEQ  T96STR       no, file
+       CB   @SCNOFF,@CBH00    tipi report 0? (no error)
+       JNE  T96STR            no, pass it
+       MOVB @H54,@SCNOFF     ;yes,change to x|PROT|x|INTernal -- x|VAR|x|x
+T96STR B    @SYSRTN
+;
+; Geneve<->TI Level 2 IO. Put on your party hat.
+;
+;     0      3,4,5     6,7       10     12,13       14        15
+;In: Opcode|bufferadd|LSWSector|CPUVDP|sectorcount|MSBSecOff|NamLen
+;                      offset            |
+;                                        0=FileID/Addinfo
+;Out      2  3,4,5
+;      |Err| bufadd  |LSWSector|      |remaining |MSBSecOFf
+;            updated   updated         sectors    updted
+;                                       (seegenref for error condition)
+;Offsets start at 0, buffer/offset updated to next;DISALLOW TIP1. (DirSect)
+;
+;      Pathlen =<5? Error, no sector access allowed on device!
+;      SectorCount=0? Get FileID;  <>0, read from file
+H0505  DATA >0505
+
+TIPADDINFO  BSS 10       Fake ADDINFO Block for TIPI
+; 83xx buffer start address   --n/a
+; +2-3 number of first sector (or 0=addinfo,tot sectors will be returned)
+; +4   status                               |-allocated vs. rec allocated
+; +5   #rec/sector
+; +6   eof offset
+; +7   logical reclen
+; +8-9 lvl3 rec allocated    Note: not necessarily last rec written to
+
+; 10   MSB# of first sector   --n/a
+; 11   MSB l3rec              --n/a
+; 12-13 extended reclen       --n/a
+
+DSRFILEID   BSS 20       Fake 9640 FileID block
+;0-1   Extended reclen, used only if rec>255  --n/a
+;---
+; 2    file status flag bits
+; 3    #rec/sec ; 0 for programs and rec>256
+; 4-5  sectors reserved for file (Msbits @18) [$same or diff then 8-9?]
+; 6    bytes used in last sector / EOF
+; 7    Reclen for 0-255 rec files (TI value); 0=program,xrec
+; 8-9  Reversed +1 than highest fixed rec; prg=actual sec used;var=sec used
+;--
+;10-11 Date create --n/a
+;12-13 Time create --n/a
+;14-15 Date update --n/a
+;16-17 Time update --n/a
+;18    MS4bit of 4-5 sec reserved -n/a
+;19    MS4bit of 8-9 sec used     -n/a
+;
+
+T96UNIT     BYTE 0,0     unit|blockcount
+BLOCKS      DATA 0       ;TBD
+TOTBLOCKS   DATA 0
+;
+;
+T96BWRITE                ;NO BWRITE yet
+;#     JMP  ERRBRW       ;$$
+
+T96BREAD
+       LI   R7,OPTLN          Indirect into len
+       CB   *R7,@H0505    Len<=5? IF so, abort. No sector IO!
+       JH   T96B1        ;$fall into error until code done
+ERRBRW LI   R0,>6000     for now, ensure error occurs; simplify later
+       B    @BADOP
+
+T96B1  LI   R7,OPCODE    ;For use later!
+       ABS  @ISDIR       Is it a directory?
+       JNE  ERRBRW
+       BLWP @SETPATH17   set path(>17) and extract file for operation
+       MOV  R0,R0
+       JNE  ERRBRW       error!
+
+; This will need to be looped around the total Geneve blocks
+;      because TIPI/TI limit the count to 256; and we don't have buffer>256
+;
+; Set total sectors to transfer (0=addinfo block only)
+;  Ask TIPI for ADDINFO
+;    If sectors=0, exit
+;    IS sectors>1, read sector from TIPI
+;    Transfer sector to task via PASDAT
+;    Dec total sectors
+;    Loop until done
+;exit:
+;  Update Geneve PAB/Fileinfo as needed
+;  Update FileID [always? or just when ==0]
+;  Return
+;
+
+       CLR  @T96UNIT     ;clear unit + 8-bit BLOCK count
+;      movb @unit,@t96unit    for later
+       MOV  @CHRCNT,@TOTBLOCKS   ;+12 - SAVE FOR COMPARE !
+       JEQ  SETR9A
+       INC  @T96UNIT     ;read one sector + FileID (Tipi)
+SETR9A MOV  @T96UNIT,R9  save just in case
+
+; BREAD loop (can we get Bwrite in here too? We'll see)
+LOOPHERE
+       LI   R0,1         ;send DIRECT INPUT HEADER
+;$$ doutmsg for bwrite
+       LI   R1,DINPMSG   ;could also be DOUTMSG to re-use
+       CB   *R7,@H0A
+       JEQ  SETR9B
+       LI   R1,DOUTMSG
+SETR9B BL   @SENDMSG
+
+       LI   R0,2
+       LI   R1,T96UNIT
+       BL   @SENDMSG          Send UNIT and Block count (always 0 or 1 !)
+
+       LI   R0,10
+       LI   R1,LVL2FILE
+       BL   @SENDMSG          Send FILENAME
+
+; Theoretically, ignored if transfer code==0 (t96unit+1)
+; WARNING: RECNUM is base 0; TIPADDINFO+2 is base 1
+;      TIPINFADD = RECNUM+1
+;
+       LI   R0,2         bread -2 (sector only)
+       CB   *R7,@H0A     ;#
+       JEQ  SETR9C       ;#skip
+
+; This is ONLY ever available on (1) a read and (2) access=0
+;  Even though TIPI DSR is expecting each pass
+;   So for now, assume it is set if access<>0
+       LI   R0,8         ;#bwrite sends all 8
+       MOV  @TOTBLOCKS,R1     0?
+       JNE  SETR9C            no, skip parm pass (buffer won't have them!)
+       BL   @PASSFILEID  ;#provide parms to TIPI from caller
+       LI   R0,8         destroyed so reset
+       JMP  SETR9D       do NOT reset the sector count!
+
+SETR9C MOV  @RECNUM,@TIPADDINFO+2      ;STARTING sector (base 0)
+;      INC  @TIPADDINFO+2     ;now base 1
+;12-15, TIPI may be base 0 after all
+SETR9D LI   R1,TIPADDINFO+2
+       BL   @SENDMSG          ;question: TIPI require this ==0 for fileid?
+
+;Get error from TIPI/pab
+       BL   @GETL2RESP#9640
+       MOV  R0,R0
+       JEQ  DINOK1
+
+;                        ;$$ Must figure out which error TIPI reports
+
+; 3.14.2022, Do not add a sector! This creates issues w/COPY command
+;;;$   INC  @CHRCNT      ;12.21, PAB must contain sectors remaining!
+
+       LI   R0,>A000     ;; $$$$ TEST for BLOB 12-18-2020
+       B    @BADOP       ;ERROR!
+;error trap done---theoretically, no error now possible
+
+DINOK1
+; If BWRITE FILEID, we need to fix TIPADDINFO before this step
+       LI   R7,OPCODE
+       CB   *R7,@H0A     Bread? Yes, skip this
+       JEQ  DINOK2
+;bwrite primary transfer
+       MOV  @TOTBLOCKS,R0   fileid only? (from earlier passfileid)
+       JEQ  DOUTDONE        yes, END
+       BL   @BREADWRITE       no, get data from task via pasdat
+       LI   R0,256
+       LI   R1,FAKEBUF
+       BL   @SENDMSG          now send data to TIPI
+       BL   @GETL2RESP#9640   check error
+       MOV  R0,R0
+       JEQ  DOUTA        loop next sector
+       B    @BADOP       error :(
+DOUTA  DEC  @CHRCNT      any left?
+       JNE  LOOPHERE     yes
+       JMP  DOUTDONE     no, finish and exit
+
+; continue w/bread
+DINOK2 LI   R0,8              ;TIPI always...
+       LI   R1,TIPADDINFO+2   ;...gets additional info block
+       BL   @RECVMSG          ;8 bytes, regardless of transfer code
+
+       LI   R0,1
+       LI   R1,BLOCKS         ;get blocks TIPI transfered (should be 1)
+       BL   @RECVMSG
+       MOVB @BLOCKS,R0        ;0=fileID; 1=block
+       JEQ  DINDONE
+
+       LI   R0,256
+       LI   R1,FAKEBUF
+       BL   @RECVMSG          Get from TIPI
+       BL   @BREADWRITE       and send to task (inc's recnum)
+
+DINOK3 DEC  @CHRCNT           any more blocks?
+       JNE  LOOPHERE          yes, loop again
+;-------
+
+; If there were no blocks transferred, send FILEID
+;
+DINDONE
+;      MOV  @CHRCNT,R0        0==FileID ? (don't send if blocks read!)
+       MOV  @TOTBLOCKS,R0     ^^ Must use -original- value to test!
+       JNE  BRWCLEANUP        No,
+       BL   @PASSFILEID       Yes, send to caller
+
+DOUTDONE
+; clean up pab, environment, and return
+BRWCLEANUP
+       B    @SYSRTN
+
+; Transfer FileID/Addinfo parameters
+; Destroys: R0,R1,R10
+PASSFILEID
+       MOV  R11,R10
+
+; Bread skips;  bwrite requires we don't skip!
+;      MOV  @TOTBLOCKS,R0     FileID request?
+;      JNE  PFIDRT            No,skip, even if called inside loop
+
+BIO050 MOV  @H0014,@PASCNT    20 bytes to xfer
+       MOV  @BUFADR,@PASADL
+       MOVB @BUFADH,@PASADH
+       MOVB @CPUFLG,@PASVDP
+       LI   R0,DSRFILEID      our fake buffer (we'll translate to TIPI/TI)
+       MOV  R0,@PASDSR
+;;     LI   R7,OPCODE    set in caller
+       CB   *R7,@H0A     read parms?
+       JNE  PARMW        no, write file ID
+;
+; BREAD-ID: At this point we have queried TIPI; convert to Geneve FILEID
+PARMR  LI   R0,DSRFILEID
+       CLR  *R0+         0-1
+       MOVB @TIPADDINFO+4,*R0+   2
+       MOVB @TIPADDINFO+5,*R0+   3
+       MOV  @TIPADDINFO+2,*R0+    4-5
+       LI   R1,TIPADDINFO+6
+       MOV  *R1+,*R0+         6-7
+       MOV  *R1+,*R0+         8-9
+       CLR  *R0+              10-11
+       CLR  *R0+              12
+       CLR  *R0+              14
+       CLR  *R0+              16
+       CLR  *R0+              18
+
+       IF   DEBUGTIPI#
+         BLWP @XMTEXT
+         DATA BRT1
+         BLWP @XMNUM
+         DATA TIPADDINFO+2,4   ;10 bytes
+         BLWP @XMTEXT
+         DATA BWT2
+         BLWP @XMNUM
+         DATA DSRFILEID,10   ;20 bytes
+       FI
+
+       CLR  @PASRW       send:
+       BLWP @PASDAT        20 bytes to task
+PFIDRT MOV  R10,R11
+       RT
+
+; BWRITE-ID: This should have been done BEFORE tipi access
+PARMW  SETO @PASRW       read
+       BLWP @PASDAT        20 bytes from task
+       LI   R0,TIPADDINFO+2
+       MOV  @DSRFILEID+4,*R0+    2-3 (tot sec)
+       MOVB @DSRFILEID+2,*R0+    4 (status)
+       MOVB @DSRFILEID+3,*R0+    5 (rec/sec)
+       MOV  @DSRFILEID+6,*R0+    6-7 (eof/lrec)
+       MOV  @DSRFILEID+8,*R0+    8-9 (lvl3)
+
+; BWRITE TIPI: xxxx xxxx xxxx    FILEID: yyyy yyyy yyyy yyyy
+       IF   DEBUGTIPI#
+         BLWP @XMTEXT
+         DATA BWT1
+         BLWP @XMNUM
+         DATA TIPADDINFO+2,4   ;8 bytes
+         BLWP @XMTEXT
+         DATA BWT2
+         BLWP @XMNUM
+         DATA DSRFILEID,10  ;20 bytes
+       FI
+
+       MOV  R10,R11
+       RT
+
+     IF  DEBUGTIPI#
+BWT1   BYTE 13,10
+       TEXT 'bwrt : '
+       BYTE 0
+BWT2   TEXT '--' ID
+       BYTE 0
+BRT1   BYTE 13,10
+       TEXT 'brd  : '
+       BYTE 0
+       DATA 0
+     FI
+
+;PRIMARY read/write loop for our bread/bwrite code
+;Uses: RECNUM INCremented each loop
+;      Bufadr corrected each loop
+; Caller tests:
+;      DEC @CHRCNT
+;      JNE continue looping
+
+BREADWRITE
+       MOV  R11,R10
+BIO110 MOV  @BUFADR,@PASADL   pab buffer 21-bit
+       MOVB @BUFADH,@PASADH
+       LI   R0,FAKEBUF       our r/w local DSR buffer
+       MOV  R0,@PASDSR           for the tranfer
+       MOV  @H0100,@PASCNT    256 bytes per iteration
+       MOVB @CPUFLG,@PASVDP   set flag
+
+    CB   @OPCODE,@H0A      Read?
+    JEQ  BIO103              Yes, jump
+
+       SETO @PASRW              No, write
+       BLWP @PASDAT             Get block from task
+       JMP  BIO102       transfer complete;update pointers
+
+BIO103
+       CLR  @PASRW       to task(user) from DSR
+       BLWP @PASDAT
+BIO102 INC  @RECNUM      ; +1
+       JNC  BIO104
+       AB   @CBH01,@SCNOFF    update 14(MXBSecOffset)
+BIO104 A    @H0100,@BUFADR
+       JNC  BIO106
+       AB   @CBH01,@BUFADH
+BIO106 MOV  R10,R11
+       RT
+
+;-----------end bread/write
+
+; CreateDir
+; RemoveDir
+; - If final char of PAB is a period, reduce by 1 and send to SETPATH
+;   In theory, SETPATH should set to previous path and new directory will
+;   be in LVL2FILE.  We can then call the create directory opcode OR the
+;   delete opcode
+;
+RMCOPCODE DATA 0
+
+; Common code for create/delete (possibly rename) Directory
+REMOVEDIR
+       MOVB @DDIRMSG,@RMCOPCODE
+       JMP  RMCOMM
+
+MAKEDIR
+       MOVB @CDIRMSG,@RMCOPCODE
+       JMP  RMCOMM
+
+RMCOMM MOV  R5,R6        save len
+       DEC  R5           path.file len (w/period) -1
+       SWPB R5
+       MOVB R5,@OPTLN    adjust PAB len then...
+
+       BLWP @SETPATH17   set path and parse file (i.e., dir)
+       SWPB R6           restore Geneve pab before we exit
+       MOVB R6,@OPTLN
+
+       MOV  R0,R0        if setpath fails abort
+       JNE  RMCERR
+
+       LI   R0,1
+       LI   R1,RMCOPCODE    Set aobe
+       BL   @SENDMSG
+       LI   R0,1
+       LI   R1,RMCOPCODE+1    unit
+       BL   @SENDMSG
+       LI   R0,10
+       LI   R1,LVL2FILE
+       BL   @SENDMSG
+
+       BL   @GETL2RESP#9640
+       MOV  R0,R0
+       JNE  RMCERR
+
+RMCOK  B    @SYSRTN
+RMCERR B    @BADOP
+
+;
+PROTMSG BYTE >12
+        BYTE 0           unit#
+        BYTE 0           prot/unprotect (from Geneve OS)
+        BYTE 0
+
+FRENMSG BYTE >13
+        BYTE 0            unit#
+
+        DATA 0            even
+
+; Lvl2 Opcode  : Protect/Unprotect
+T96PROTCT
+       ABS  @ISDIR       Upon DSR Entry, was period at end of path?
+       JNE  PROTER       yes. can't protect a path
+
+       BLWP @SETPATH17        ;ah, path may be DSKx downfall
+;;     BL   @GETL2RESP#9640
+       MOV  R0,R0             ;returned via *R13
+       JNE  PROTER
+
+;GenREF wrong; flag in byte 1, not 2
+       MOVB @FLGSTS,@PROTMSG+2           ;get protection flag!
+;
+       LI   R0,1         arrgh. TIPI requires separate messages per value
+       LI   R1,PROTMSG
+       BL   @SENDMSG
+
+       LI   R0,2
+       LI   R1,PROTMSG+1
+       BL   @SENDMSG
+
+       LI   R0,10
+       LI   R1,LVL2FILE       obtained during setpath
+       BL   @SENDMSG
+
+       BL   @GETL2RESP#9640
+       MOV  R0,R0
+       JNE  PROTER
+PROTOK B    @SYSRTN
+PROTER B    @BADOP
+
+;end protect/unprotect
+
+; RENAME File (not sure how to handle directories at this time)
+T96RENAME
+       MOV  R5,R6        save len to restore pab
+       LI   R1,FRENMSG        assume FILE rename msg
+       ABS  @ISDIR            Directory?
+       JEQ  T96FR1            no, just a file
+;dir rename:
+       LI   R1,RDIRMSG   set TIPI Directory Rename message
+;      MOV  R5,R6        save len
+       DEC  R5           path.file len (w/period) -1
+       SWPB R5
+       MOVB R5,@OPTLN    adjust PAB len to get /4A lvl2 file(i.e.,folder)
+
+T96FR1 BLWP @SETPATH17        ;ah, path may be DSKx downfall
+       SWPB R6
+       MOVB R6,@OPTLN    restore geneve pab
+
+       MOV  R0,R0
+       JNE  RENERR
+
+;header|unit|newname|oldname | return new <len><file> in pab
+       LI   R0,1         opcode
+       LI   R1,FRENMSG
+       BL   @SENDMSG
+       LI   R0,1
+       LI   R1,FRENMSG+1   unit#
+       BL   @SENDMSG
+
+; get new name via buffer/pasdat
+       MOV  @BUFADR,@PASADL   must be 10 characters, space filld
+       MOVB @BUFADH,@PASADH
+       MOVB @CPUFLG,@PASVDP
+       LI   R0,LVL2REN        our fake buffer (we'll translate to TIPI/TI)
+       MOV  R0,@PASDSR
+       SETO @PASRW       get from task into DSR
+       LI   R0,10
+       MOV  R0,@PASCNT   file len always 10
+       BLWP @PASDAT
+
+       IF DEBUGTIPI#
+         BLWP @XMNUM
+         DATA LVL2FILE,10  ;/2, show old|new names
+       FI
+
+       LI   R1,LVL2REN   new name
+       BL   @SENDMSG
+
+       LI   R0,10
+       LI   R1,LVL2FILE  old name (padded) from setpath
+       BL   @SENDMSG
+
+       BL   @GETL2RESP#9640
+       MOV  R0,R0
+       JNE  RENERR
+
+RENOK  B    @SYSRTN
+RENERR B    @BADOP
+;--end rename
+
+
+; Set the PATH
+;
+H0707   DATA >0505       min path =5 (root)
+;PROTMSG BYTE >12         tipi messages
+;FRENMSG BYTE >13
+DINPMSG BYTE >14
+DOUTMSG BYTE >15
+PATHMSG BYTE >17
+CDIRMSG BYTE >18,0       make
+DDIRMSG BYTE >19,0       delete
+RDIRMSG BYTE >1A,0       rename
+T#UNIT  DATA >0000    MSByte: Tipi Unit; DSK0=TIPI Alias, so use unit 0
+       EVEN              We can use 1-3 if we emulate disks later
+FILEHERE DATA 0          0=no file in the path from OS
+ISDIR  DATA 0            0=no; 1=yes  .Set at dsr entry
+LVL2FILE TEXT '123456789012'  extra 2 bytes for safety
+LVL2REN  TEXT 'ABCDEFGHIJKL'  Target for rename
+
+; Parse path and file from OS PAB for 'level 2' operations
+;  ONLY called internally; not visible to DSR directly!
+SETPATH17 DATA TIMSWS,$+2
+       LI   R7,OPTLN          Indirect into path len
+       CB   *R7,@H0505        test len
+       JH   SETP1
+SETPER LI   R0,>6000
+       B    @BADOP       ;$CANT DO THIS! FIX! WRONG WS!
+
+SETP1  LI   R0,1              ;prep TIPI for opcode
+       LI   R1,PATHMSG        ;was path_msg
+       BL   @SENDMSG
+       LI   R0,1
+       LI   R1,T#UNIT
+       BL   @SENDMSG
+;
+;     0 123456789abcde
+;<len=E>TIP1.TEST.FILE
+;
+       CLR  @FILEHERE    assume NO file for safety
+       MOVB *R7,R0       get path.file len
+       MOVB R0,R6
+       SRL  R0,8         get len
+       A    R0,R7        add to R7 (optln) to get end
+       MOV  R7,R6        and save for later
+       CB   *R7,@PERIOD  period at end?
+       JEQ  SETP4        assume path ready for us [no file]
+
+;SETP2  DEC  R0           one less len
+;      JEQ  SETPER       0? error. Unlikely but test anyway
+SETP2  DEC  R0           walk backwards..
+       CI   R0,5         path <5
+       JL   SETPER       yes, error
+       DEC  R7             prev byte
+       CB   *R7,@PERIOD    period?
+       JNE  SETP2          no
+
+;don't change R0 (needed to set path)
+; If there is a double period, we are in trouble....
+       INC  R7           now, point to first character AFTER period
+       SETO @FILEHERE    flag for prot, rename, etc
+       LI   R2,LVL2FILE  where to store file for Level2
+       LI   R3,10        must clear filename up to 10 bytes
+SETF1  MOVB *R7+,*R2+    get byte of file
+       DEC  R3
+       C    R7,R6        at end of filename within pab?
+       JLE  SETF1        (equal requires one more pass)
+       MOV  R3,R3        any remaining?
+       JEQ  SETP4        no, skip 00 fill
+
+SETF2  MOVB @CBH20,*R2+       ;not 00! YATTMU
+       DEC  R3
+       JNE  SETF2
+
+;r0 now has path len w/period at end
+; set r1 to path start
+SETP4
+       LI   R1,PATHNM         Ref'd for us already
+       BL   @SENDMSG
+
+       BL   @GETL2RESP#9640
+       MOV  R0,*R13      send to caller
+       RTWP
+;setpath done----
+
+RAWERROR DATA 0          ;debug raw error
+L2ERR  DATA 0
+GETL2RESP#9640
+       MOV  R11,R10           ;save return! hah!
+       LI   R0,1
+       LI   R1,L2ERR         ; (l2stat)
+       BL   @RECVMSG
+       MOV  R10,R11
+;0 =didn't handle=error (in TIPI dsr this passes to next peripheral
+;   so we may run into GPL issues at some point
+;
+       MOVB @L2ERR,R0
+;      JEQ  PISKIPPED    ;$$Can't do this right now
+       JNE  GETL2A       <>0 IS OK
+       LI   R0,>6000     0=error for now
+ERRL2  SRC  R0,3
+       MOV  R0,@RAWERROR  ;raw error for debug
+       RT
+GETL2A SRL  R0,8         check code
+       CI   R0,SUCCESS   special success code?
+       JNE  ERRL2        no, report error
+       CLR R0            yes, return w/succes
+GETLRT RT
+
+;-----------------------------------
+; Gen DSR R0 error code versus what we are used to seeing
+; msbitDSR  "TI Error"
+; 001x 20   1
+; 010x 40   2
+; 011x 60   3
+; 100x 80   4
+; 101x a0   5
+; 110x C0   6
+; 11x  E0   7
+
+     IF    DEBUGTIPI#
+SQUIG1 BYTE '~',0
+TIPEP  TEXT '    TIPERR: '
+       BYTE 0
+PABOUTT TEXT '~PBout: '
+       BYTE 0
+     FI
+
+       DATA 0
+
+BADOP6 LI   R0,>6000
+       JMP  BADOP
+
+SYSRTN CLR  R0
+; BADOPC CLR  *R3        $ clear data buffer (probably for the GETBUF)
+BADOP  SOCB R0,@PABERR
+
+; 2.6.21, restore unit number if we remapped it
+       MOV  @TIPIUNITLOC,R12  random register usage ;)
+       JEQ  LATCH1              we didn't map DSKx so skip this
+       MOVB @TIPIUNITNUM,*R12   restore unit number after redirect/remap
+
+LATCH1 MOVB @CBH00,@TDOUT     ;Cleanup latches 12.19
+       MOVB @CBH00,@TCOUT     ;" "
+
+
+     IF   DEBUGTIPI#
+       BLWP @XMTEXT      ;display pab when done
+       DATA PABOUTT      ;in theory, remap DSK will be restored for us to see
+       BLWP @XMNUM
+       DATA OPCODE,8     ;/2
+
+       BLWP @XMTEXT
+       DATA TIPEP        ;tipi error report
+       BLWP @XMNUM
+       DATA RAWERROR,1   ;report it
+       BLWP @XMCRLF      ;display exit pab   (rtnnoe)
+     FI
+
+
+RTNORG MOV  @TIPCRU,R12     CRU !
+       JEQ  RTNMP1       0, skip
+       SBZ  0            ;<>0, turn off card
+
+RTNMP1 MOVB @SAVT6C,@>F116    ;restore >C000 page
+
+RTNHGG B    @SYSRT1      ;return to OS
+
+;;SYSRT1 JMP $
+
+;PASDAT works like this:
+; PASWS/PASDAT---->      uses >c000-Dfff page for transfer
+; PASRW   R2             0=DSR to User; 1=User to DSR
+; PASVDP  R3            0=CPU; 1=VDP
+; PASADH  R4l           R4/R5=address in task space
+; PASADL  R5
+; PASCNT  R7            len of data
+; PASDSR  R8            local address in DSR space
+;
+
+; ADDADR updates pointers so we can report back to PAB/User
+;  See GenREF save/load/bread/bwrite
+TIMSWS BSS >20
+ADDADR DATA TIMSWS,ADDAD0     ;Update internal address pointer
+ADDAD0 A    @12(R13),@MYUADL  ;may not be needed. We'll see
+       JNC  ADDAD1
+       INC  @MYUADH
+ADDAD1 RTWP
+
+;EOF

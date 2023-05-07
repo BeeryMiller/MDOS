@@ -1,0 +1,98 @@
+; TIPI.HEADER    -- DSR lives in >6000->7FFF
+;
+;12.5.2020  Moved to 0x6000-0x7fff space for DSR compat
+;1.31.2021  Added TIPIGENL2 to header @>x00A for level 2 branch via HDR2-P
+; 2.6.2021  Moved REFs into this file.
+;           Added DEFs for l2,l3,pwr,enable
+;           $More cleanup required
+;           Cleaned up entries
+; 2.6.2021  Added TIPI XOP Vector at >x018
+; 4.17.2021 DEFined TIPCRU and TIPPWL(link to BL @TIPIPOWERUP)
+;           Preserve R1,R12
+;
+; 5.9.2022  Ref to TIPIFN for powerup linkage between XOPS and LEVEL9
+;           See HEAD\OSHEAD1S and OSHEAD2S; there is a problem with the
+;           XOP powerup - notified Beery for his input **FIXED 5-10
+;
+; 5.10.2022 TIPI XOP powerup now enabled via OSHEADx - CRU detect + reset
+;          $Need to refactor the powerup routines and flags for DSR pwup
+
+       REF  TIPXOP       TIPI\XOPS
+
+       DEF  TIPENA       Tipi enabled/disabled flag
+       DEF  TIPPWR       Powerup flag in header; clear to trigger powerup
+       DEF  TIPLV2       Level2 direct entry
+       DEF  TIPLV3       Level3 direct entry
+       DEF  TIPCRU       TIPI Cru for DSRPASS-S powerup
+       DEF  TIPPWL       TIPI Powerup Linkage
+
+; L8.PASDAT routine and setup
+       REF  PASDAT,PASRW,PASVDP,PASADH,PASADL,PASCNT,PASDSR
+       REF  SYSRT1       Returns to L8.dsrpass and handles error,return
+;      REF  FLPRT1       Possibly needed later
+
+; References into 9640 mode PAB and conversion to/from 4a mode
+       REF  OPCODE,FLGSTS,PABERR,BUFADH,BUFADR,RECNUM
+       REF  LRECLN,CPUFLG,CHRCNH,CHRCNT,SCNOFF,OPTLN,PATHNM
+
+;==========================================================================
+; DSR header starts here (lives in >6000; mirror >2000 for some operations)
+;==========================================================================
+; Reminder: XOP routines branch into hard-coded addresses for all DSRs
+;
+;      AORG >6000
+
+       RORG >0000          12.5, may need to AORG >6000 later
+       JMP  TIPIPW   TIPI Powerup entry via oshead; get cru/reset >x000
+
+TIPENA      DATA >FFFF        TIPI DSR:  0=DISABLE; <>0 enable  >x002
+X004        DATA TIPLV3       via hdr2-p2:tipcal                >x004
+X006        DATA TIPLV2       via hdr2-p2:tptest                >x006
+TIPCRU      DATA 0            TIPI cru set by powerup           >x008
+DEBUGFLG    DATA 1       ;0=off; 1=rs232 debug via RS232DEBUG   >x00A
+
+TIPPWR
+TIPIPOWER
+POWERFLG    DATA 0       ;0=powerup needed;  1=powerup done     >x00C
+
+RESERVED    DATA 0       ;reserved           >x00E
+            DATA 0       ;reserved           >x010
+            DATA 0       ;reserved           >x012
+            DATA 0       ;reserved           >x014
+            DATA 0       ;reserved           >x016
+;-----------------
+; XOP Linkage: DO NOT MOVE WITHOUT CHECKING OSHEAD
+;
+; XOP Powerups are called with a BL @>2000 via code in OSHEAD1s/2s.
+;    The TIPI DSR resides in >6000 space but is mirrored in >2000
+;
+TIPIPO1  B    @TIPXOP       ;xop entry                   >x018 (>6018)
+
+TIPIPW   B    @TIPIPOWERUP  ;powerup entry via >2002     >x01C
+
+*
+*------------------
+*
+FAKEBUF  BSS  260            ;READ/WRite record buffer for pasdat use/debug
+
+; 2.6.21, sorry, ROMPAGE only for direct TIPI card access in GPL mode
+;;   DATA     RECVMSG      * MOV @>4010,R0   BL *R0   TO INVOKE RECVMSG. >x010
+;;   DATA     SENDMSG      * MOV @>4012,R0   BL *R0   TO INVOKE SENDMSG. >x012
+;;   DATA     VRECVMSG     * MOV @>4014,R0   BL *R0   TO INVOKE RECVMSG. >x014
+;;   DATA     VSENDMSG     * MOV @>4016,R0   BL *R0   TO INVOKE SENDMSG. >x016
+
+;
+; Error/success codes
+;
+SUCCESS     EQU  >FF     Returned from rpi if pab is handled
+EDVNAME     EQU  >00     bad device name
+EWPROT      EQU  >01     device write protected
+EOPATTR     EQU  >02     bad open attr
+EILLOP      EQU  >03     illegal op
+OSPAC       EQU  >04     out of table/buffer space
+EEOF        EQU  >05     eof err
+EDEVERR     EQU  >06     any device failure
+EFILERR     EQU  >07     any file failure
+
+
+;EOF

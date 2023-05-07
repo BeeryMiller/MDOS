@@ -1,0 +1,26 @@
+* File: TIPI.ROM
+;
+;
+;2.1.2021,  VDP-IO updated to use Geneve video ports
+;2.6.2021,  Cleanup
+;2.7.2021,  XOP now separated from DSR
+;
+; 5.10.2022 Added POWERUP routine
+; 5.28.2022 Added conditional debug flag DEBUGTIPI#
+; 6.20.2022 Removed deprecated copy files
+;           Renamed ROM to TIPIS; TIPI-IO to CRU-IO
+;
+DEBUGTIPI#  EQU 0          ;0=off
+
+       COPY "\MDOS\TIPI\HEADER"   ;header and equates
+       COPY "\MDOS\TIPI\POWERUP"  ; new 5-10-22
+       COPY "\MDOS\TIPI\LEVEL9"   ;core TIPI routines, MDOS opcodes
+       COPY "\MDOS\TIPI\VDP-IO"   ;for gpl 1x routines only
+       COPY "\MDOS\TIPI\CRU-IO"  ;tipi direct io
+       COPY "\MDOS\TIPI\LEVEL2"   ;gpl level 2
+
+     IF     DEBUGTIPI#
+       COPY     "\MDOS\TIPI\RS232DEBUG"
+     FI
+
+     END
