@@ -1,8 +1,11 @@
+* LOADF2S
+*11.24.2023 Updated COPY statements for relative folder access
+*
        DEF  LOADF
        DEF  ENDLOD
        REF  CONTEX
        REF  HEAD#T,TAIL#T,TASK#C
-       COPY "\MDOS\HEAD\OSTASK"
+       COPY "HEAD\OSTASK"
        RORG
 *
 * load a task from disk using chained program image files

@@ -1,0 +1,184 @@
+*-----------------------------------------------------------*
+*     Western Horizon Technologies 5380 SCSI Controller     *
+*                                                           *
+*              Low level SCSI code for NCR5380              *
+*                                                           *
+*        Written and Copyright 1993 by Will McGovern        *
+*-----------------------------------------------------------*
+* HISTORY                                                   *
+* -------                                                   *
+*                                                           *
+* 10-Jan-93  WMC  Created this file                         *
+* 27-Oct-93  MJM  removed VDP access..wont use it!          *
+* 16-Jul-22  TAT  Compared routines to ASCSI DSR. No diff.  *
+*-----------------------------------------------------------*
+
+*-----------------------------------------------------------
+* NAME : ARBIT
+*
+* DESC : ARBITRATE FOR THE SCSI BUS
+*
+* PARM : NONE
+*
+* RET  : R0 = ZERO ALWAYS
+*
+* DEST : R0,R1,R2,R3
+*
+* NOTE : DOES NOT RETURN UNTIL ARBITRATION SUCCESSFUL
+
+ARBIT  MOV  R11,R3            SAVE RETURN ADDRESS
+ARBIT0 CLR  R0                HANDY ZERO
+       MOVB @IDMASK,R1        CONTROLLER ID MASK
+       MOVB R1,@WODR          CONTROLLER ID MASK -> BUS
+       MOVB R0,@WMR2          CLEAR ARB
+       LI   R2,MR2ARB*256     PREPARE TO ARBITRATE
+       MOVB R2,@WMR2          INITIATE ARBITRATION
+ARBIT1 MOVB @RICR,R2          READ ICR
+       ANDI R2,ICRAIP*256     AIP SET ( BUS FREE ) ?
+       JEQ  ARBIT1            NO, BUS NOT FREE YET
+       BL   @ARBDEL           YES, 2.2us ARBITRATION DELAY
+       MOVB @RICR,R2          READ ICR
+       ANDI R2,ICRLA*256      LA SET ( LOST ARBITRATION ) ?
+       JNE  ARBIT0            YES, ARBITRATE AGAIN
+       MOVB @RCSD,R2          NO, READ SCSI BUS DATA
+       XOR  R1,R2             CLEAR CONTROLLER ID BIT
+       CB   R2,R1             ANY HIGHER ID'S ?
+       JH   ARBIT0            YES, ARBITRATE AGAIN
+       B    *R3               NO, WE WON ARBITRATION
+
+*------------------------------------------------------------
+* NAME : SELECT
+*
+* DESC : SELECTS A SCSI TARGET UNIT
+*
+* PARM : R0  = SCSI TARGET ID TO SELECT
+*
+* RET  : R0 = ZERO IF UNIT SELECTED
+*           = NON-ZERO ERROR CODE IF PROBLEM
+*
+* DEST : R0,R1,R2,R3,R4,R5
+
+ICRBSD EQU  ICRBSY+ICRSEL+ICRBUS
+ICRSD  EQU  ICRSEL+ICRBUS
+
+SELECT MOV  R11,R5            SAVE RETURN ADDRESS
+       CI   R0,7              TARGET ID > 7 ?
+       JH   SEL3              YES, ERROR
+       MOVB @IDNUM,R1         NO, FETCH CONTROLLER ID
+       SRL  R1,8              TO LSB
+       C    R0,R1             TARGET ID == CONTROLLER ID ?
+       JEQ  SEL3              YES, ERROR
+       LI   R4,>0100          NO, DEFAULT ID 0 MASK
+       MOV  R0,R0             TARGET ID = 0 ?
+       JEQ  SEL1              YES, USE DEFAULT MASK
+       SLA  R4,0              NO, CREATE MASK FOR ID
+SEL1   SOCB @IDMASK,R4        OR WITH CONTROLLER ID MASK
+       BL   @ARBIT            ARBITRATE FOR THE BUS
+       LI   R2,ICRSEL*256     PREPARE TO ASSERT SEL*
+       MOVB R2,@WICR          ASSERT SEL*
+       MOVB R0,@WTCR          CLEAR TCR ( NO RESELECTION )
+       MOVB R4,@WODR          LOAD ID'S FOR ASSERTION ONTO BUS
+       LI   R1,ICRBSD*256     PREPARE TO ASSEY BSY*, SEL* AND DBUS
+       MOVB R1,@WICR          ASSERT BSY*, SEL* AND DBUS
+       MOVB R0,@WMR2          CLEAR ARB
+       LI   R1,ICRSD*256      PREPARE TO DEASSERT BSY*
+       MOVB R1,@WICR          DEASSERT BSY*
+       BL   @SELDEL           WAIT A SELECT DELAY
+       LI   R1,BSYCNT         WAIT COUNT FOR BSY* DETECTION
+SEL2   MOVB @RCSB,R2          READ CSB
+       ANDI R2,CSBBSY*256     IS BSY* ASSERTED ?
+       JNE  SEL4              YES, TARGET HAS BEEN SELECTED
+       DEC  R1                TIMEOUT ?
+       JNE  SEL2              NO, KEEP WAITING FOR BSY*
+SEL3   SETO R0                SET NON-ZERO RETURN CODE FOR ERROR
+SEL4   CLR  R1                SAVE MEMORY ACCESSES
+       MOVB R1,@WICR          DEASSERT SEL* AND DBUS*
+       B    *R5               RETURN
+
+*------------------------------------------------------------
+* NAME : NWRITE
+*
+* DESC : NON-DMA WRITE DATA TO SELECTED UNIT
+*
+* PARM : R0  = POINTER TO DATA TO WRITE
+*        R1  = LENGTH OF DATA IN BYTES
+*        R2  = SCSI PHASE OF TRANSFER
+*
+* RET  : R0 = NUMBER OF BYTES ACTUALLY TRANSFERRED
+*
+* DEST : R0,R1,R2,R3,R4,R5,R6,R7
+
+ICRBA  EQU  ICRBUS+ICRACK
+
+* ENTRY POINT FOR WRITE FROM CPU RAM
+
+NWRITC MOV  R11,R7            SAVE RETURN ADDRESS
+NWRIT0 LI   R6,WODR           SECOND HALF OF INSTRUCTION
+       SWPB R2                EXPECTED PHASE TO MSB
+       MOVB R2,@WTCR          LOAD PHASE INTO TCR
+       LI   R4,ICRBUS*256     PREPARE TO ASSERT DATA BUS
+       MOVB R4,@WICR          ASSERT DATA BUS
+       MOV  R0,R2             COPY DATA POINTER
+       CLR  R0                CLEAR BYTE TRANSFER COUNTER
+       MOV  R1,R1             ZERO LENGTH SPECIFIED ?
+       JEQ  NWRIT3            YES, SAFETY NET EXIT
+NWRIT1 MOVB @RCSB,R3          READ CSB
+       ANDI R3,CSBREQ*256     REQ* ACTIVE ?
+       JEQ  NWRIT1            NO, WAIT FOR REQ* ACTIVE
+       MOVB @RBSR,R3          YES, READ BSR
+       ANDI R3,BSRPHM*256     PHASE MATCH ?
+       JEQ  NWRIT3            NO, PHASE ERROR
+       MOVB *R2+,*R6          WRITE BYTE FROM CPU RAM
+       LI   R3,ICRBA*256      PREPARE TO ASSERT ACK* AND DBUS
+       MOVB R3,@WICR          ASSERT ACK* AND DATA ONTO BUS
+NWRIT2 MOVB @RCSB,R3          READ CSB
+       ANDI R3,CSBREQ*256     REQ* INACTIVE ?
+       JNE  NWRIT2            NO, WAIT FOR REQ* INACTIVE
+       MOVB R4,@WICR          DEASSERT ACK* AND DBUS
+       INC  R0                INCREMENT TRANSFER COUNTER
+       DEC  R1                WRITTEN ALL BYTES YET ?
+       JNE  NWRIT1            NO, MORE LEFT TO WRITE
+NWRIT3 B    *R7               YES, RETURN TRANSFER COUNT
+
+*------------------------------------------------------------
+* NAME : NREAD
+*
+* DESC : NON-DMA READ DATA FROM SELECTED UNIT
+*
+* PARM : R0  = POINTER TO DATA BUFFER
+*        R1  = LENGTH OF DATA IN BYTES
+*        R2  = SCSI PHASE OF TRANSFER
+*
+* RET  : R0 = NUMBER OF BYTES ACTUALLY TRANSFERRED
+*
+* DEST : R0,R1,R2,R3,R5,R6,R7
+
+* ENTRY POINT FOR WRITE FROM CPU RAM
+
+NREADC MOV  R11,R7            SAVE RETURN ADDRESS
+NREAD0 LI   R6,RCSD           REST OF READ INSTRUCTION
+       SWPB R2                EXPECTED PHASE TO MSB
+       MOVB R2,@WTCR          LOAD PHASE INTO TCR
+       MOV  R0,R2             COPY DATA POINTER
+       CLR  R0                CLEAR BYTE TRANSFER COUNTER
+       MOV  R1,R1             ZERO LENGTH SPECIFIED ?
+       JEQ  NREAD3            YES, SAFETY NET EXIT
+NREAD1 MOVB @RCSB,R3          READ CSB
+       ANDI R3,CSBREQ*256     REQ* ACTIVE ?
+       JEQ  NREAD1            NO, WAIT FOR REQ* ACTIVE
+       MOVB @RBSR,R3          YES, READ BSR
+       ANDI R3,BSRPHM*256     PHASE MATCH ?
+       JEQ  NREAD3            NO, PHASE ERROR
+       MOVB *R6,*R2+          READ BYTE INTO CPU RAM
+       LI   R3,ICRACK*256     PREPARE TO ASSERT ACK*
+       MOVB R3,@WICR          ASSERT ACK*
+NREAD2 MOVB @RCSB,R3          READ CSB
+       ANDI R3,CSBREQ*256     REQ* INACTIVE ?
+       JNE  NREAD2            NO, WAIT FOR REQ* INACTIVE
+       CLR  R3                PREPARE TO DEASSERT ACK*
+       MOVB R3,@WICR          DEASSERT ACK*
+       INC  R0                INCREMENT TRANSFER COUNTER
+       DEC  R1                READ ALL REQUESTED BYTES YET ?
+       JNE  NREAD1            NO, MORE LEFT TO WRITE
+NREAD3 B    *R7               YES, RETURN TRANSFER COUNT
+

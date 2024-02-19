@@ -1,0 +1,1166 @@
+***********************************************
+* SECTOR_S
+***********************************************
+* 02.07.97 TAT - Created SCSMAP remap command and support code
+* 12.30.97 -  CYLPLT EQUate in BUFEQU2_S only allows for 24 bytes (3*8)
+*                     in "hard equated" locations in the HFDC code.
+*                   * VOLUME(SCSx) and UNITNO(SCSIID) are different BUT may
+*                     impact the common IO routines.
+*
+* 12.30.97 TAT - moved COPY directives to SCSI_S
+* 05.01.01 TAT - DEFined SCSCRD (from Tony Knerr) here for MDOS PDMA on/off
+* 9.11.09  TAT - Added Flag for override;simplified SREMAP using BL/RT
+*              - changes BSS to DATA statements for known values
+*              - SCSI#Flag - enable/disable SCSI access
+* 9.26.09      - modified Genmod sense; self contained now
+*              - Timeout added to TEST subroutine; no more endless error loop
+* 10.03.09     - Modified CACHE code and flags.
+*              - Modified READC/WRITEC error reporting. SLA R8,8 removed.
+*
+* 3.17.2018-Added RAMdisk RAM#READ and RAM#WRITE routines for large
+*           ramdisk integration.
+*          -Hardcoded >1200 sectors reserved for floppy in FORM3 and in
+*           the call to the routine [dynamic in 2021]
+*
+* 3.18.2018 SCSI read/write routines: unit8=ramdisk1401; unit9=ramdisk1601
+*          $must ADD routine to invalidate parameters if SCSMAP was called
+*           need to review NEWCMDS for corresponding routine
+*          -correct scsmap table, fix pdma flag, etc.
+*          -fix DSET and the buffer overlap issue
+*
+* 3.20.20  -Consider moving the READc/WRITEc routines to the DMA file
+*           and consolidate buffer/cache routines.
+*        -->The read cache happens between scsi select and read.Not efficient
+*
+* 3.22.18   Default to PDMA ON
+*
+* 7.6.2019  unit7=IDE1 for IDE Device; TIDE5S
+*
+*12.30.2020 Debug added to detect caching problm
+*         $$Confirmed, writes do not invalidate cache. DISABLED for now
+*       --> Should we remove EPROM detect and rely on users for nonpdma?
+*          -What happened to the SCSCOM BLWP consolidation?
+*          -Can we use >E8 for workspaces if we trim/clean RAMBUF/GETBUF
+*           to speed things up. Don't really need 10 files open!
+*         $$CACHE must account for Device number and sector!
+*          -IDE code is not most recent. scratchpad isn't tuned. wrong v7?
+*          -FIXED CACHE invalidation
+*
+* 1.17.2021 Copied IDE8_S to folder; need to integrate and test
+* 1.18.2021 HD.SECTORIOW calls SCRDS/SCWTS directly!
+*           This means the EPROM ver gets called by ramdisk/ide!
+*           Added test for @GENSET to skip; can we make a powerup routine?
+*             If so, we could init RAM, etc all in same place
+*      BUG: Beery has an old SCSI card. My routine sets the "once done" flag
+*           before the pdma test; oops.  Corrected.
+*
+; 3.19.21   Updated HD\WINDS1-s to allow SCS1-SCS6; this means SCSTAB must
+;           be large enough (it is, 0-6) for the devices. Extending further
+;           will require rework in HDR1-P2 aorg/memory space.
+;      *****CYLPLT will be ok since the space after that table is used
+;           for Floppy parameters that DO NOT EXIST in the scsi dsr.
+;           (See BUFEQU2) where 88 bytes are reserved!
+;           See SREMAP for *potential* newcmds:scsmap protection code
+;
+; 3.28.21   SCSMAP extended. IDE1-8 uses ABCDEFGH (17 to 24)
+;           Device 7 retained as IDE1 for the short term
+;           See READC and WRITEC.
+;           ***Remember: UNITNO is derived from VOLUME via the scsmap
+;
+; 4.4.21    Default SCS4=HRD1400,SCS5=HRD1600,SCS6=IDE1
+;
+; 4.9.2021 -SCSI#START fixed; SCFLAG is a byte value! CLR was disrupting
+;             the unit number byte. Corrected issue where device ID0 was
+;             started for ALL calls!
+;          -Updated the delay in PAUSE; approx 10-15 seconds timeout
+;
+; 5.31.2021
+;
+;    $$$ Read AU routine contains what looks like entire dead section of
+;        code for reading VIB parms. [REMOVED]
+;
+;    $$$ MUST invalidate CYLPLT drive access after SCSMAP. Otherwise,
+;        new mapped drive will use previous drive's parms. Disastrous!
+;       ^fixed 6.26.2021
+;
+;      $ DSECIO decides error reporting in 4-5 places within OS. The flag
+;        is set, then never cleared within the OS!
+; 6.2.2021
+;      $ Consider moving BL @DOGENSENS to common routine but only call once
+;        This could eventually move into SCSI powerup routine
+;      $ Should SCNOFF be set for all calls? Inconsistent
+;           (actually, it IS being set for all since AU falls into direct)
+;           only time it isn't is if AU>maxAU and DSECIO set
+;      - Consolidated SETBUF1 routines
+;
+;6.13.2021
+;      - Fixed read SCSICOM2 call; pass address of buffer, not label!
+;      - There is no real error handling for most SCSICOM calls - weird
+;      - Cleaned up P,Q, and related unused code
+;      - Write cache is flawed/only works if consec sectors are written!
+;6.26.2021
+;      - Consolidated RWSETUP routines
+;      - Separated genmod/pdma into POWERS; new powerup code
+;      - further cleanup
+;6.27.2021
+;      - Direct Sector/AU error reporting is backwards; confirmed by
+;        forcing SCBLAH1 to return >C000 (error 6). MD on non-existent drive
+;        now reports proper error.  DSECIO is never cleared in HFDC common
+;        code, so we need to review hfdc/scsi/ide/hrd usage.
+;        Recommend >C000 for many low level errors
+;        (Was there a weird error condition in XB long ago? hmmmm)
+;        (may want to test error reporting in rompage/master DSR)
+;
+;5.5.2022   Michael identified issue with SCSI devices; PAB byte 14 contains
+;           MSB Sector and is being changed by DSR. This also happens in
+;           other DSR code for the status opcode and 4 others under review
+;           Temporarily adjusted code to move R0 to SCNOFF during error
+;           conditions only. (is there a better solution?)
+;
+;5.28.2022  Added DEBUGSCSI# to include debug code only if active
+;          !Confirmed this page operates in >0400->2000 block! Not >C000!
+;          $See RSSETUP; almost certain we need to clear DSET to ensure
+;           a SCSMAP invalidates cache and parms. Check code/cylplt routine
+;
+;6.18.2022  Next steps include powerup restructure, CRU/flag >6018, device
+;           error test if SCSI card not present, invalidate DSET, Multiple
+;           locations WINDS1-S, DSRPASS, SECTOR_S, FLPPRM have >1200
+;           Write cache review,
+;6.19.2022  Commented powerup calls for testing dsrpass-s linkage
+;           Clear DSET(R1) if parms haven't been read (to aid SCSMAP)
+;         $ SREMAP based on unit#; do we have room here for IDE? 40+ bytes!
+;         $ NO, encroaching on workspace @>9000 beyond unit 7
+;
+;7.16.2022  DSET replaced with *R2 and RESTARTUNIT flag.
+;           UNITNO replaces DSEL. Both were the same value.
+;
+;7.25.2022  Added CYAMP6 label for CYA and SREMAP
+;
+;10.14.2023 $write cache is not invalidating w/different UNITNO!
+;           $Can we use GenCFG code to validate presence of Ramdisk?
+;
+;10.15.2023 Removed old CRUADR and CRUBASE. All CRU base use SCSCRU now
+;          [POWERS]fixed buffer clear routine; IDE/HRD ok if no SCSI in sys
+;           RWSETUP - SCSCRU tested for card; error if not present
+*-----------------------------------------------
+*  SCSI sector access routines.  Called from SECTORIOW, this page must
+*  be made active at >C000 to >DFFF first (in SECTORIOW)
+*   assumes data buffers are located at >8000 to >9FFF
+*   assumes SCSI card is located at >4000 to >5FFF
+*SYSTEM MAP AT CALL:
+*       >0000->1FFF   OPSYSTEM (TEMPORARY THIS PAGE)
+*                        See HD.SECTORIOW: PAGEIN/PAGEOUT
+*      *>2000->3FFF   LOW LEVEL SECTOR I/O FOR HFDC, AND THE HOST TO THIS PROC
+*       >4000->5FFF   DSR LINKAGES, THEN THE SCSI CARD ITSELF.
+*      *>6000->7FFF   HFDC LEVEL 3 DSR (FILE ROUTINES)
+*       >8000->9FFF   BUFFERS, CACHE AND FILE INFORMATION BLOCK:
+*         >8000->9000  BUFFERS FOR FIRST 6 FILES. (4K)
+*                      **Dangerous use @>8ff0 (DSET). Others?
+*         >9000->93FF  FILE AND DISK INFORMATION USED BY HFDC ROUTINES (1K)
+*         >9400->9DFF  BUFFERS FOR NEXT 4 FILES  (2.5K)
+*   *-->  >9E00->9FFF  512 BYTES SECTOR READ/WRITE CACHE
+*       >A000->BFFF   MYPAB DATA PAGE  [common for all dsrs]
+*       >C000->DFFF   SCSI SECTOR CODE (THIS HERE PAGE) ##wrong## 5.28.22
+*       >E000->FFFF   SYSTEM STUFF.  DON'T TOUCH.
+*   workspaces are local to this page.
+*   results are returned in the standard DSR globals.
+*******************
+            AORG  >0400
+       DEF  CYAMP6       7.25.2022
+       DEF  SCSTAB       1998 TAT Scsi Remap Table
+       DEF  SCSCRD
+*      DEF  SCSOVERRIDE
+       DEF  SFIRST,SLAST
+       DEF  SCRDD,SCRDS,SCWTS,SCWTD
+
+*----------------------------
+SFIRST
+PAGID       TEXT  'SCSI V7.42'
+            EVEN
+
+; STATIC tables; no REF
+; Updated/modified by NEWCMDS:SCSMAP ; offset >x40A and NEWCMDS:PDMA
+; $Really should use the DEFs...
+;
+CYAMP6
+SCSTAB      DATA 0,1,2,8,9,17,6   SCS4=hrd8,scs5=hrd9,scs6=ide1
+;           DATA 7,8,9        ;3.20, enable once we sort out GPL hdr1-p2 mem
+;                                    also see pdma command
+TATTEMP     DATA 0       dont remove w/out fixing pdma below
+
+; Next two values used in PDMA (and CYA); override must follow the flag
+SCSCRD      DATA >0000   0=PDMA; <>0=non-PDMA  (default PDMA!)
+SCSOVERRIDE DATA 0       9.11.09 -> 0=No; mOverride initial state based on EPROM
+*                        watch it, NEWCMDS hardcoded for now (PDMA command)
+; cache flags
+SCSI#FLAG   DATA 1  <-DEFAULT   SCSI CARD: 0=NOT PRESENT; <>0 PRESENT (SCSICOM)
+CACHE#FLAG  DATA 1  <-DEFAULT   0=NO CACHING; <>0 caching
+*
+* CALDR3 (L8 code?) contains HFDC on/off; add SCSI?
+*
+CACHE#HIT   DATA 0       count cache usage for testing
+CACHE#HIGH  DATA >FFFF   cached sector#, MSWord, >FFFF will force read
+CACHE#LOW   DATA >FFFF   cached sector#, LSWord
+CACHE#UNIT  DATA >FFFF   cached unit# (inhibit cross-drive caching)
+       DATA 0,0,0,0,0    ;reserved
+*
+* End of hardcoded table area
+*---------------------------
+
+LINKWS      DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0  SUBROUTINEs
+DATAARA     DATA 0           WORK AREA FOR DATA TRANSFERS
+
+MODE#SELECT DATA >1500,>0000,>0400
+MODE#HEADER DATA >0000,>0000
+DATBLOCK    DATA 0,0,0,0,0,0,0,0,0,0  ;BSS 20
+SENSE#BLOCK DATA 0,0,0,0,0,0,0,0,0,0  ;BSS 20
+
+; SCSI commands - modified inline by routines! * WARNING *
+L0           DATA >0A00,>0000,>0100          ;0A=write
+L1           DATA >0800,>0000,>0100          ;08=read
+L2           DATA >0300,>0000,>0A00          ;03=Sense command [>A bytes ret'd]
+L3           DATA >0000,>0000,>0000          ;00=Test unit ready
+L4           DATA >1200,>0000,>2400          ;12=Inquiry  [not used here]
+L5           DATA >1A00,>3F00,>FF00          ;1A=Mode sense
+ST1          DATA >1B00,>0000,>0100          *1B=start/stop command
+
+IDMASK  BYTE >80
+IDNUM   BYTE 0
+        EVEN
+*
+*LOCAL DATA AREA
+*
+SAVR11  DATA 0
+SAVR12  DATA 0
+SCSTAT  BYTE 0           *STATUS BYTE
+SCMESS  BYTE 0           *MESSAGE BYTE
+SCUNIT  BYTE 0           *UNIT NUMBER (SET BY C HOST)
+SCFLAG  BYTE 0           *READ/WRITE FLAG (SET BY C HOST, 0 = WRITE )
+SCCDBP  DATA 0           *ADDRESS OF PARAMETER BLOCK
+SCCDBL  DATA 0           *LENGTH OF PARAMETER BLOCK
+SCDATP  DATA 0           *ADDRESS OF DATA BLOCK
+SCDATL  DATA 0           *LENGTH OF DATA BLOCK
+ERRCODE DATA 0           *ERROR CODE
+
+SCSIPAGE  DATA >0000     ;scsicom save page
+
+SCSI#HIGH    DATA 0
+SCSI#LOW     DATA 0
+TI#HIGH      DATA 0
+TI#LOW       DATA 0
+EVAN         DATA 0
+LOCAL#READ#BUFFER
+             DATA 0           *ADDRESS OF 512 BYTE CACHE
+READBUF      DATA 0           *ADDRESS OF SECTOR TO READ/WRITE
+SCSIERROR    DATA 0           *HOLDING PLACE FOR ERROR CODE FROM SCSICOM
+UNITNO       DATA 0           *SCSI UNIT NUMBER.
+
+********
+*  Data Variables - subroutine calculations
+********
+HBLOCK      DATA 0            PARAMETERS FOR THE DISK ACCESS
+LBLOCK      DATA 0
+
+P#S#HIGH    DATA 0
+P#S#LOW     DATA 0
+SKIP        DATA 0
+BEFORE      DATA 0
+
+SAVR112     DATA 0                             TO SAVE REGISTER 11
+RESTARTUNIT DATA 0       ;replacement for DSET; tie to *R2 validity
+
+*************
+* Convert 32bit TI sector (256 byte) to 32bit SCSI sector (512 byte)
+*  by shifting 32bit word 1 bit right.
+*  [SCSI#HIGH][SCSI#LOW] = [TI#HIGH][TI#LOW]>>1 bit
+*******
+CONVERT  CLR  @EVAN           Default: EVEN
+         MOV  @TI#LOW,R1      get low address
+         ANDI R1,>0001        mask - is number odd/evan?
+         JEQ  $LOC1           even
+         SETO @EVAN           ODD, Set flag
+
+$LOC1    MOV  @TI#HIGH,R1     get high order byte
+         ANDI R1,>0001        even or odd?
+         JEQ  $LOC3           even
+         MOV  @TI#LOW,R1      Odd, so shift and account
+         SRL  R1,1            Get rid of LSBit
+         ORI  R1,>8000        Make MSBit High (account for LSBit of #HIGH)
+         MOV  R1,@SCSI#LOW    save for SCSI
+         JMP  $LOC2           finish
+$LOC3    MOV  @TI#LOW,R1      Was even, so do NOT make MSbit High
+         SRL  R1,1            shift off LSbit
+         MOV  R1,@SCSI#LOW    and save
+$LOC2    MOV  @TI#HIGH,R1     get TI address
+         SRL  R1,1            drop LSBit
+         MOV  R1,@SCSI#HIGH   save for SCSI
+L6       RT
+
+* Remap the SCSI ID according to the table (SCSTAB) used by SCSMAP command
+* (called once)      MOV @volume,@unitno  DEC @unitno
+*
+; 7.17.2022, updated comments for clarity and inclusion of Ram/IDE devices
+;      SCSTAB is the scsmap table updated by the SCSMAP command
+;      VOLUME is the SCSx. identifier.
+;      UNITNO is the physical device mapped to this volume
+;      Currently: 0-6  SCSI
+;                 7    IDE1 (this should change to SCSI ID7)
+;                 8,9  RAMHD 1401,1601
+;                 17-24  IDE1 to IDE8 [SCSMAP xA through xH]
+;
+SREMAP MOV  R7,@TATTEMP
+       MOV  @VOLUME,R7        Get the SCSx device number
+       DEC  R7                base 0
+       SLA  R7,1              word index
+       MOV  @SCSTAB(R7),@UNITNO   save actual dev in UNITNO
+       MOV  @TATTEMP,R7
+       RT
+
+;--------------------------------
+; 6.2.2021, consolidated routine to set buffers and R2 pointer
+;
+SETBUF1   LI    R1,>9E00
+          MOV   R1,@LOCAL#READ#BUFFER        SET 512 BYTE CACHE ADDRESS
+          CLR   @BEFORE
+          MOV   @RAMBUF,@READBUF             SET ADDRESS OF TRANSFER
+          MOV   @VOLUME,R2                   (1..3)
+          SLA   R2,3                         (MULTIPLY BY 8)
+          AI    R2,CYLPLT-8                  POINT TO DRIVE PARAMETERS.
+          RT
+
+*==========================================
+; READ/WRITE Sector (AUNUM/SCINAU)
+;      Drive parameters [*r2] must have already been read with SCRDD
+;      Otherwise, use AUNUM/SCINAU and drive parms to calculate sector
+;         AUNUM = base allocation unit
+;         SCINAU = sector in AU
+;      R6 determines read/write
+;
+; 5.31.2021 Removed parm read; remnant from '94 development
+;
+SCRDS
+SCWTS  ANDI R15,>DFFF          RESET EQUAL STATUS BIT.
+       MOV  R11,@SAVR112       SAVE RETURN ADDRESS.
+
+       IF   DEBUGSCSI#
+        BLWP @INITRS
+       FI
+
+       BL   @SETBUF1     ;set local and IO transfer buffer
+
+       MOV  *R2,*R2      Have we -successfully- accessed this drive before?
+       JEQ  SVDZERR      NO, halt and return error condition
+       CLR  @RESTARTUNIT ;assume no restart needed
+
+******
+* SECTOR ZERO OR NOT, we have a drive that has been used before, so all params
+*  have been loaded into CYLPLT [*r2] drive should be ready to read sector
+*  Sector is calculated as: (SECPERAU * AUNUM) + SCINAU
+*    Make sure SECPERAU is a base-1 value
+******
+       MOV   @AUNUM,R9       REQUESTED AU
+       MOV   *R2,R7          GREATEST  AU ON DRIVE. (NOT greatest sector!)
+       C     R9,R7           AU too high? (fyi, direct doesn't test maximum)
+       JHE   SVWRIED         error..this AU is not available
+
+; Calculate the actual sector number from sec/au, aunum, scinau
+       MOV   @6(R2),R11      SECTORS PER AU AND OTHER STATUS FLAGS
+       SRL   R11,12          MAKE IT A 4 BIT NUMBER
+       INC   R11             MAKE IT A BASE-1 NUMBER(1..16)
+       MPY   R11,R9          NOW CREATE OUR SECTOR NUMBER
+       A     @SCINAU,R10     NOW WE HAVE A 32 BIT (ACTUALLY 24BIT) VALUE!
+       MOV   R9,R3           STORED IN R9..R10. for SCWB code/direct
+
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA XMAU
+       FI
+
+       B     @SCWB       ** Branch into COMMON Read/Write routine below
+
+;================================================
+;
+SVDZERR  NOP
+         IF  DEBUGSCSI#
+           BLWP @XMTEXT        ;debug,invalid direct read before parms set
+           DATA INVALIDDIRECT  ;should never happen
+         FI
+         JMP  SVW4
+
+
+SVWRIED  ABS  @DSECIO        error reporting ($$ THIS FLAG IS NEVER RESET)
+         JNE  SVWE3          ; Is this a flaw from earlier, common code?
+SVW4     LI   R0,>E000       ; this is NOT the direct sector io routine.
+         MOVB R0,@SCNOFF     ; And why is SCNOFF set here, not below like
+         JMP  SVWE2          ; in the other routine
+*
+SVWE3    LI   R0,>2000                      IF NECESSARY, SEND ERROR BACK.
+SVWE2    ORI  R15,>2000                     SET EQ BIT, MEANS ERROR CODE.
+
+SVWEXIT  MOVB R0,*R13                       ERROR CODE RETURN.
+         MOV  @SAVR112,R11                  RESTORE RETURN ADDR.
+
+      IF DEBUGSCSI#
+       BLWP @XMTEXT
+       DATA SVWEXITTXT
+      FI
+
+         RT                                 RETURN TO HOST
+
+;--------------------------------------------------
+; READ/WRITE Sector (DIRECT)
+;
+; WARNING: the High Order sector number is cleared!
+;
+;     -SCRDS/SCWTS AU-based routine jumps into this routine at SCWB
+;         (R3 and R10 are set prior to the branch)
+;     -If drive not accessed before, and reading sector 0, transfer parms
+;         into the common location CYLPLT [*r2] used by winds-x routines
+;     -Otherwise, read the sector (direct or via AU routines)
+;
+; There is no mechanism to force a re-read of sector 0 if the drive has not
+;      been accessed before. Consider mirroring HFDC routine.
+SCRDD
+SCWTD  ANDI  R15,>DFFF                    RESET EQUAL STATUS BIT.
+       MOV   R11,@SAVR112                 SAVE RETURN ADDRESS.
+
+       IF   DEBUGSCSI#
+        BLWP @INITRS
+       FI
+
+       BL   @SETBUF1     6.2.2021, consolidated, set local/IO transfer buffer
+
+       MOV  @AUNUM,R10     Absolute sector (Low order)
+       CLR  R3             Clear high order sector#
+
+       IF   DEBUGSCSI#
+        BLWP @XMTEXT
+        DATA XMDIRECT   ;'Direct:'
+       FI
+
+       CLR  @RESTARTUNIT
+       MOV   *R2,*R2    HAS DRIVE BEEN accessed before? (are parms stored)
+       JNE   SCWB          Yes, skip setting parm load flag
+       SETO @RESTARTUNIT ;force restart in common code
+
+       SETO  @BEFORE       No, set up to capture parms
+
+; ENTRY point for scrds/scwts
+; Reminder: R10/R3 are the sector #
+;
+SCWB    MOV  R10,@LBLOCK
+        MOV  R3,@HBLOCK     ;R3=0 for parm; calced for AU read
+
+        BL   @SREMAP   ; Remap SCSI ID based on table 6.19, moved earlier
+
+        MOV  R6,R6     ; 0=read
+        JEQ  SCREADE
+        BLWP @WRITEC
+        JMP  SCWRIEC
+SCREADE BLWP @READC
+
+SCWRIEC   MOV  @SCSIERROR,@SCSIERROR         IS THERE AN ERROR PENDING?
+;;        JEQ  SCWRIED
+         JNE SCBLAH1            yes, set general error + EQ bit
+
+;;     1. if no error and not a 'first' parm read, exit w/R0=0
+;;     2. if no error,is parm, and sector<>0, generate error (this is NOT direct
+;;        (but how could there then be no error. weird)
+;;     3. If no error and is parm, and is sector=0, then get VIB in buffer
+;;        exit with no error
+*
+
+; No error on read/write. So...
+; Was it a force drive parm set? if so, was it a sector 0 read?
+;
+SCWRIED   MOV  @BEFORE,@BEFORE    parm? [could be sec0 without parm!]
+          JEQ  SCWRIEE            no, ok, pass through.
+
+       MOV  @AUNUM,@AUNUM    sector 0?
+       JNE  SCBLAH1          no, error
+       MOV  @SCINAU,@SCINAU
+       JNE  SCBLAH1          no, error
+
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA XMPARM2      'parameter (direct)'
+       FI
+
+       BL   @VIBPARM          ;5.31.21 grab parms; does not READ sec 0!
+
+SCWRIEE CLR  R0               ;must follow vibparm (uses r0)
+        JMP  SCWEXIT
+;
+; See AU routine; we might need DSECIO test and error >E000 here
+;
+; Error reporting:
+SCBLAH1  LI   R0,>2000  ;See next
+         LI   R0,>C000  ;6.27, TEST ONLY; if successful, must revisit all err
+
+       ORI  R15,>2000    ;SET EQ BIT
+       MOVB R0,@SCNOFF   ;5.5.2022, also MSB Sector/only for errortrap
+
+SCWEXIT   MOVB R0,*R13                       PUT ERROR CODE IN CALLER'S R0
+;;;       MOVB R0,@SCNOFF     ;Not in SCRDS! AND IN SCREEN OFFSET TOO.
+          MOV  @SAVR112,R11   ;      Why?^^  RESTORE RETURN ADDR.
+          RT                                 RETURN TO HOST
+
+;-----5.31.2021-----
+; begin common code to capture sector 0 (VIB)
+VIBPARM MOV  @RAMBUF,R7
+        AI   R7,TOTAU       COPY parameters for VIB
+        MOV  *R7+,*R2+      ;total AUs on disk
+        MOV  *R7+,*R2+      ;sec/track | AUs reserved
+        MOV  *R7+,R0        ;step speed|rwc
+        ANDI  R0,>07FF        ;why?
+        MOV   R0,*R2+         ;not even used in SCSI?
+        MOV  *R7,*R2        ;x---, x=sectors/AU - 1
+
+        SETO @CACHE#HIGH    ;6.26, invalidate cache during parm read
+        SETO @P#S#HIGH      ;      probably overkill but safer
+
+     IF  DEBUGSCSI#     ;display parameters
+        AI   R2,-6        ;start of parms
+        MOV  R2,@PARMXX   ;move address for our display
+        BLWP @XMNUM
+PARMXX  DATA 0,4          ;8 bytes parameters
+     FI
+
+VIBRT1 RT
+
+; FYI: Removed routine to copy rambuf to sc0buf (see FAKIO0 in sectoriow)
+;      Not used in SCSI low level routine
+;end common----------------------
+
+
+HEXFF1    DATA >FF00
+
+*******************
+* WRITE#SCSI#SECT will write a sector to disk.
+*      (Read before write required for SCSI low level)
+*******************
+WRITEC   DATA LINKWS,WRITE#SCSI#SECT
+
+WRITE#SCSI#SECT
+       C    @UNITNO,@UNIT7    scsi or ramdisk
+       JL   WSS1              ;0-6 SCSI
+       JEQ  IDE#WRITE         ;7=IDE1, for now
+       C    @UNITNO,@UNIT9
+       JLE  RAM#WRITE         ;8=1401;9=1601
+
+; Fall through to IDE if anything >>10  (starts at 17)
+; SCSMAP xy, where Y=ABCDEFGH  ASC(Y)-48 == 17-24
+;
+; 7-6-2019, re-activate as unit 7 for testing IDE code
+IDE#WRITE
+       BLWP @IDEIO       ==7
+       DATA HBLOCK,LBLOCK,READBUF,>0000
+*      MOV  R0,@SCSIERROR     ;handled in IDE? inconsistent w/ramdisk
+       RTWP
+
+RAM#WRITE
+       CLR  R0           0=write
+       MOV  @LBLOCK,R3
+       MOV  @READBUF,R8
+       BLWP @RAMDSK
+       ANDI R0,>FF00
+       MOV  R0,@SCSIERROR
+       RTWP
+
+;--------------------
+; Write SCSI sector:
+;
+; $Warning: secondary cache from old C code may be a flaw; see P#S#HIGH/LOW
+; R4 and R6 now 'free' to use upon eliminating Q/P and L1/L0 pointer
+;
+WSS1   SETO @CACHE#HIGH       ;MUST invalidate read cache
+       SETO @CACHE#LOW        ;12.30.2020
+
+       BL   @RWSETUP     ;common r/w setup code
+
+       LI   R5,SCSI#HIGH    consider USING THIS FOR COMMON CODE
+
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA XMWRITE      'WRITE'  12.30
+         BLWP @XMNUM
+         DATA TI#HIGH,2     ;show TI sector, not scsi#high/low
+       FI
+;
+;;$ Possibly very dangerous!
+; It -looks- as if the read code invalidates and never updates current value
+;      But the code here is extremely convoluted. Thanks 'c'. Must unwind
+;      and get this back to basics:  read sector, concatenate, write
+;      We can consider RBW caching later IFF we take high/low/ID into account
+;
+;--10.14.2023, possible issue similar to read cache:
+;      -read ID0 sector 0 [0&1]
+;      -write ID0 sector [1]
+;      -read ID1 sector 0 [0&1]  routine may think we already have sector!
+;      -write ID1 sector 0  corrupt ID1 with ID0 [1]
+;      -if we cache, we MUST test the UNITID and invalidate if different
+;
+;10-15-2023 Cleaned up SKIP logic,L10, and removed extra debug
+
+       CLR  @SKIP        ;moved from L10 to clean up code 10-15-2023
+
+       C     *R5,@P#S#HIGH             DO WE HAVE A CURRENT COPY OF
+       JNE   L11                             THE SECTOR ALREADY?
+       C     @SCSI#LOW,@P#S#LOW
+       JNE   L11
+;
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT      12.30
+         DATA XMCACHE
+       FI
+
+       MOV   @EVAN,1           first half?
+       JEQ   L11               yes
+        SETO  @SKIP       no, second half.   MOV R8,@SKIP           9.21
+
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA XMSKIP       ;skip
+       FI
+
+;-------------------
+L11    MOV   *R5,@P#S#HIGH
+       MOV   @SCSI#LOW,@P#S#LOW
+       MOV   @SKIP,R1          skip?
+       JNE   L15               <>0 yes; do not re-read the 512b sector
+
+; BUG? :  L15 makes assumption about DATAARA from prior call ie it sn't set.
+
+;show SKIP=0 in debug (read before write)
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA READBEFOREWRITE
+       FI
+
+; Not cached, so read the sector first (should never cache 6.2.21)
+;;;L1           DATA >0800,>0000,>0100
+;                     |  |     |-sector bits 0-15
+;                     |  -sector bits 16-23
+;                     |-command
+; |
+;0|opcode (7-0) | LUN(7-5) LBA MSB (4-0)
+;2|LBA (middle) | LBA (Lsbyte)
+;4|TransferLen  | Reserved.flag.link
+; |
+
+;;$$ hey... if SKIP (L11) then dataara isn't set!
+;;$$   so how is L18 below getting the right address for copy? luck ?
+
+       MOV   @LOCAL#READ#BUFFER,@DATAARA
+
+       MOV  @H0800,@L1        ;read opcode  6-20-2021
+       A    @SCSI#HIGH,@L1    High sector byte (23-16)
+       MOV  @SCSI#LOW,@L1+2   Low sector word  (15-0)
+
+       MOV  @DATAARA,@RW2+2   ;ADDRESS in @dataara, not the label itself
+       BL   @SCSICOM2
+RW2    DATA UNITNO,DATAARA,L1,>0006,>0100,>0200
+;          unit,buf,command,cmdlen,flag,buflen
+;;-->  data scunit[msb],scdatp,sccdbp,sccdbl,scflag[msb],scdatl
+;
+
+;*** SLA   R8,8          10.03.2009, ERROR ALREADY IN MSByte!!!!!!!
+    MOV   R8,@SCSIERROR     get error
+    JEQ   L18               yes, Sector was read successfully; continue
+
+L21    RTWP
+
+; debug
+L15    NOP
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT      ;debug, should not encounter this
+         DATA WRITECACHED
+       FI
+*
+* we have just read the proper 512 byte sector, now determine which half gets
+*      replaced. (upper or lower 256 bytes)
+* 9.9.11- NEW WRITE CODE; replaced C kludge
+*
+;;; 6-21, I think that after a write, we want to invalidate the READ cache
+;         to force a read of whatever sector was written; however, if
+;         the system is writing successive sectors, we can cache internally.
+;         IF we don't force a read later, then we are relying solely on
+;         the cache for that first sector - never to get the data on disk.
+;         Is this a bad thing? Problematic for sector 0, perhaps?
+;
+; Can probably consolidate this to a BL routine after r1/r2 are set
+;
+L18    MOV  @READBUF,R1
+       MOV  @DATAARA,R2
+       MOV  @EVAN,R4     first half of SCSI sector?
+       JEQ  LEVENW       yes
+       AI   R2,>0100     no, advance 256 bytes (second half)
+LEVENW LI   R4,>0020    ; >0080     0100
+L29    MOV  *R1+,*R2+    movb
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+    ;increase speed 6-20-2021
+       MOV  *R1+,*R2+
+       DEC  R4
+       JNE  L29
+
+*
+* now write concatenated sector to disk
+*
+L23    MOV  @H0A00,@L0        ;write opcode  6-21-2021
+       A    @SCSI#HIGH,@L0
+       MOV  @SCSI#LOW,@L0+2
+
+       MOV  @DATAARA,@WWC1+2   ;feed ADDRESS @dataara, not the label itself
+       BL   @SCSICOM2
+WWC1   DATA UNITNO,DATAARA,L0,>0006,>0000,>0200   ;flag=0 here!
+;          unit,buf,command,cmdlen,flag,buflen
+;-->   data scunit[msb],scdatp,sccdbp,sccdbl,scflag[msb],scdatl
+;
+
+       MOV   R8,@SCSIERROR
+       B     @L21
+************************
+
+
+***************
+*  READ A SECTOR FROM THE SCSI HOST or INTERNAL CACHE
+**************
+UNIT7  DATA 7            FOR IDE, RAM
+UNIT9  DATA 9
+H0800  DATA >0800        ;force read command
+H0A00  DATA >0A00        ;force write command
+
+READC  DATA LINKWS,READ#SCSI#SECT
+
+READ#SCSI#SECT
+       C    @UNITNO,@UNIT7    consider 7=Ramdisk1000 in future
+       JL   RSS1         ;0-6 is SCSI
+       JEQ  IDE#READ     ;7=IDE1
+       C    @UNITNO,@UNIT9    ;8-9 is ramHD
+       JLE  RAM#READ
+; Fall through to IDE if UNITNO>10  ( 17)
+
+; REACTIVATE AS UNIT7
+; SCSMAP xy, where Y=ABCDEFGH  ASC(Y)-48 == 17-24
+;
+IDE#READ
+       BLWP @IDEIO       ==7
+       DATA HBLOCK,LBLOCK,READBUF,>FFFF
+*      MOV  R0,@SCSIERROR     ;already in IDE driver?
+       RTWP
+
+
+RAM#READ
+       LI   R0,>FF00
+       MOV  @LBLOCK,R3   raw sector;no offset here
+       MOV  @READBUF,R8
+       BLWP @RAMDSK
+       ANDI R0,>FF00
+       MOV  R0,@SCSIERROR
+       RTWP
+*-end ramdisk read
+
+; READ scsi sector
+; R4 and R6 now 'free' to use upon eliminating Q/P
+; R5 freed from L1
+;
+RSS1  SETO  @P#S#HIGH         ; reset write cache flags
+      SETO  @P#S#LOW          ; "   "              "
+
+      BL    @RWSETUP     6-26, consolidate r/w common setup
+
+   MOV   @LOCAL#READ#BUFFER,@DATAARA
+
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA XMREAD       'read'   12.30
+         BLWP @XMNUM
+         DATA TI#HIGH,2    show TI sector
+       FI
+
+       MOV  @CACHE#FLAG,@CACHE#FLAG          cache option on/off?
+       JEQ  NOC1                             Off, don't bother trying to cache
+
+       C    @UNITNO,@CACHE#UNIT              12.30.2020, test unit!
+       JNE  NOC1
+       C    @CACHE#HIGH,@SCSI#HIGH           10.03.2009 START
+       JNE  NOC1
+       C    @CACHE#LOW,@SCSI#LOW
+       JNE  NOC1
+       MOV  @SCSI#LOW,@SCSI#LOW              SECTOR 0? NEVER cache  it!
+       JEQ  NOC1              ;6.26, ummm, sec0 only if  #high=0.
+
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT      ;12.30
+         DATA XMCACHE
+       FI
+
+       CLR  @SCSIERROR                       Clear potential error then
+       INC  @CACHE#HIT
+       JMP  NOC3                             go read from cache!
+
+NOC1   MOV  @SCSI#HIGH,@CACHE#HIGH           reset current cache sector
+       MOV  @SCSI#LOW,@CACHE#LOW
+       MOV  @UNITNO,@CACHE#UNIT              must also cache unit!
+
+       MOV  @H0800,@L1        ;6.13, test cleanup
+       A    @SCSI#HIGH,@L1    ;
+       MOV  @SCSI#LOW,@L1+2   ;
+
+       MOV  @DATAARA,@RR2+2   ;feed ADDRESS @dataara, not the label itself
+       BL   @SCSICOM2
+RR2    DATA UNITNO,DATAARA,L1,>0006,>0100,>0200
+;;          unit,buf,command,cmdlen,flag,buflen
+;;     data scunit[msb],scdatp,sccdbp,sccdbl,scflag[msb],scdatl
+
+       MOV   R8,@SCSIERROR     error, MSByte  (fixed SLA R8,8 on 10-3-2009)
+       JEQ  NOC3         CACHE,10-03-2009
+
+       SETO @CACHE#HIGH  FORCE READ next time due to error!
+
+*** Note: if error, we might be moving trash or previous sector into buffer
+NOC3   MOV  @DATAARA,R1  ** NEW READ CODE 9-11-2009
+       MOV  @READBUF,R2
+       MOV  @EVAN,R4
+       JEQ  LEVENR
+       AI   R1,>0100
+
+; Nice if we could move this into the DMA routine to make use of >F000 WS
+LEVENR LI   R4,>0010    ;;;LI   R4,>0080     0100
+L39    MOV  *R1+,*R2+
+       MOV  *R1+,*R2+    ;12.30.2020 speed test
+       MOV  *R1+,*R2+    ;
+       MOV  *R1+,*R2+    ;
+       MOV  *R1+,*R2+
+       MOV  *R1+,*R2+    ;12.30.2020 speed test
+       MOV  *R1+,*R2+    ;
+       MOV  *R1+,*R2+    ;
+       DEC  R4
+       JNE  L39
+L37    RTWP
+
+; END OF READ SECTOR ROUTINE ---------------------------
+
+;--------------------------
+; R/W Common Setup       6.27.2021
+; Select Drive and/or convert sector #
+; Drive start Error forces return to caller via RTWP!
+;
+; The START/STATUS phases are only called the first time through. If the
+; drive has been started since the last powerup, the routine falls through
+; to set the block numbers, then returns
+;
+RWSETUPR11  DATA 0
+
+RWSETUP MOV  R11,@RWSETUPR11
+
+       MOV  @SCSCRU,R8   ;R8 is ok to use
+       JNE  GOODCRU      ;CRU found, continue.
+
+         IF   DEBUGSCSI#
+          BLWP @XMTEXT
+          DATA BADCRUTXT    'RWSETUP CRU >0000'
+         FI
+       JMP  NOSCSICRU    ;Report Error!
+
+; Cru is OK. Continue.
+GOODCRU
+       ABS  @RESTARTUNIT      ;Restart?
+       JEQ  RWSETUP33         ;0=no
+
+       SETO @P#S#HIGH    ;invalidate write cache
+       SETO @P#S#LOW
+       SETO @CACHE#HIGH  ;"   "      read cache
+
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA RSKTEXT1     'unit #'
+         BLWP @XMNUM
+         DATA UNITNO,1
+       FI
+;
+; 7.17.22, seems we should move the error trap to SUCCRW and eliminate the
+;          extra start/sense?
+;          Also, do we need to consider forcing a restart when interrupt
+;          condition occurs for a drive?
+;
+       BL    @SCSI#START      ;Start the drive
+       BL    @STATUS          ;and sense status
+
+       CI   R8,>0100          should this be error for any
+       JNE  RWSETUPSUCC1    ;$$ $$ what is error <>1? Or is it 0/1 only ?
+
+;; LI  R8,>E000          ;force proper error for MDOS 6-26-21
+
+NOSCSICRU
+       LI   R8,>C000     ;return error >60; see winds3-s and BIO
+
+       MOV   R8,@SCSIERROR     ;Probably why 'RD' fails with wrong error...
+       RTWP
+
+; Initial START was successful.
+RWSETUPSUCC1
+       BL   @SUCCRW      ;why must we start the drive again ?
+
+;
+; Drive (already) started, now set the sector number
+; The above routine is called only once per drive
+;
+RWSETUP33
+;;   mov   @local#read#buffer,@dataara       verify common for WRITE
+       MOV  @HBLOCK,@TI#HIGH  from caller [HBLOCK LBLOCK]
+       MOV  @LBLOCK,@TI#LOW
+       BL   @CONVERT
+
+;probably code next three as SZCB @HFF,@SCSI#HIGH ?
+
+       MOV  @SCSI#HIGH,R1     high word
+       ANDI R1,>00FF          24 bit #, so mask high 8 bits
+       MOV  R1,@SCSI#HIGH
+
+       MOV  @RWSETUPR11,R11
+       RT                  ;------end common rwsetup
+
+*-----possibly move this into rwsetup once that routine is done
+* 9.21.2009 consolidated
+* 6.27.2021 Why do we start device again? See RWSETUP.
+*
+SUCCRW MOV R11,@SUCCRT+2
+       BL   @PAUSE
+       BL   @SCSI#START  ;start dev (again?)
+       BL   @STATUS      ;sense
+
+       BL   @PAUSE
+       BL   @SELECT#MODE
+       BL   @STATUS      ;sense
+
+       BL   @PAUSE
+       BL   @SELECT#MODE ;select again?
+       BL   @STATUS      ;sense
+
+       BL   @PAUSE
+       BL   @STATUS      ;sense
+       BL   @PAUSE
+
+SUCCRT B    @>0000
+
+; 10.2023,Is there ever a time when the unit isn't started and we need to
+; force a restart? For now, assume not.
+
+;----------------------------------------------------------
+; SENSE Command (L2 encodes 10 byte return; scdatl= 10 len)
+;
+STATR11  DATA 0
+
+STATUS MOV  R11,@STATR11
+       BL   @SCSICOM2
+       DATA UNITNO,DATBLOCK,L2,>0006,>0100,>000A
+       MOV  @STATR11,R11
+       RT
+
+***********************************************************
+* PAUSE routine
+* 9.26.2009(?)- ADDED TIMEOUT CODE FOR TEST PURPOSES
+; 4.17.2021 Modified timeout to shorten delay (called 3x, ~15 second)
+;           maybe we can use a scsi command to detect better
+;
+PAUSER11  DATA 0
+
+PAUSE  MOV  R11,@PAUSER11
+       LI   R4,250       ;1000 timeout factor
+
+L49    BL   @TEST
+       MOV  R8,R8
+       JEQ  L49OK
+       DEC  R4           if R8 is an error, keep looping til timeout
+       JNE  L49
+
+L49OK  MOV  @PAUSER11,R11
+       RT
+***********
+
+;=========================================================
+;TEST:  SCDATP not used here; seems ok to pass a zero to SCSICOM
+;
+TESTR11 DATA 0
+
+TEST   MOV  R11,@TESTR11
+
+       BL   @SCSICOM2
+       DATA UNITNO,0,L3,>0006,>0100,>0000      ;no data, no data len
+
+       MOV  @TESTR11,R11
+       RT
+
+;=========================
+; Select SCSI Device
+SELR11 DATA 0
+
+SELECT#MODE
+       MOV R11,@SELR11
+       BL   @SCSICOM2
+       DATA UNITNO,MODE#HEADER,MODE#SELECT,>0006,>0000,>000C
+
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA SELTXT       'select'
+         BLWP @XMNUM
+         DATA SCUNIT,1
+       FI
+
+       MOV  @SELR11,R11
+       RT
+
+;===================================
+; SCSI START
+; This routine should only be called to start the drive
+; SCFLAG=01 to position to track 0; 00 for landing zone, so is this
+;           routine incorrectly forcing to landing zone at startup?
+;
+STARTR11 DATA 0
+
+SCSI#START
+       MOV  R11,@STARTR11
+       BL   @SCSICOM2
+       DATA UNITNO,0,ST1,>0006,>0000,>0000
+
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA STRTXT       'start'
+         BLWP @XMNUM
+         DATA SCUNIT,1     ;unit to start
+       FI
+
+       MOV  @STARTR11,R11
+       RT
+
+;============================
+; SCSI Sense
+SENSER11  DATA 0
+
+SCSI#SENSE
+       MOV  R11,@SENSER11
+
+       IF   DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA SENSETXT     'sense'
+       FI
+
+       BL   @SCSICOM2
+       DATA UNITNO,SENSE#BLOCK,L5,>0006,>0100,>0008
+
+       MOV  @SENSER11,R11
+       RT
+
+*----------------------------------------
+*      BL   @SCSICOM2
+*      data scunit[lsb],scdatp,sccdbp,sccdbl,scflag[msb],scdatl
+*
+; 9.26.2009 scsi#flag used to determine availability (0=not available)
+; 6.19.2022 Removed cru, IDNUM detect. See Powerup
+;
+SCSICOM2                 ;6.1.2021, test passing parms w/DATA
+       MOV  *R11+,R1
+       MOVB @1(R1),@SCUNIT    Unitnum (MSByte)
+       MOV  *R11+,@SCDATP     ^Data buffer
+       MOV  *R11+,@SCCDBP     ^CDB (command)
+       MOV  *R11+,@SCCDBL     CDB len
+       MOVB *R11+,@SCFLAG     read/write flag [copied to other flags]
+       INC  R11               ;^^^is this true? 6.13, see SCSI manual
+       MOV  *R11+,@SCDATL     Data buffer Length
+
+SCSICOM
+       ABS  @SCSI#FLAG   9.26.09
+       JNE  SCOMOK       User or MDOS thinks SCSI card is present
+       MOV  @SCSCRU,R8   Valid card found?
+       JNE  SCOMOK       Yes. If not, error.
+
+SCOM2E LI   R8,>E000   (TEST)
+       MOV  R8,@ERRCODE
+       RT
+
+SCOMOK MOV  R11,@SAVR11
+       MOV  R12,@SAVR12
+       LIMI 0             *DISABLE INTERRUPTS FOR THIS PROCEDURE.
+       LI   R12,>1000     *TURN OFF ANY OTHER CARDS WHICH MAY HAVE BEEN
+       SBZ  0             *ACCIDENTALLY LEFT ON.
+       LI   R12,>1100
+       SBZ  0
+
+       MOVB @>F112,@SCSIPAGE
+       LI   R0,>BA00
+       MOVB R0,@>F112     *ENABLE CARD PAGE IN MAP.
+
+; confirm R12 not referenced via R13
+       MOV  @SCSCRU,R12  ;6-26
+       SBO  0            ;Turn card ON
+
+       BLWP @SCSICP      *EXECUTE THE CALL REQUEST. (SCSIDRCT_S - lone call)
+
+       MOV  @ERRCODE,R8   SAVE ERROR CODE IN REGISTER 8
+       ANDI R8,>FF00     ;6-20-2021; must be in MSByte
+
+       MOV  @SCSCRU,R12  ;6-26
+       SBZ  0            ;Turn card OFF
+
+       MOVB @SCSIPAGE,@>F112  *RESTORE PAGE AT >4000 TO >5FFF
+       MOV  @SAVR12,R12
+       MOV  @SAVR11,R11
+       RT
+
+; Text for SCSI debug, only assembled if debug active
+
+       IF  DEBUGSCSI#
+*
+XMPARM1 TEXT ' Parameter(AU) *****'
+       BYTE 0
+XMPARM2 TEXT ' Parameter (direct)'
+       BYTE 0
+XMWRITE TEXT ' WRITE: '
+        BYTE 0
+XMREAD  TEXT ' READ: '
+        BYTE 0
+XMCACHE TEXT ' (cached)'
+        BYTE 0
+RSKTEXT1 TEXT '~UNITNO: '
+       BYTE 0
+XMDIRECT TEXT '~Direct:  '
+       BYTE 0
+XMAU   TEXT '~AU:  '
+       BYTE 0
+INVALIDDIRECT TEXT '~*** INVALID SCSI AU Read before parameter set!~'
+       BYTE 0
+WRITECACHED   TEXT ' (L15 entry)'
+       BYTE 0
+READBEFOREWRITE TEXT ' SKIP=0  (Read before Write)'
+       BYTE 0
+
+XMSKIP   TEXT ' (skip read)'
+         BYTE 0
+
+XMNOSKIP TEXT ' (force read-no skip)'
+       BYTE 0
+       DATA 0
+
+STRTXT TEXT '~Start#'
+       BYTE 0
+       DATA 0
+
+SELTXT TEXT '~Select#'
+       BYTE 0
+       DATA 0
+
+SENSETXT TEXT '~Sense#'
+       BYTE 0
+       DATA 0
+BADCRUTXT TEXT '~RSWSETUP BAD CRU >0000'
+       BYTE 0
+       DATA 0
+
+SVWEXITTXT TEXT '~SVWExit Possible error'
+       BYTE 0
+       DATA 0
+     FI
+;--end of SCSI  debug text
+
+** END OF FILE

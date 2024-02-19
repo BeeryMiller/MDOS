@@ -1,0 +1,41 @@
+*-----------------------------------------------------------*
+*     Western Horizon Technologies 5380 SCSI Controller     *
+*                                                           *
+*   Delay routines that may need to be tweaked for Geneve   *
+*                                                           *
+*        Written and Copyright 1993 by Will McGovern        *
+*-----------------------------------------------------------*
+* HISTORY                                                   *
+* -------                                                   *
+*                                                           *
+* 10-Jan-93  WMC  Created this file                         *
+*-----------------------------------------------------------*
+ 
+*-----------------------------------------------------------
+* NAME : RSTDEL,ARBDEL,BSDEL,BCDEL
+*
+* DESC : VARIOUS DELAYS REQUIRED BY THE SCSI SPECIFICATION
+*
+* PARM : R12 = CRU BASE OF SCSI CARD
+*
+* RET  : R0 = ZERO ALWAYS
+*
+* DEST : R0
+*
+* NOTE : THESE DELAYS HAVE BEEN KEPT SEPARATE FROM THE REST
+*        OF THE CODE TO ALLOW FOR VARIATIONS IN CPU SPEED.
+*        FOR EXAMPLE, THE COUNTS WILL BE GREATER FOR GENEVE.
+ 
+RSTDEL LI   R0,RSTCNT         RESET ASSERTION DELAY
+       JMP  DELAY
+ARBDEL LI   R0,ARBCNT         ARBITRATION DELAY
+       JMP  DELAY
+BSDEL  LI   R0,BSCNT          BUS SETTLE DELAY
+       JMP  DELAY
+BCDEL  LI   R0,BCCNT          BUS CLEAR DELAY
+       JMP  DELAY
+SELDEL LI   R0,BSCNT+BCCNT    BUS SETTLE + BUS CLEAR DELAY
+DELAY  DEC  R0                DELAY LOOP
+       JNE  DELAY
+       B    *R11              RETURN
+*      END OF FILE

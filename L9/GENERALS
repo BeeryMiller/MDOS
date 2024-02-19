@@ -3,6 +3,9 @@
 *       year, and should have 29 days in February.
 *
 *       Also corrected Julian date computation
+;
+;11.24.2023 Updated COPY statements for relative folder access
+;
 
        UNL
        DEF  OS#GEN
@@ -12,7 +15,7 @@
 *
 ********************************************************************************
 *
-       COPY "\MDOS\HEAD\OSTASK"
+       COPY "HEAD\OSTASK"
 *
        DORG >F130
 CLOCKC BYTE 0      R: DATA CHANGED,0,0,INTERRUPT; W: TST,CLOCK,R15SEL,INT

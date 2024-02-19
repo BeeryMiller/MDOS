@@ -1,10 +1,13 @@
+* File FORKS
+* 11.24.2023 Updated COPY for relative folder access
+*            See end of file
 *
        DEF  FORK
 *
        REF  FRECNT,NODFRE,COMNOD
        REF  HEAD#T,TAIL#T,TASK#C
 *
-       COPY "\MDOS\HEAD\PAGENUMS"
+       COPY "HEAD\PAGENUMS"
 *
 * XOP @NINE,0                 R0=10
 *
@@ -229,7 +232,7 @@ NULLP  BYTE P_NULL
 PARENT BYTE 0
 *
        EVEN
-       COPY "\MDOS\HEAD\OSTASK"
+       COPY "HEAD\OSTASK"
 *
        END
 *

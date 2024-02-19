@@ -1,0 +1,70 @@
+; File: INTS, SCSI/IDE interrupt handler
+; Date: 28 June 2022
+;
+; SCSCRU    defined in POWERS
+; IDECRU    defined in TIDE9S
+; HBA
+
+       DEF  SCSINT       ;bl to this int handler
+
+       IF DEBUGSCSI#
+INTHANDLE1  TEXT '~Interrupt: SCSI/IDE'
+            BYTE 0
+            DATA 0
+       FI
+
+;
+; SCSI Interrupt Routine
+;      Executed from SCSI page in >0000->1FFF bank
+;      Via DSRPASS-S and <hdr2-p2?>
+;
+; Test for interrupt. If found, handle it and exit. If not found, exit
+;
+SR11   DATA 0
+DUMMY9 DATA 0
+
+SCSINT MOV  R12,@SR12
+       MOV  R11,@SR11
+
+       IF DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA INTHANDLE1
+       FI
+
+
+       MOV  @SCSCRU,R12  SCSI card present?
+       JEQ  ISIDE2       no
+
+       SBO  0            yes, enable SCSI card
+       TB   0            test for interrupt
+       JNE  ISIDE1       not found, turn off card and check IDE
+       MOVB @>F112,@DUMMY9
+       MOVB @HBA,@>F112
+       MOV  @>4FEE,R11        clear the int (destroys R11)
+       MOVB @DUMMY9,@>F112
+       SBZ  0
+       JMP  INTEXIT
+
+ISIDE1 SBZ  0                 ;turn off SCSI card first
+ISIDE2 MOV  @IDECRU,R12
+       JEQ  INTEXIT
+
+;
+; We will need our /4a environment if we call the eprom routine
+;
+       SBO  0
+       MOVB @>F112,@DUMMY9
+       MOVB @HBA,@>F112
+;      MOV  @>4004,R11        clear the int (destroys R11)
+;;     MOV  *R11,R11
+;      BL   *R11
+       NOP
+       MOVB @DUMMY9,@>F112
+       SBZ  0
+       JMP  INTEXIT
+
+INTEXIT MOV  @SR12,R12   ;do not SBZ at exit as R12 could be >0000 !
+        MOV  @SR11,R11
+        RT
+
+** END OF FILE

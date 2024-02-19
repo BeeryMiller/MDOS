@@ -1,3 +1,6 @@
+* MATHS
+*11.24.2023 Updated COPY for relative folder access
+*
        UNL
 **************************************************************************
 *
@@ -228,20 +231,20 @@ PLWBUF DATA 0,0,0,0
 *
 *   FOR EASE OF DEBUGGING
 *
-       COPY "\MDOS\L10\FLOAT"
+       COPY "L10\FLOAT"
        PAGE
-       COPY "\MDOS\L10\CNS"
+       COPY "L10\CNS"
        PAGE
        LIST
-       COPY "\MDOS\L10\CSNN"
+       COPY "L10\CSNN"
        UNL
        PAGE
-       COPY "\MDOS\L10\CFI"
+       COPY "L10\CFI"
        PAGE
-       COPY "\MDOS\L10\CIF"
+       COPY "L10\CIF"
        PAGE
-       COPY "\MDOS\L10\TRINSIC1"
+       COPY "L10\TRINSIC1"
        PAGE
-       COPY "\MDOS\L10\TRINSIC2"
+       COPY "L10\TRINSIC2"
        LIST
        END

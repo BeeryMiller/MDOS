@@ -15,7 +15,9 @@
 *
 * 7.25.2022 Added DEF for CYA Case Mapping, label CYAMP5
 *
-
+;11.24.2023 Update COPY (near end) for relative folder access
+;           NOTE: See VOLSRC "WDS" label. Update needed for volume search?
+;
        DEF  PARSEF
        DEF  CSFLG,CYAMP5        flag for case 0=ignore case
        RORG >0000
@@ -636,8 +638,8 @@ L11    DATA 0,N11
 N11    BYTE 3
        TEXT 'CON'
 *
-       COPY "\MDOS\HEAD\OSTASK"
-       COPY "\MDOS\HEAD\LOWMAP"
+       COPY "HEAD\OSTASK"
+       COPY "HEAD\LOWMAP"
 *
        END
 *
