@@ -1,5 +1,4 @@
-* File: TIPI.ROM
-;
+; File: TIPI\TIPIS
 ;
 ;2.1.2021,  VDP-IO updated to use Geneve video ports
 ;2.6.2021,  Cleanup
@@ -9,18 +8,23 @@
 ; 5.28.2022 Added conditional debug flag DEBUGTIPI#
 ; 6.20.2022 Removed deprecated copy files
 ;           Renamed ROM to TIPIS; TIPI-IO to CRU-IO
+;11.24.2023 Moved debugflags to common file
+;           Updated COPY statements for relative folder access
 ;
-DEBUGTIPI#  EQU 0          ;0=off
+;
+; DEBUGTIPI#  EQU 0          ;0=off  see DEBUGFLAGS
+;
+       COPY "HEAD\DEBUGFLAGS"  ;common debug disable/enable
 
-       COPY "\MDOS\TIPI\HEADER"   ;header and equates
-       COPY "\MDOS\TIPI\POWERUP"  ; new 5-10-22
-       COPY "\MDOS\TIPI\LEVEL9"   ;core TIPI routines, MDOS opcodes
-       COPY "\MDOS\TIPI\VDP-IO"   ;for gpl 1x routines only
-       COPY "\MDOS\TIPI\CRU-IO"  ;tipi direct io
-       COPY "\MDOS\TIPI\LEVEL2"   ;gpl level 2
+       COPY "TIPI\HEADER"   ;header and equates
+       COPY "TIPI\POWERUP"  ; new 5-10-22
+       COPY "TIPI\LEVEL9"   ;core TIPI routines, MDOS opcodes
+       COPY "TIPI\VDP-IO"   ;for gpl 1x routines only
+       COPY "TIPI\CRU-IO"   ;tipi direct io
+       COPY "TIPI\LEVEL2"   ;gpl level 2
 
      IF     DEBUGTIPI#
-       COPY     "\MDOS\TIPI\RS232DEBUG"
+       COPY     "TIPI\RS232DEBUG"
      FI
 
      END

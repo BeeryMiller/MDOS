@@ -19,6 +19,7 @@
 * 03.25.2023  BM - Added TLS Opcodes >17 through >1A
 * 03.25.2023  BM - Added TIPI LOG Extension Opcode >1B
 * 03.26.2023  BM - Created MAPPAGES routine to reduce code usage
+* 10.31.2023  TT - Open opcode >02 now uses RECVMSG1 for quick timeout
 
        DEF  TIPXOP
        DEF  XOPEND
@@ -285,7 +286,9 @@ OPENURL3
 
        LI   R0,1
        LI   R1,RECEIVEBUFFER
-       BL   @RECVMSG
+
+;      BL   @RECVMSG
+       BL   @RECVMSG1    ;timeout routine 10-31-2023
 
        MOV  @RECEIVEBUFFER,@RECEIVEBUFFER
        JNE  OPENURL6

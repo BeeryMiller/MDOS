@@ -1,0 +1,193 @@
+*********************************************
+* WIPES   3-6-21  Tesch  Clear memory prior to object file LINKage
+*
+*      This program grabs ALL available memory pages and resets all bytes
+*      to >0000. This reduces the 'noise' within the OS file and easier
+*      sector-based review of the assembled code. The intentional obfuscation
+*      of the OS is not desired by the current developers/maintainers.
+*
+*      Use this program immediately before LINKing your object code. Example:
+*        1. ASM files,fileo,,rco
+*        2. WIPE
+*        3. LINK
+*
+* 4.23.2023 Source code updated and may now be included in the Geneve OS
+*           distribution package. TT
+*
+WS     EQU  >F000        my workspace
+*
+MAIN3  LWPI WS           fast workspace
+       LIMI 0
+
+;Check total free
+       CLR  R0           Begin setting up for extra memory
+       XOP  @MEM,0       ask OS how many pages are available
+       MOV  R1,@TOTFREE  total free
+       JNE  GET1         <>0, keep going
+
+MEMERR BL   @TTYOUT      error
+       DATA NOMEM,0
+       B    @EXIT
+;-----------------
+
+GET1   LI   R0,1         Opcode: ALLOCATE
+       MOV  @TOTFREE,R1  ask for all pages
+       LI   R2,8         VIRTUAL page 8 (>1 0000)
+       CLR  R3           Any RAM is ok
+       XOP  @MEM,0
+       ABS  R0           error?
+       JNE  MEMERR       no
+
+;; Allocation successful; clear all pages
+       BL   @GETMAP      get the map (duh,forgot this step)
+
+       BL   @TTYOUT      title and tell user we are wiping....
+       DATA TITLE1,0
+       BL   @PRTHEX      show page count
+       DATA TOTFREE,2
+       BL   @TTYOUT
+       DATA CRLF2,2
+
+;show pagemap
+       MOV  @TOTFREE,@SHW2    self-modify; put byte count in place
+       BL   @PRTHEX      show us the NEW map
+       DATA PGETBL+8     start of virtual map
+SHW2   DATA 1            total pages from TOTFREE
+
+
+; prepare loop
+       LI   R2,PGETBL+8  start of virtual map
+       MOV  @TOTFREE,R3  total pages allocated to this task (0 tested earlier)
+
+; Loop
+SCAN1  MOVB *R2,@>F111   map in at >2000
+       JEQ  SCAN3        page 0? don't allow. skip
+       CB   *R2,@HFF     hole? >FF
+       JEQ  SCAN3        yes, skip
+
+       LI   R1,>2000
+SCAN2  CLR  *R1+         8 bytes/loop
+       CLR  *R1+         1024 iterations/page
+       CLR  *R1+
+       CLR  *R1+
+       CI   R1,>4000
+       JL   SCAN2
+
+SCAN3  DEC  R3           any more pages in table?
+       JEQ  FIN1         no, exit
+       INC  R2           yes, point to next virtual page
+       CI   R2,PGETBL+256  and test for safety, don't exceed 2mb
+       JL   SCAN1
+
+; Inform user
+FIN1   BL   @TTYOUT
+       DATA TITLE2,0
+
+REL    LI   R0,2         Release all memory (safer, OS -should- do this)
+       LI   R1,1
+       LI   R3,PGETBL+8  offset
+       MOV  @TOTFREE,R2  supercart page
+       XOP  @MEM,0       release it
+
+EXIT   BL   @TTYOUT           normal exit
+       DATA CRLF2,2           with a CRLF
+
+       LI   R1,GETMAP    tidy up this task's page, too
+WIPFIN CLR  *R1+
+       CI   R1,>2000     we still leave behind remnants before this code,
+       JL   WIPFIN       and 0000-0400 but that is acceptable for now.
+
+       BLWP @0                Thank MDOS for working so well, then exit
+
+; get virtual pagemap
+GETMAP LI   R1,PGETBL         clear before populating,
+GETM2  CLR  *R1+              mdos only populates holes, etc
+       CI   R1,PGETBL+256     so let's just clear to be safe
+       JL   GETM2
+
+       LI   R0,4         get the memory table
+       LI   R1,PGETBL    and put it into the page table
+       LI   R2,254       this is overdoing it for 2Meg system, but who cares
+       XOP  @MEM,0       do it!
+       RT
+
+*-------------------------------------------------------------------------------
+* This may be a bit different, but I got it to work.  Prints the HEX
+* representation starting with the byte pointed to by R3.  R7 contains the
+* number of bytes to print (starting at R3).
+*
+PRTHEX MOV  *R11+,R3          get the starting location
+       MOV  *R11+,R7          get the number of bytes to print
+       LI   R0,>27            TTYOUT
+       LI   R1,WS+12          use R6 as the location to print from
+       LI   R2,1              one char to print
+
+PRT2   MOVB *R3+,R5           get the next byte
+       SRL  R5,8              make it a word value
+       CLR  R4                clear R4 for the divide
+       DIV  @SIXTEEN,R4       divide this by sixteen
+       MOVB @HEXDEC(R4),R6    get the ASCII character (pointer to by R4)
+       XOP  @VIDEO,0          print it
+       MOVB @HEXDEC(R5),R6
+       XOP  @VIDEO,0
+       MOV  R7,R6             move R7 (byte value)
+       ANDI R6,>0001          mask all but bit 1
+       JEQ  NOSPACE           if zero, jump (must have been an even byte)
+       MOVB @H32,R6           ah-ha.. odd!  let's print a space to separate the
+       XOP  @VIDEO,0          words of hex.
+NOSPACE
+       DEC  R7                any more to do?
+       JNE  PRT2              yup
+       RT                     no, return
+
+**************************
+* MDOS write tty routine *
+**************************
+TTYOUT MOV  *R11+,R8     get data address
+       MOV  *R11+,R9     get length of data to write
+       MOV  R9,R2        save length in r2 for the ttyout routine
+       LI   R10,WORK     for the move to hi memory
+       MOV  R10,R1       save for the ttyout routine
+TTY1   MOVB *R8+,*R10+   move em to hi memory
+       JEQ  TTY2         if we hit a null
+       DEC  R9           till r3 is zero
+       JNE  TTY1
+TTY2   LI   R0,>0027     do the actual ttyout routine
+       XOP  @VIDEO,0
+       B    *R11
+*
+* end of code, data follows
+*
+NOMEM  TEXT 'Aborted: Memory XOP error!'
+       BYTE >0D,>0A,0
+       EVEN
+
+TITLE1
+       BYTE 13,10
+       TEXT 'GenWIPE v1.0  Free page initialization 4.23.2023tt'
+       BYTE 13,10,10
+       TEXT '# Pages to wipe: '
+       BYTE 0
+
+TITLE2 BYTE 13,10
+       TEXT '--PAGE WIPE COMPLETED'
+       BYTE 0
+
+CRLF2  BYTE 13,10,0           *cr/llf combo for ttyout
+H32    BYTE >20
+HFF    BYTE >FF
+VIDEO  DATA 6            video xop
+MEM    DATA 7            memory manager xop
+IO     DATA 8            i/o xop
+UTIL   DATA 9            utility xop
+HEXA   DATA 10
+TOTFREE DATA 0
+
+SIXTEEN     DATA 16
+HEXDEC TEXT '0123456789ABCDEF'
+*
+PGETBL      EQU $+2           cleared by getmap ahead of time!
+WORK        EQU  PGETBL+300   for ttyout
+*----------
+       END
+

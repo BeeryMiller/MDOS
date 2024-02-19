@@ -1,0 +1,446 @@
+********************************************************************************
+; CRCOS7S   Geneve OS File integrity verification
+;           (C)1994,2023 T.Tesch (InsaneMultitasker : AtariAge)
+;
+;           CRaCk-it! v1.0 was written 4 March 1994 @3:36am
+;           New iterations were released as MDOS was updated/expanded
+;
+; OVERVIEW:
+;      A separate (installer) program generates a 2-byte CRC value for each 8k
+;      segment of the OS file SYSTEM-SYS.  The CRC values are embedded within
+;      the OS to help detect changes to the file - intentional or unintentional
+;      from bad copies to sector edits or even bitrot. A variant of this progra
+;      was used at Cecure Electonics as an aid to identify poorly performing
+;      disk and hard drive controllers.
+;
+; CRC162s   2013 April 5 (RELEASED OCT 19, 2013)
+;      Table-driven CRACKIT/CRACK128:
+;      1. Copy MDOS CRC calc routine into 9995 internal RAM @>F020-end
+;      2. Generate 512 byte CRC table in execution page
+;      3. Use table to compute CRC
+;      4. The table algorithm was written after reviewing an online C version of
+;         table-driven CRC. First iteration source file was lost with the
+;         link to the C code. :(  Performance changes released later.
+;
+; Approximate execution speed:
+;      1. 8.5s    CRC calculated 'old faithful' way one byte at a time
+;      2. 4.5s    CRC calculated with table; local page execution
+;      3. 3.0s    CRC calculated with table; primary loop in 9995 scratchpad
+;
+;4.3.2021   Updated to conform to v7.22 requirements and 17x8k pages
+;           Continue using BREAD; TIPI LOAD opcode limited to 64K
+;           Finalized for Geneve OS v7.30
+;
+;4.23.2023  Minor updates for Geneve OS v7.40 release package
+;
+;11.24.2023 Prepare CRCOS7 surce for general release
+;           CRC istaller/embedder is restricted to OS developers
+;
+;         $ Next release: consider moving CRC table to CYA storage area
+;                         for consistency and to free >22 bytes in DSR space
+;                         See routine for hard-coded location and page
+;
+
+OSPAGES EQU 17           total 8k pages in the OS file
+
+WS     EQU  >F000        my workspace
+
+MAIN3  LWPI WS           OS loader handles this and interrupts but I still
+       LIMI 0            like to explicitly set this in case of future change.
+
+       BL   @TTYOUT      Give user a title
+       DATA TITLE1,0
+
+       CLR  R0           Begin setting up for extra memory
+       XOP  @MEM,0       get free pages
+       CI   R1,OSPAGES   17 for mdos 7.3+
+       JL   BYBY         if fewer available, exit..
+
+       LI   R0,1         get pages (R1 holds number available for our use)
+       LI   R2,8         VIRTUAL page 8 (pagetable starts AFTER 64K)
+       CLR  R3           Any RAM is ok
+       XOP  @MEM,0       get the RAM
+       ABS  R0           error?
+       JEQ  MEMOK        no
+
+BYBY   BL   @TTYOUT      memory error - report it!
+       DATA NOMEM,0
+       B    @EXIT
+
+MEMOK  LI   R0,4         get the memory table
+       LI   R1,PGETBL    and put it into the page table
+       LI   R2,254       this is overdoing it for 2Meg system, but who cares
+       XOP  @MEM,0       do it!
+
+***********************
+* GET THE FILE FROM CLI
+*
+GETAFILE
+       LI   R0,>3200          50 bytes for WORK length
+       LI   R1,WORK-1         patch it
+       MOVB R0,*R1+           crunch command line and move it to WORK
+       MOV  @>0128,R2         get command line argument address
+       JEQ  NOGOT             if no arguments
+
+       CB   @2(R2),@-1(R1)    see if command line is too long
+       JHE  NOGOT             if too long
+       MOV  R1,R5             else save address of WORK to R5
+       DEC  R5                to length pointer
+       MOVB @2(R2),R6         argument length
+       SRL  R6,8              make it a word
+       INCT R6                add two
+
+NXTNOD MOV  R2,R3             save command address
+       INCT R3                add 2
+       MOV  R2,R4
+       AI   R4,8
+GETNOD MOVB *R3+,*R5+         start moving the data
+       DEC  R6                till count is done
+       JEQ  GOTCMD
+
+       C    R3,R4             r3 holds node count
+       JL   GETNOD            if done this node, go get some more
+       MOV  *R2,R2            get next node
+       JMP  NXTNOD
+*
+GOTCMD MOVB @WORK-1,R1   length of argument
+       JEQ  NOGOT        if no arg
+       SRL  R1,8         else make it a word
+       INC  R1           and add 1 for the loop conter
+
+       LI   R2,40        largest filename possible
+       LI   R4,WORK      address of command line text
+GETFIL CB   *R4+,@H32    look for a space in the command line (filename)
+       JLE  GOTFIL       if ASCII 0-32, we have the filename
+       DEC  R1           don't have it yet, count down
+       JEQ  NOGOT        we done with arguments?
+       DEC  R2           we done with the 40 possible bytes of filename?
+       JNE  GETFIL
+
+NOGOT  BL   @TTYOUT
+       DATA USAGE,0
+       B    @EXIT
+*
+GOTFIL
+SETUPTHEPARSE
+       CLR  R0           we have the filename, now put a null at end
+       DEC  R4           back to the previous byte
+       MOVB R0,*R4       then write a null
+       LI   R0,8         parse the filename
+       LI   R1,WORK      get logical filename from here
+       LI   R2,LEN+1     and put hardware name in the pab
+       CLR  R3           what the hell is an alias prefix?
+       XOP  @UTIL,0      go do the parse
+*
+* ALL DONE PARSING, GETTING NAME, ETC.  NOW TO THE GOOD STUFF!
+*
+       BL   @TTYOUT
+       DATA OPENING,0
+
+       MOVB @LEN+1,@DMD+3
+
+       BL   @TTYOUT
+DMD    DATA FNAME,0
+
+       BL   @TTYOUT
+       DATA CRLF2,0
+
+       LI   R0,FILE
+       XOP  @IO,0
+       MOVB @FILE+2,R1        check for an error
+       JEQ  GOODFILE2         wrong file, incorrect size, etc
+       BL   @TTYOUT           show the error
+       DATA IOERR,0
+       JMP  EXIT
+*
+*      check number of sectors read against current expectation
+*      544 / 32 = (17) 8K blocks = 34 CRC bytes = 17 CRC words
+*
+GOODFILE2
+       BL   @TTYOUT           'verifying'
+       DATA SHORT,0
+
+       BL   @COPY9995         Move to 9995 RAM @>F020
+       BL   @GENERATECRC16    Generate the lookup table
+
+       LI   R3,OSPAGES   ;17  number of pages
+       LI   R4,PGETBL+8  Using memory starting at >10000  (first page above 64K)
+       LI   R5,CRCLIST   location to store CRC bytes
+       LI   R9,MDOSCRC   location to put the MDOS CRC (from memory)
+*
+       BL   @>F020       ** call into on-board RAM
+       BL   @RESTORE9995 ** Restore internal RAM
+
+*
+EXIT0  LI   R0,CRCLIST        CRC the CRC'd bytes for a 16-bit final CRC
+       CLR  R8
+NEXTON MOVB *R0+,R1      GET character from buffer
+       XOR  R8,R1        XOR the MSByte!
+       SRL  R1,7         we want a word index. Can we ignore the Lsbit?
+       SLA  R8,8         Shift the old result 8 bits
+       XOR  @CRCTABLE512(R1),R8
+
+       CI   R0,CRCLIST+OSPAGES+OSPAGES   ;17*2 = 34
+       JL   NEXTON
+       MOV  R8,@USERCRC
+
+       BL   @PRTHEX      * display calculated 'CRC' for user. 2-byte value
+       DATA USERCRC,2
+;
+       LI   R0,MDOSCRC        compare calculated to embedded
+       LI   R1,CRCLIST
+       LI   R2,OSPAGES     ;17
+NEXT11 INV  *R0               simple INVert keeps CRC values obfuscated
+       C    *R0+,*R1+         match?
+       JNE  NOGOOD            No, something changed in the file
+       DEC  R2
+       JNE  NEXT11
+
+HAHA   BL   @TTYOUT
+       DATA GOODCRC,0    File CRC matches computed.
+       JMP  EXITPL
+
+NOGOOD BL   @TTYOUT
+       DATA BADCRC,0
+
+*------------------------------
+EXITPL
+;      BL   @PRTHEX
+;      DATA CRCLIST,OSPAGES  print all 17 banks
+
+EXIT   BL   @TTYOUT           normal exit
+       DATA CRLF2,2           with a CRLF
+
+       LI   R0,>06            RELEASE MDOS MEMORY
+       LI   R1,1
+       XOP  @MEM,0
+       BLWP @0                Thank MDOS for working so well, then exit
+
+*------------------------------------------------
+* Run this code in 9995 internal RAM
+* approx 66 bytes (0xF020-F062) - careful of internal WS's at 0xF080+
+*
+* IDEAS:
+* if we can test the page once per 8k, and force a JMP -xx to NOSKIP or
+*      NEXTBYTE depending on the page, we can shave off 120,000 CI/JNE
+* or remove this code from uP scratchpad and BL to this routine or page
+*      test routine only.
+* Move CRC table to >0000 to eliminate the index? Minimal savings.
+*
+CRCSTART  EQU >2022      ;starting location of the table in the page
+
+STARTCHIPCODE
+NEXTPAGE
+       MOVB *R4+,@>F111  get a page of data
+       LI   R0,>2000
+       CLR  R8           clear the CRC
+;
+; Routine starts at LAST page of the file. Compute skip based on this
+; number. If another page is added to the OS, this would become OSPAGES-4
+; (Kinda ugly, eventually tie into the OS equates/PAGES code)
+;
+NEXTBYTE
+       CI   R3,OSPAGES-3   ;14? i.e., 17,16,15,14 (14 is 4th page)
+       JNE  NOSKIP         ;NO, don't skip the segment in this page
+
+         CI   R0,CRCSTART  ;>2022  right page, check for the CRC table
+         JL   NOSKIP       ;not part of table
+
+         CI   R0,CRCSTART+OSPAGES+OSPAGES   ;>2022 + 17*2= >2044
+         JHE  NOSKIP       ;not part of table
+
+       MOVB *R0+,*R9+     Special byte. Skip computation; store for comparison
+       JMP  SKIPIT
+
+* COMPUTE THE CRC using our CRC table (generated earlier)
+*  4/5- combined table lookup and XOR instructions
+*
+NOSKIP MOVB *R0+,R1      GET character from buffer
+       XOR  R8,R1        XOR the MSByte!
+       SRL  R1,7         we want a word index. Don't need to mask LSbit
+       SLA  R8,8         Shift the old result 8 bits
+       XOR  @CRCTABLE512(R1),R8    *combined table lookup with XOR!
+*** optimize by unrolling a 2nd instance (can't exceed two due to MDOS crc test)
+       MOVB *R0+,R1                      ;  ^easily^
+       XOR  R8,R1
+       SRL  R1,7
+       SLA  R8,8
+       XOR  @CRCTABLE512(R1),R8
+
+SKIPIT CI   R0,>4000          end of this page?  (DEC is one less cycle)
+       JL   NEXTBYTE          no, get another
+
+       MOV  R8,*R5+           yes,add CRC to the list
+       DEC  R3                any pages left?
+       JNE  NEXTPAGE          yes, start again
+       RT              *** remove if we don't move to on-chip!
+ENDCHIPCODE
+
+****************************************
+* Copy above code into 9995 internal RAM
+*
+COPY9995
+       LI   R1,STARTCHIPCODE
+       LI   R2,>F020
+       LI   R7,SAVE9995
+       CLR  R8
+CHIPLP MOV  *R2,*R7+          ultra-conservative - save scratchpad
+       MOV  *R1+,*R2+         then move code
+       INC  R8                # of words are we overwriting
+       CI   R1,ENDCHIPCODE    end of code?
+       JNE  CHIPLP            not yet
+       MOV  R8,@CT9995    yes.  save the word count for exit
+       RT
+
+RESTORE9995
+       LI   R1,SAVE9995
+       LI   R2,>F020
+REST1  MOV  *R1+,*R2+
+       DEC  @CT9995
+       JNE  REST1
+       RT
+
+*******************************
+* Generate the CRC-16 lookup table
+*
+GENERATECRC16
+       LI   R7,CRCTABLE512    point to start of table
+       LI   R8,0              0 to 255
+LOOPI
+       MOV  R8,R10            get next CRC value into RESULT (R10)
+       SLA  R10,8             RESult shifted LEFT 8 bits
+       CLR  R1                for table, always start as if cleared
+*      XOR  R10,R1            XOR it with starting value
+       XOR  R1,R10            R1^R10: r10
+*inner loop here:
+       LI   R9,8              now for our inner loop
+LOOPJ  MOV  R10,R2            R2=temp
+       ANDI R2,>8000
+       SLA  R10,1
+       CI   R2,>8000          temp have msbit set?
+       JNE  SKIP              no
+       LI   R3,>1021
+*      XOR  R10,R3            yes, XOR it
+       XOR  R3,R10
+SKIP   DEC  R9                any left?
+       JNE  LOOPJ             yes
+*end inner loop
+       MOV  R10,*R7+     move crc value into table
+       INC  R8           +1
+       CI   R7,CRCTABLE512+512  last entry?
+       JNE  LOOPI
+       RT
+*-------------------------------------------------------------------------------
+* Prints the HEX representation starting with the byte pointed to by R3.
+* R7 contains the number of bytes to print (starting at R3).
+*
+PRTHEX MOV  *R11+,R3          get the starting location
+       MOV  *R11+,R7          get the number of bytes to print
+       LI   R0,>27            TTYOUT
+       LI   R1,WS+12          use R6 as the location to print from
+       LI   R2,1              one char to print
+
+PRT2   MOVB *R3+,R5           get the next byte
+       SRL  R5,8              make it a word value
+       CLR  R4                clear R4 for the divide
+       DIV  @SIXTEEN,R4       divide this by sixteen
+       MOVB @HEXDEC(R4),R6    get the ASCII character (pointer to by R4)
+       XOP  @VIDEO,0          print it
+       MOVB @HEXDEC(R5),R6
+       XOP  @VIDEO,0
+       MOV  R7,R6             move R7 (byte value)
+       ANDI R6,>0001          mask all but bit 1
+       JEQ  NOSPACE           if zero, jump (must have been an even byte)
+       MOVB @H32,R6           ah-ha.. odd!  let's print a space to separate the
+       XOP  @VIDEO,0          words of hex.
+NOSPACE
+       DEC  R7                any more to do?
+       JNE  PRT2              yup
+       RT                     no, return
+
+**************************
+* MDOS write tty routine *
+**************************
+TTYOUT MOV  *R11+,R8     get data address
+       MOV  *R11+,R9     get length of data to write
+       MOV  R9,R2        save length in r2 for the ttyout routine
+       LI   R10,WORK     for the move to hi memory
+       MOV  R10,R1       save for the ttyout routine
+TTY1   MOVB *R8+,*R10+   move em to hi memory
+       JEQ  TTY2         if we hit a null
+       DEC  R9           till r3 is zero
+       JNE  TTY1
+TTY2   LI   R0,>0027     do the actual ttyout routine
+       XOP  @VIDEO,0
+       B    *R11
+*
+* end of code, data follows
+*
+NOMEM  TEXT 'Insufficient Memory!  144K Required'
+       BYTE >0D,>0A,0
+       EVEN
+OPENING
+       BYTE 13,10
+       TEXT 'Reading '
+       BYTE 0
+
+AUTHOR TEXT 'Copyright (c)2013,2023 T.Tesch'
+
+TITLE1
+       BYTE 13,10
+       TEXT 'Geneve OS File Verification v7.4, (136k)     [23 Apr 2023tt]'
+       BYTE 13,10,0
+
+GOODCRC  BYTE 13,10,10
+       TEXT 'File integrity verified; no errors detected.'
+       BYTE 13,10,0
+
+BADCRC BYTE 13,10,10
+       TEXT 'WARNING: Verification Failed. The OS file may be compromised.'
+       BYTE 13,10,0
+
+USAGE  BYTE 13,10,9
+       TEXT 'Usage:  CRCOS7  <OS file>    (remember "/" if named SYSTEM/SYS)
+       BYTE 13,10,0
+
+SHORT  BYTE 13,10
+       TEXT 'Calculating and comparing CRC... '
+       BYTE 0
+
+IOERR  BYTE 13,10
+       TEXT 'FILE ERROR: Unable to open or read file.'
+       BYTE 13,10,0
+
+CRLF2  BYTE 13,10,0           *cr/llf combo for ttyout
+H32    BYTE >20
+HFF    BYTE >FF
+VIDEO  DATA 6            video xop
+MEM    DATA 7            memory manager xop
+IO     DATA 8            i/o xop
+UTIL   DATA 9            utility xop
+HEXA   DATA 10
+
+H1021  DATA >1021        crc polynomial
+CT9995 DATA 0
+
+SIXTEEN     DATA 16
+
+CRCOUT      BYTE 13,10
+CRCLIST     DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+USERCRC     DATA 0
+MDOSCRC     DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+HEXDEC TEXT '0123456789ABCDEF'
+*
+FILE   DATA >0A00,>0001,0,>0000,0,0,544      ;BREAD operation
+LEN    DATA >0028   * --> status byte / length byte
+FNAME  EQU  $
+WORK   EQU  FNAME+50   command line parse buffer/400 max (overkill)
+* equates vs BSS keeps file size down. Don't cross 8k (7k 1st segment) bndry!
+CRCTABLE512  EQU  WORK+400             520 bytes
+SAVE9995     EQU  CRCTABLE512+520        256 bytes
+PGETBL       EQU  SAVE9995+256           254+2+2+2+2
+NEXTBUF      EQU  PGETBL+264             next buffer here
+*----------
+       END
+

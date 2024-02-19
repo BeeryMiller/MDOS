@@ -1,0 +1,415 @@
+********************************************************************************
+* CRCINS (2021)
+* CRACKINS:  MDOS CRC ERROR DETECTION PROGRAM  - INSTALLATION PROCEDURE
+* Written March 4, 1994 by Timothy A Tesch @3:36am
+*
+* This program calculates the CRC on each 8K segment of MDOS, then CRC's the
+* CRC for a result.  Both short and long CRC's are printed.
+*
+*      10-08-94  Program calculates CRC then compares with the imbedded CRC
+*                found in MDOS 2.2+
+* v2.5 12-22-94  Revised for MDOS v4.0S and above. 128K version.  Not compatible
+*                with prior versions of MDOS or this installation process.
+*      09-25-09  Minor updates to source and usability. Separated from MDOS
+*                distribution folder.
+*
+*  Computations: CRC is embedded at relative address >x022 to >x042 in the
+*                DSR page. CRC is bit-twiddled so that the CRC values are not
+*                easily recognized. (128K)
+;
+; 4.3.2021  Update for 136K MDOS; additional CRC value required
+;           Since we are using BREAD/BWRITE, modified program to save only
+;           the CRC sector back to disk. Much faster.
+;           Embedded CRC extended to >x044 for 17 pages! TIPI Lives!
+;
+;11.25.2023 Added a few equates to remove hardcoded page counts
+;           If we move CRC to the CYA area, calculate and leverage MDOS
+;           PAGE Equates to calculate position. Remove all hard-coding
+*-------------------------------------------------------------------------------
+OSPAGES EQU 17           total 8k pages for the OS
+
+WS     EQU  >F000        my workspace
+
+       MAC  DXOP         macro for genasm
+       MAC  !1
+!!0    XOP  !!1,!2
+       !-MEND
+       MEND              end of macro
+
+       DXOP CALL,0       define CALL as meaning XOP 0
+*
+MAIN3  LWPI WS          LET'S LOAD OUR WORKSPACE
+       LIMI 0            turn off those interrupts!
+       BL   @TTYOUT      Give user a title
+       DATA TITLE1,0
+
+       CLR  R0           Begin setting up for extra memory
+       XOP  @MEM,0       get free pages
+       CI   R1,OSPAGES
+       JL   BYBY         if fewer available, exit..
+
+       LI   R0,1         get pages (R1 holds number available for our use)
+       LI   R2,8         VIRTUAL page 8 (pagetable starts AFTER 64K)
+       CLR  R3           Any RAM is ok
+       XOP  @MEM,0       get the RAM
+       ABS  R0           error?
+       JEQ  MEMOK        no
+
+BYBY   BL   @TTYOUT      memory error - report it!
+       DATA NOMEM,0
+       B    @EXIT
+
+MEMOK  LI   R0,4         get the memory table
+       LI   R1,PGETBL    and put it into the page table
+       LI   R2,254       this is overdoing it for 2Meg system, but who cares
+       XOP  @MEM,0       do it!
+***********************
+* GET THE FILE FROM CLI
+*
+* parse routine from who knows where... at least it works
+*
+       LI   R0,>3200          50 bytes for WORK length
+       LI   R1,WORK-1         patch it
+       MOVB R0,*R1+           crunch command line and move it to WORK
+       MOV  @>0128,R2         get command line argument address
+       JEQ  NOGOT             if no arguments
+       CB   @2(R2),@-1(R1)    see if command line is too long
+       JHE  NOGOT             if too long
+       MOV  R1,R5             else save address of WORK to R5
+       DEC  R5                to length pointer
+       MOVB @2(R2),R6         argument length
+       SRL  R6,8              make it a word
+       INCT R6                add two
+
+NXTNOD MOV  R2,R3             save command address
+       INCT R3                add 2
+       MOV  R2,R4
+       AI   R4,8
+GETNOD MOVB *R3+,*R5+         start moving the data
+       DEC  R6                till count is done
+       JEQ  GOTCMD
+
+       C    R3,R4             r3 holds node count
+       JL   GETNOD            if done this node, go get some more
+       MOV  *R2,R2            get next node
+       JMP  NXTNOD
+*
+GOTCMD MOVB @WORK-1,R1   length of argument
+       JEQ  NOGOT        if no arg
+       SRL  R1,8         else make it a word
+       INC  R1           and add 1 for the loop conter
+
+       LI   R2,40        largest filename possible
+       LI   R4,WORK      address of command line text
+GETFIL CB   *R4+,@H32    look for a space in the command line (filename)
+       JLE  GOTFIL       if ASCII 0-32, we have the filename
+       DEC  R1           don't have it yet, count down
+       JEQ  NOGOT        we done with arguments?
+       DEC  R2           we done with the 40 possible bytes of filename?
+       JNE  GETFIL
+
+NOGOT  BL   @TTYOUT
+       DATA TITLE2,0
+       BL   @TTYOUT
+       DATA USAGE,0
+       B    @EXIT
+*
+GOTFIL
+SETUPTHEPARSE
+       CLR  R0           we have the filename, now put a null at end
+       DEC  R4           back to the previous byte
+       MOVB R0,*R4       then write a null
+       LI   R0,8         parse the filename
+       LI   R1,WORK      get logical filename from here
+       LI   R2,LEN+1     and put hardware name in the pab
+       CLR  R3           what the hell is an alias prefix?
+       CALL @UTIL        go do the parse
+*
+*ALL DONE PARSING, GETTING NAME, ETC.  NOW TO THE GOOD STUFF!
+*----------------------------------------------------------------------------
+*
+       BL   @TTYOUT
+       DATA OPENING,0
+
+       MOVB @LEN+1,@DND+3
+       BL   @TTYOUT
+DND    DATA FNAME,0
+       BL   @TTYOUT
+       DATA CRLF2,0
+
+       LI   R0,FILE
+       CALL @IO
+       MOVB @FILE+2,R1        check for an error
+       JEQ  GOODFILE2         wrong file, incorrect size, etc
+       BL   @TTYOUT           show the error
+       DATA IOERR,0
+       JMP  EXIT
+*
+*      check number of sectors read against current number for mdos (480)
+*      if wrong, abort
+*      480 / 32 = FIFTEEN 8K blocks = 30 CRC bytes = 15 CRC words
+*
+CRCSTART EQU >2022    ;starting address. Change if we move to CYA block
+
+GOODFILE2
+       BL   @TTYOUT
+       DATA VERIFYING,0
+       LI   R3,OSPAGES   ;17
+       LI   R4,PGETBL+8  Using memory starting at >10000  (first page above 64K)
+       LI   R5,CRCLIST   location to store CRC bytes
+       LI   R9,MDOSCRC   location to put the MDOS CRC (from memory)
+
+NEXTPAGE
+       MOVB *R4+,@>F111  get a page of data
+       LI   R0,>2000
+       CLR  R8           clear the CRC
+
+NEXTBYTE
+;      CI   R3,14        17,16,15,14 (4th) stupid reversed loops...
+       CI   R4,OSPAGES-3 ;14
+       JNE  NOSKIP       NO, NO NEED TO SKIP those bytes..
+       CI   R0,CRCSTART  ;>2022     if less, don't skip CRC computation
+       JL   NOSKIP
+       CI   R0,CRCSTART+OSPAGES+OSPAGES  ;>2044 upper boundart
+       JHE  NOSKIP
+       MOVB *R0+,*R9+     store in the MDOS CRC!
+       JMP  SKIPIT
+
+NOSKIP BL   @CRCUPDATE        update the CRC
+SKIPIT CI   R0,>4000          end of this page?
+       JL   NEXTBYTE          no, get another
+
+       MOV  R8,*R5+           yes,add CRC to the list
+       DEC  R3                any pages left?
+       JNE  NEXTPAGE          yes, start again
+
+*
+* now, CRC the CRC'd bytes for simple user...
+*
+EXIT0
+       LI   R0,CRCLIST
+       CLR  R8
+NEXTONE
+       BL   @CRCUPDATE
+       CI   R0,CRCLIST+OSPAGES+OSPAGES   ;17*2=34
+       JL   NEXTONE
+       MOV  R8,@USERCRC
+
+*
+* display "simple" CRC
+*
+       BL   @TTYOUT
+       DATA SHORT,0
+
+       BL   @PRTHEX
+       DATA USERCRC,2
+*
+* display LONG CRC (BEFORE inversion)
+*--------------------------------------------------------]
+       BL   @TTYOUT                                      |
+       DATA LONG,0                                       |
+       BL   @PRTHEX           Long CRC for validation    |
+       DATA CRCLIST,OSPAGES+OSPAGES   ; 34               |
+*--------------------------------------------------------]
+* install the CRC values
+
+       MOVB @PGETBL+11,@>F111
+       LI   R1,CRCLIST
+       LI   R2,CRCSTART   ;>2022     start of CRC bytes
+       LI   R3,OSPAGES    ;17  4.3.2021, one more page!
+NEXTMV INV  *R1          invert it...make it a little more difficult to find
+       MOV  *R1+,*R2+    to stave off mischief
+       DEC  R3
+       JNE  NEXTMV
+
+; we should calcuate the EXACT sector based on page4 + offset
+
+       LI   R1,SAVE1          GET READY TO WRITE IT BACK TO DISK
+       LI   R2,FILE
+       LI   R3,7
+NEXTM  MOV  *R1+,*R2+
+       DEC  R3
+       JNE  NEXTM
+
+       BL   @TTYOUT           Display the Inverted
+       DATA LONGINVERTED,0    CRC for our internal validation
+       BL   @PRTHEX
+       DATA CRCLIST,OSPAGES+OSPAGES  ;34   all 17 crcs   ]
+       BL   @TTYOUT                                      ]
+       DATA CRLF2,0                                      ]
+
+       BL   @TTYOUT
+       DATA SAVING,0
+
+       LI   R0,FILE           Try to save the CRC sector!
+       CALL @IO
+       MOVB @FILE+2,R1        WRITE OK?
+       JEQ  GOODE             YUP
+       BL   @TTYOUT
+       DATA BADOUT,0          NO, TELL 'EM IT FAILED
+       JMP  EXIT
+*------------------------------
+GOODE  BL   @TTYOUT
+       DATA COMP,0
+
+EXIT   BL   @TTYOUT           normal exit
+       DATA CRLF2,2           with a CRLF
+       LI   R0,>06            RELEASE MDOS MEMORY
+       LI   R1,1
+       CALL @MEM
+       BLWP @0                Thank MDOS for working so well, then exit
+*-------------------------------------------------------------------------------
+*
+PRTHEX MOV  *R11+,R3          get the starting location
+       MOV  *R11+,R7          get the number of bytes to print
+       LI   R0,>27            TTYOUT
+       LI   R1,WS+12          use R6 as the location to print from
+       LI   R2,1              one char to print
+
+PRT2   MOVB *R3+,R5           get the next byte
+       SRL  R5,8              make it a word value
+       CLR  R4                clear R4 for the divide
+       DIV  @SIXTEEN,R4       divide this by sixteen
+       MOVB @HEXDEC(R4),R6    get the ASCII character (pointer to by R4)
+       CALL @VIDEO            print it
+       MOVB @HEXDEC(R5),R6
+       CALL @VIDEO
+       MOV  R7,R6             move R7 (byte value)
+       ANDI R6,>0001          mask all but bit 1
+       JEQ  NOSPACE           if zero, jump (must have been an even byte)
+       MOVB @H32,R6           ah-ha.. odd!  let's print a space to separate the
+       CALL @VIDEO            words of hex.
+NOSPACE
+       DEC  R7                any more to do?
+       JNE  PRT2              yup
+       RT                     no, return
+
+**************************
+* MDOS write tty routine *
+**************************
+TTYOUT MOV  *R11+,R8     get data address
+       MOV  *R11+,R9     get length of data to write
+       MOV  R9,R2        save length in r2 for the ttyout routine
+       LI   R10,WORK     for the move to hi memory
+       MOV  R10,R1       save for the ttyout routine
+TTY1   MOVB *R8+,*R10+   move em to hi memory
+       JEQ  TTY2         if we hit a null
+       DEC  R9           till r3 is zero
+       JNE  TTY1
+TTY2   LI   R0,>0027     do the actual ttyout routine
+       CALL @VIDEO
+       B    *R11
+
+******************************************************
+*      Old faithful...
+*
+CRCUPDATE
+       MOVB *R0+,R1
+       ANDI R1,>FF00     CLEAR LSBYTE
+       XOR  R1,R8        XOR NEW DATA WITH OLD CRC
+       MOV  R8,R1        MOVE TO SCRATCH REGISTER
+       SRL  R1,4
+       XOR  R8,R1        XOR CRC WITH SCRATCH
+       ANDI R1,>FF00     CLEAR LSB
+       SRL  R1,4
+       XOR  R1,R8        XOR SCRATCH WITH CRC
+       SRC  R1,7
+       XOR  R1,R8        XOR SCRATCH WITH CRC
+       SWPB R8           REVERSE BYTES OF CRC
+       RT
+* end of code, data follows
+*
+NOMEM  TEXT 'ERROR: Insufficient Memory...'
+       BYTE >0D,>0A,0
+       EVEN
+OPENING
+       BYTE 13,10
+       TEXT 'Reading: '
+       BYTE 0
+
+AUTHOR TEXT 'Copyright (c)1994-2021, T. Tesch'
+
+TITLE1
+       BYTE 13,10,10
+  TEXT 'CRCINS, MDOS CRC Installer v7.0, 136K Version      [04 April 2021tt]'
+  BYTE 13,10,10,9
+  TEXT '* DISTRIBUTION PROHIBITED *'
+  BYTE 13,10,0
+
+TITLE2 TEXT ' '
+       BYTE 0
+
+USAGE  BYTE 13,10
+       TEXT 'Usage:  CRCINS [path]system"/"sys     (quotes required)'
+       BYTE 13,10,0
+
+VERIFYING   BYTE 10
+            TEXT 'Calculating CRC values...'
+            BYTE 0
+
+SAVING BYTE 13,10
+       TEXT 'Saving CRC values... '
+       BYTE 0
+
+COMP   TEXT 'Complete!  Run CRCOS to validate.'
+       BYTE 13,10,0
+
+SHORT  TEXT ' Short CRC: '
+       BYTE 0
+
+LONG   BYTE 13,10,10
+       TEXT 'CRC per 8k bank:    '
+       BYTE 0
+
+LONGINVERTED
+       BYTE 13,10,10
+       TEXT 'CRC/8k Inverted:    '
+       BYTE 0
+
+; BADOUT BYTE 13,10
+BADOUT TEXT 'ERROR: Unable to write to file.'
+       BYTE 13,10,10,0
+IOERR  BYTE 13,10
+       TEXT 'ERROR: Unable to read from file.'
+       BYTE 13,10,10,0
+
+CRLF2  BYTE 13,10,0           *cr/llf combo for ttyout
+H32    BYTE >20
+HFF    BYTE >FF
+VIDEO  DATA 6            video xop
+MEM    DATA 7            memory manager xop
+IO     DATA 8            i/o xop
+UTIL   DATA 9            utility xop
+HEXA   DATA 10
+SIXTEEN     DATA 16
+PGETBL      DATA 0
+            DATA 0
+            DATA 0
+            DATA 0
+
+            BSS  254
+CRCOUT      BYTE 13,10
+CRCLIST     DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+USERCRC     DATA 0
+MDOSCRC     DATA 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+HEXDEC TEXT '0123456789ABCDEF'
+*
+; PGETBL+11=page4= 0,2,4,6000 so, buffer >0001,>6000 and write 1 sector.
+;   let's test this theory :)
+;
+;;;;SAVE1 DATA >0B00,>0001,0,0,0,0,544
+SAVE1 DATA >0B00,>0001,>6000,96,0,0,1
+
+FILE  DATA >0A00,>0001,0,>0000,0,0,544
+
+LEN    DATA >0028   * --> status byte / length byte
+FNAME  EQU  $
+MAP    EQU  FNAME+50
+DOCRPT EQU MAP+10
+BUF    EQU  DOCRPT+200
+WORK   EQU  BUF+300
+WORK11 BSS  400
+*---------------------------------------------------------
+       END
+
