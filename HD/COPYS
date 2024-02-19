@@ -1,0 +1,61 @@
+; HD\COPYS
+;
+;
+; 5.07.2022 Removed MONS and updated !MAKEFILE; unused
+;           (similar to rs232debug, might be something to salvage)
+;           Scroll/gplsubs/time all have unused code
+;
+;11.24.2023 Updated COPY for relative folder access
+;
+       UNL
+       XREF WINGPL
+
+WINGPL EQU  0
+INTWS  EQU  0
+INT1   EQU  0
+OSRTN  EQU  0
+RET994 EQU  0
+FNDDIR EQU  0
+*
+       IDT  'WINDSR'
+       AORG >6000
+
+       COPY "HEAD\PAGENUMS"
+       COPY "HD\EQUATES"
+
+*      LIST
+       COPY "HD\WINDS1" DONE
+
+*      UNL
+       COPY "HD\WINDS3A" DONE
+       COPY "HD\WINDS3B"
+       COPY "HD\WINDS6" A LITTLE FIXES TO GO
+       COPY "HD\WINDS7" DONE
+       COPY "HD\FLPPRM"   DONE
+;;     COPY "HD\MONS"    shit debugging ;5.7.2022, not used
+
+       DATA 0                 because CIF uses the word before FAC...
+FAC    BSS  32
+*
+       AORG >2000
+       COPY "HD\CIF"      DONE
+       COPY "HD\SETAXB"   DONE
+       COPY "HD\FINDFL"   DONE
+       COPY "HD\FRBITM"   DONE
+       COPY "HD\GETSEC"   DONE
+       COPY "HD\SCROLL"   DONE         ;for gplsubs/time
+       COPY "HD\TIME"     DONE         ;for gplsubs/scroll
+
+       COPY "HD\SECTORIOW" DONE
+       COPY "HD\SECTORIO8" DONE
+       COPY "HD\GETAU"    DONE
+       COPY "HD\GPLSUBS"            ;5.7.22, unused call dir
+       COPY "HD\GETBUF"   DONE
+       COPY "HD\ADDADR"   DONE
+       COPY "HD\MAPR5"    DONE
+       COPY "HD\VDPFCB"   DONE
+       COPY "HD\DATA"     DONE
+       EVEN
+GPLWS  BSS  32
+       LIST
+       END

@@ -9,9 +9,9 @@
 * P_HFC1, P_HFC2, and P_SCSI
 
 * 8.06.2022 Updated adding CYAMPE
+*11.24.2023 Updated COPY statement
 
-
-         COPY "\MDOS\HEAD\PAGENUMS"
+         COPY "HEAD\PAGENUMS"
 
          REF  CYAMP1
          REF  CYAMP2
