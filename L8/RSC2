@@ -1,0 +1,258 @@
+*----------------------->PART C
+* get switch options
+*
+* inputs:  R0 - number of chars remaining to be parsed
+* outputs: R6 - Last char parsed (MSbyte)
+* special ram and reg usage:
+*   R7 - Used as pointer for parsing the tables
+*   R8 - pointer to switch table to be used in parse
+*   R9 - pointer to @CONTRL
+*----------------------->
+PARSE  MOV  R11,@LEVEL2  save the return addr
+H08    EQU  $+1          default for open/read/write
+       LI   R8,OPNSWT    open table pointer
+       LI   R2,OPNCTL    default control reg (7bits)
+*
+PARSE1 LI   R9,CONTRL    gd it
+       MOVB R2,*R9       set to @CONTRL(R9)
+*----------------------->set up default conditions
+       LI   R5,>012C
+*
+H01    EQU  $-2
+*
+       BL   @GBAUD            convert default decimal baud rate
+       MOVB @OPTLEN,R0        get length of option field
+       SRL  R0,8              right justify and clear MSbyte
+       S    @DEVLEN(R4),R0    subtract out lenght of device
+       JLE  PAREXT            jmp none left, then no options
+       LI   R13,PATHNM        point to start of name . . .
+       A    @DEVLEN(R4),R13   can device length
+       SETO R6                init the char reg
+*----------------------->
+* scan for start of next switch (next dot ".")
+*----------------------->
+SCANDT MOV  R0,R0        are there any chars left
+       JEQ  PAREXT       jmp no, done
+       BL   @SCAN        R6 = returned char LSbyte
+       DATA >2E00        '.'
+       JEQ  PAREXT       jmp done with parse
+*----------------------->
+* enter when a (dot ".") start of a switch has been found
+*----------------------->
+       MOV  R8,R7        restore the switch table pointer
+       SRL  R6,8         put to lower byte
+       MOVB *R13+,R6     add in next char
+       DEC  R0           bump remaining char count
+       SWPB R6           put first char first
+*----------------------->
+* enter when R6 = first 2 char of switch and
+* R7 -> switch table in use
+*----------------------->
+PARLP  MOV  *R7+,R1      get next switch table entry
+       JEQ  PARERR       jmp zero, is err
+       MOV  *R7+,R2      get processing routine addr
+       C    R1,R6        is this the switch?
+       JNE  PARLP        jmp no
+*
+       MOV  R3,R3        pio?
+       JGT  PARLP1       jmp not             * JEQ
+*
+       CI   R7,RSONLY+4  rs232 command?
+       JHE  SCANDT       jmp yes, ignore it
+*
+PARLP1 MOV  R2,R2             flag or address?
+       JLT  PARLP2            jmp flag
+       B    *R2               address, go to it
+*
+PARLP2 MOVB @HFF,*R2     set flag
+       JMP  SCANDT
+*
+*----------------------->
+PAREXT MOVB @OPCODE,R1     open?
+       JEQ  TMS902       jmp yes
+       JMP  L2RET        jmp no
+*----------------------->init 9902 (enter on open/load/save)
+TMS902 MOV  R3,R3
+       JGT  TMS90C            jmp not pio
+       X    @HSOUON(R14)      inactive handshake @@ check r12 here!
+       X    @IOMOON(R14)      input mode
+       JMP  L2RET
+*
+TMS90C MOV  R3,R12
+       MOVB @CIFLG,R1    circular interrupt open?
+       JEQ  L2RET        jmp no
+       SBO  RIENB        enable rec interrupt
+PEX    JMP  L2RET        go continue dsr processing
+*
+PARERR B    @BADATT      err
+*
+L2RET  ANDI R12,>FF00    rs232 port offset
+       MOV  @LEVEL2,R11
+       RT
+*
+H30    BYTE >30
+H20    BYTE >20
+*
+*----------------------->.baud rate =
+DOBAUD BL   @CKBAUD      check the baud rate
+       JMP  SCANDT       continue parse
+*----------------------->.parity=odd,even,none
+DOPAR  BL   @SCAN
+       DATA >3D00        "="
+       JEQ  PARERR       jmp err
+       SZCB @H30,*R9     parity bits=none @CONTRL
+       CI   R6,'N'*256   none?
+       JEQ  SCANDT       jmp yes already none
+       CI   R6,'E'*256   even?
+       JEQ  PAREVN       jmp yes
+       CI   R6,'O'*256   odd?
+       JNE  PARERR       jmp no=err
+       SOCB @H30,*R9     .pa=odd
+       JMP  SCANDT
+PAREVN SOCB @H20,*R9     .pa=even
+       JMP  SCANDT
+*----------------------->.data bits = 7 or 8
+DODATA BL   @SCAN
+       DATA >3D00        '='
+       JEQ  PARERR       jmp err
+       BL   @ASCINT      convert to decimal
+       SOCB @H03,*R9     set to 8 bits @CONTRL
+       AI   R5,-7        7/8 only 5=0,6=>01,7=>02,8=>03
+       JEQ  DODAT7       jmp 7 bits
+       DEC  R5           8 bits?
+       JNE  PARERR       jmp no, is err
+       JMP  SCANDT       go, already 8 bits
+DODAT7 SZCB @H01,*R9     set for 7 data bits @CONTRL
+       JMP  SCANDT
+*----------------------->.two stop bits
+DOSTOP SZCB @HC0,*R9     clear all stop bit bits @CONTRL
+       SOCB @H40,*R9     force to 2 stop bits @CONTRL
+       JMP  SCANDT
+       PAGE
+*----------------------->
+* check the baud rate and return clock information
+* inputs:  R0 - remaining char count to be parsed
+*          R5 - Gbaud only decimal baud rate
+* outputs: R0 - remaining char count to be parsed
+*          R5 - clock information for the
+*          R6 - last char parsed  (MSbyte)
+*
+*   @CONTRL - control for baud rate
+*   @baud - transmit baud rate value updated
+*
+* special ram and reg usage:
+*   R0 - remaining char count to be parsed
+*   R9 - pointer to @CONTRL
+*
+* entry points:
+*   CKbaud - parse to get baud rate value
+*   Gbaud - Binary baud rate already in R5 just check it
+*----------------------->
+CKBAUD MOV  R11,@LEVEL3  save the return addr
+       BL   @SCAN
+       DATA >3D00        '='
+       JEQ  PARERR       jmp err
+       BL   @ASCINT      convert number to decimal
+       JMP  CKENT
+GBAUD  MOV  R11,@LEVEL3  save the return addr
+CKENT  LI   R1,BAUDEC    check for valid baud rate
+       CLR  R2           init table offset
+CKBLP  MOV  *R1+,R11     get next table entry
+       JEQ  PARERR       jmp end of table, is err
+       C    R5,R11       is it a match?
+       JEQ  CKFOK        jmp yes, is good
+       INCT R2           adjust table offset
+       JMP  CKBLP        loop till end or found
+CKFOK  MOV  @BAUDV(R2),R1 value &/1or8 & /3or4
+       JGT  CKFD3        jmp divide by 4 flag is off (-)
+       SOCB @H08,*R9     set /4 bit @CONTRL
+       ANDI R1,>7FFF     clear the flag bit
+       JMP  CKFGO
+CKFD3  SZCB @H08,*R9     set /3 bit @CONTRL
+CKFGO  MOV  R1,@BAUD set the baud rate values
+       JMP  L3RET
+       PAGE
+*----------------------->
+* get one char for the peripheral device
+*
+* inputs:
+*   R9 - current vdp write addr for read command
+*
+* outputs:
+*   R6 - Input char in MSbyte
+*   R8 - remaining char storage # bytes
+*   R9 - adjusted vdp write addr for read command
+*
+* special ram and reg usage:
+*   R9 - pointer vdp memory for read command
+*----------------------->
+GETCH  MOV  R11,@LEVEL3  save the return addr
+GETWT  BL   @READY       char ready?
+       JEQ  GETIT        jmp yes
+       BL   @CKABRT      check user abort---this catches all interrupts!
+       STWP R11
+       MOV  R11,@GETWS
+       LWPI INTWS
+       MOV  @BUFNUM,R3
+       ANDI R3,>FFFE
+       BL   @INTROU
+       LWPI 0
+GETWS  EQU  $-2
+       JMP  GETWT        jmp no
+*
+GETIT  CLR  R6
+       MOV  R3,R3        pio selected ?
+       JLT  GETPIO       jmp Y               * JNE
+       MOV  R3,R12       get rs232 port address
+       STCR R6,8         get the char
+       SBZ  RIENB        clear receive buffer full
+       TB   ROVER        overrun err?
+       JEQ  GODEV        jmp yes
+       TB   RFER         framing err?
+       JEQ  GODEV        jmp yes
+       MOVB @PARFLG,R11 parity?
+       JEQ  L3RET        jmp no
+       TB   RPER         parity err?
+       JNE  L3RET        jmp no
+GODEV  B    @DEVERR      device err
+*
+GETPIO X    @HSOUOF(R14) active (ready)
+GTPIO1 X    @HSINTB(R14) output strobing data ?
+       JNE  GTPIO0       jmp low (yes)
+       BL   @CKABRT      user abort
+       JMP  GTPIO1       loop if no user abort & no data
+*
+GTPIO0 MOVB @PIOREG,R6   read the data
+       X    @HSOUON(R14)
+*
+L3RET  MOV  @LEVEL3,R11  restore the return addr
+       ANDI R12,>FF00    rs232 port offset
+       RT
+       PAGE
+*----------------------->
+* output CR, nulls, LF
+*----------------------->
+OUTCR  MOV  R11,@LEVEL4
+       MOVB @CRFLG,R11   echo flag?
+       JNE  L4RET        jmp yes, no echo
+       BL   @PUTCHI      CR
+       DATA >0D00
+       JMP  CKNUL
+*
+OUTNUL MOV  R11,@LEVEL4
+CKNUL  MOVB @NULFLG,R1   null flag on?
+       JEQ  LFGO         jmp no
+       LI   R5,6         number of nulls
+NULLP  BL   @PUTCHI      output it
+       DATA >0000        null
+       DEC  R5
+       JNE  NULLP
+LFGO   MOVB @CRFLG,R1    CRLF off flag on?
+       JNE  L4RET        jmp yes, no LF
+       MOVB @LFFLG,R1    LF off flag set?
+       JNE  L4RET        jmp yes, no LF
+       BL   @PUTCHI      if no, then output LF
+       DATA >0A00        LF
+L4RET  MOV  @LEVEL4,R11
+       RT
+       PAGE

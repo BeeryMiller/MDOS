@@ -116,12 +116,13 @@
 ;
 ; 8.06.2022 Added CYAMP7 for Remapping drive tables
 ;
-;
+;11.24.2023 Updated COPY command for relative folder access. See line ~700
+;           for an additional copy.
 ;
        UNL
 *
-       COPY "\MDOS\HEAD\PAGENUMS"
-       COPY "\MDOS\L8\LAYOUT" +hfdc,+subdir
+       COPY "HEAD\PAGENUMS"
+       COPY "L8\LAYOUT" +hfdc,+subdir
  LIST
        REF  SET964
        REF  PASDAT,PABD00
@@ -281,7 +282,7 @@ WINPRT MOVB @PAGD7+>2000,@MAP96+3   ;TIPI visible  @ >6000
 *    determine controller type, drive types, and step rates
 *
 * CTLTYP:  0=TI, 1=Myarc, 2=CC (3=Tip?) Default=Myarc/1
-*           -1 for TIPI
+*           -1 for TIPI or NO FDC found
 *
 * 6.28.2022, updated floppy detection to flag no FDC via CTLTYP
 *
@@ -602,6 +603,10 @@ REMAP  LI   R3,DRVMAP    ref'd  L8.SECT2-P
        LI   R4,H0A0B     HFDC floppy default
        CI   R12,>1100    R12 is set in hfdc powerup
        JEQ  REMAP1
+
+; Upon return from this remap routine, the powerup will flip flag back to -1
+; if no FDC was found.  The flag is tested in SECT3-P3:IOCM1 and FOMAT-PD
+;
        CLR  @CTLTYP      reset flag
        LI   R4,H0102     FDC default
 
@@ -718,7 +723,7 @@ H06    BYTE >06
 ; Warning: above section starts >0400! Page bytes require +>2000 offset
 ;           if used in the >2000 section (still not clear WHY)
 ;
-       COPY "\MDOS\L8\DSRMEM"     COPY IN THE DSR PAGE USAGE (list of pages)
+       COPY "L8\DSRMEM"     COPY IN THE DSR PAGE USAGE (list of pages)
 *
        AORG $+>2000      ;in theory, int handler is >0400+>2000+$
 *

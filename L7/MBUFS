@@ -1,7 +1,9 @@
+* MBUFS
+* 11.24.2023 Updated COPY for relative folder access
 *
        DEF  NODES,NODEND
 *
-       COPY "\MDOS\L7\MEMPTRS"
+       COPY "L7\MEMPTRS"
 *
 * uninitialized storage...can be used for overlays in system/sys image
 *

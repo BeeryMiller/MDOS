@@ -1,0 +1,141 @@
+********************************************************************************
+*
+* DELETE:  USED FOR DELETE, SAVE, OPEN(OUTPUT)
+;
+; 3.31.2021 Fixed boundary condition where a rogue cluster could cause this
+;           routine to corrupt memory beyond the 200 byte bitmap buffer
+;           Instead, we check for bitmap limit and return w/no action (FRESEC)
+********************************************************************************
+*
+DELETE CI   R2,ENDBUF         TEST IF NOT OPEN
+       JNE  ISOPEN            BRANCH IF OPEN
+       B    @ISNOPN           BRANCH TO PATHNAME SEARCH
+*
+ISOPEN MOVB @FCB+FSTATF(R3),R1  LOOK AT STATUS BYTE
+       COC  @H0800,R1           TEST PROTECT BIT
+       JNE  FNTPRO             BRANCH IF FILE NOT PROTECTED
+*
+* CAN'T DELETE PROTECTED FILE
+*
+       LI   R10,>2000         BAD OP 1
+       B    @CNBOP2           ERROR #1
+*
+FNTPRO BL   @GETVIB
+       DATA BADOP             CAN'T GET VIB OF FLOPPY SO FORGET IT
+*                             FREE BITS IN VIB
+DELOOP LI   R6,76             NUMBER OF CLUSTERS IN FCB
+D76    EQU  $-2
+*
+       MOV  R3,R9
+       AI   R9,FCB+CLUSTR     R9 NOW POINTS TO STARTING CLUSTER
+       SETO R5                INIT SECTOR RELATIVE COUNTER
+FNTPR1 BL   @PTTOWD           GET POINTERS IN R1 AND LENGTH IN R2
+* NOW STARTING SECTOR # IS IN R1,#-1 OF CONTIGUOUS SECTORS IN R2
+NOT144 MOV  R1,R7             TEST IF ANY SECTORS TO GIVE BACK
+       JEQ  DONCLS            BRANCH IF NO MORE SECTORS TO GO
+*
+FNTPR2 MOV  R7,R1
+       BL   @FRESEC           NOW FREE THE PROPER SECTORS
+* NOW TEST IF ANOTHER SET OF POINTERS TO FREE UP
+       INC  R7
+       INC  R5
+       C    R5,R2
+       JNE  FNTPR2
+       DEC  R6                ONE LESS SET OF POINTERS
+       JNE  FNTPR1            BRANCH IF ANOTHER SET TO GO
+
+* TO BE HERE, ALL CLUSTERS FREED, SO IF SAVE OR OPEN(OUTPUT) BRANCH BACK
+*  TO THEIR ROUTINES
+DONCLS MOV  @FLOCFC(R3),R0
+       CB   @OPCODE,@DELCOD   TEST IF DELETE
+       JEQ  DEL1              BRANCH IF DELETE
+NOT14  B    @OPNSAV           BRANCH BACK TO OPEN AND SAVE
+
+DEL1
+* TO BE HERE, ALL CLUSTERS ZEROED, SO ZERO OUT FCB FROM MAP
+       MOV  R0,R1             LOCATION OF FCB ON DISK
+       BL   @FRESEC           DO IT
+
+* NOW DELETE FROM SECTOR OF FILE POINTERS
+********************************************************************************
+*
+*      GET SECTOR 1 IE SECTOR OF POINTERS TO FILE
+*           PUT IN VDP BUFFER
+       MOV  @PNTSEC,@MYR3
+       MOV  @VDPBUF,@MYR1
+       BLWP @RSCPU2
+
+       DATA BADOP
+
+********************************************************************************
+
+* NOW TO ELIMINATE THE SECTOR POINTER BY MOVING TO VDP BUFFER
+* BUT CHECKING FOR POINTER TO THIS FCB JUST DELETED
+
+       CLR  @RECNUM           ZERO OUT POINTER TO BE INSERTED
+       CLR  @FCB+254(R3)      ZERO OUT LAST ENTRY
+
+* FIRST SET UP VDP READ POINTER
+FIXSTK MOV  @VDPBUF,R1
+
+* NOW MOVE 128 OF THE 128 WORDS (EXCLUDE THE DELETED POINTER WORD)
+
+       LI   R6,128
+       MOV  R3,R5        NOW POINTER TO SRAM BUFFER
+       AI   R5,FCB
+
+PUSHIO C    R1,@RECNUM   TEST IF THIS IS THE NEW ENTRY IF RENAME
+       JNE  NNLOC        BRANCH IF NOT
+       MOV  @FLOCFC(R3),*R5+  IF YES THEN INSERT THE POINTER
+
+NNLOC
+*
+* NOW TEST IF NEXT ITEM FROM Pointers IS TO BE DELETED
+*
+       MOV  *R1,*R5
+       C    *R5,@FLOCFC(R3)   TEST IF THIS POINTER NEEDS TO GO
+       JEQ  DENTRY            BRANCH IF YES
+       INCT R5                ELSE POINT TO NEXT
+DENTRY INCT R1                BUMP R1
+       DEC  R6                ONE LESS TO DO
+       JNE  PUSHIO            CONTINUE
+*
+       MOV  @PNTSEC,@FLOCFC(R3) SAVE IN SECTOR 1
+*
+       SETO @CLOSEF           update bitmap 6/19/89 paulc
+       B    @SRTSFD           special entry for delete...no time stamp
+*
+*
+* ROUTINE TO FREE SECTORS IN VIBBUF
+*      INPUT IS R1 - STARTING SECTOR
+*
+FRESEC C    @D1600,@VIBBUF+TOTAUS
+       JHE  FSEC$1
+       SRL  R1,1
+       C    @D3200,@VIBBUF+TOTAUS
+       JHE  FSEC$1
+       SRL  R1,1
+       C    @D6400,@VIBBUF+TOTAUS
+       JHE  FSEC$1
+       SRL  R1,1
+*
+FSEC$1 MOV  R1,R0             SAVE R1
+       SRL  R1,3              STRIP OFF BIT INDEX
+       AI   R1,VIBBUF+BITMAP  GET BYTE POINTER
+;
+; 3.31.2021, boundary condition. If the cluster pointer exceeds available
+;            bitmap, do not process the bit! (bitmap=200d bytes)
+       CI   R1,VIBBUF+BITMAP+200             ;3.31
+       JHE  FSERT1                           ;3.31
+;-end fix
+
+       LI   R10,>0100          BIT TO BE ZEROED
+       MOVB R10,@VIBCHG       SET THAT VIB HAS CHANGED
+       ANDI R0,>0007          NOW GET BIT INDEX
+       JEQ  ZNBYTE            IF ZERO THEN DON'T SHIFT
+       SLA  R10,0             START AT PROPER BIT
+ZNBYTE MOVB *R1,R8            GET NEXT BYTE TO WORK ON
+       SZC  R10,R8            ZERO OUT THE BIT
+       MOVB R8,*R1            SAVE IT
+FSERT1 RT                     AND RETURN
+

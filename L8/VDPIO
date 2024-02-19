@@ -1,0 +1,12 @@
+********************************************************************************
+* VDPIO *  SET UP VDP R/W ADDRESS
+********************************************************************************
+*
+VDPWAD A    *R11+,R1     ADD OFFSET FOLLOWING CALL
+VDPRAD SWPB R1
+       MOVB R1,@VDP1     LSB FIRST
+       SWPB R1
+       MOVB R1,@VDP1     MSB NEXT
+       SWPB R1           jph NICE LONG DELAY FOR 9640
+       SWPB R1
+       RT

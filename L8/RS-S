@@ -1,5 +1,9 @@
        UNL
 * RS-S
+;11.19.2023 Removed all -P suffixes
+;11.23.2023 Updated COPY statements for relative folder access
+*
+*
 * copy file for the RS232 card shit
 
        DEF  DSREN2
@@ -16,15 +20,19 @@
        DEF  SPPNT             pointers into spooler buffer
 *
 ; 2.10.2021 Prefixed all filenames with RS for this section
-       COPY "\MDOS\HEAD\PAGENUMS"
-       COPY "\MDOS\L8\LAYOUT"
+;
+       COPY "HEAD\PAGENUMS"
+
+       COPY "L8\LAYOUT"
+
        AORG RSCODE
-       COPY "\MDOS\L8\RSA2-P"
-       COPY "\MDOS\L8\RSB2-P"
-       COPY "\MDOS\L8\RSC2-P"
-       COPY "\MDOS\L8\RSD2-P"
-       COPY "\MDOS\L8\RSBUFFERS"
-       COPY "\MDOS\L8\RSINTS"
+
+       COPY "L8\RSA2"
+       COPY "L8\RSB2"
+       COPY "L8\RSC2"
+       COPY "L8\RSD2"
+       COPY "L8\RSBUFFERS"
+       COPY "L8\RSINTS"
 *
 DSREN2 EQU  $
 *

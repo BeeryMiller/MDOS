@@ -1,0 +1,35 @@
+; COPY2
+;11.19.2023 Removed all -P suffixes
+;11.24.2023 Updated COPY commands for relative folder access
+;
+       UNL
+*
+* Added CYASTP for inline SETDSK routine.  Referenced in DSRPASS-S, SECT3-P3
+       DEF  CYASTP,STPDRV,TRKDRV,VERWRT
+       DEF  CTLTYP,CTLBAS,LSTDRV
+*
+       REF  INTMAP,DRVMAP
+*
+       REF  HFDFMT
+       DEF  HFDBD6,HFDGD0
+*
+       COPY "HEAD\PAGENUMS"
+
+       COPY "L8\LAYOUT"
+*
+       AORG PG2VEC                   LOCATION ON 9640 IS +4K HIGHER . .
+*
+       COPY "L8\CFILES"      BECAUSE OF NOT PAGING.
+       COPY "L8\COMPAR"
+ LIST
+       COPY "L8\FORMAT"
+ UNL
+       COPY "L8\SECT3"
+*
+       COPY "L8\DISK3"
+       COPY "L8\CIF"       STOLEN FROM MYARC DISK ROM
+*
+       LIST
+SCUM   DATA 0
+MACRO1 EQU  $
+       END

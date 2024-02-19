@@ -1,0 +1,19 @@
+; HEAD\DEBUGFLAGS
+;
+; Common COPY 'include' to set debugflags across OS segments
+; Flag: 0=disabled; <>0 enabled
+;
+; See Genprog manual for details. Example:
+;
+; IF DEBUGTIPI#
+;    [code assembled if flag enabled]
+; ELSE
+;    [code "         "            "]
+; FI
+;
+
+DEBUGSCSI#  EQU  0       ;debug for SCSI/HRD/IDE segment
+DEBUGTIPI#  EQU  0       ;debug for TIPI DSR segment
+
+;;     EOF
+

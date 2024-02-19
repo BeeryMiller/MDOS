@@ -1,0 +1,315 @@
+* File: SECT3-P3
+*
+* 8.06.2022 Added CYAMPE to define disk drive settions
+*10.16.2023 Added test for CTLTYP [iocm1] to abort floppy IO if no FDC present
+*
+       DEF  CYAMPE       Defined CYA Step/Track settings
+
+
+TICARD EQU 0
+MYCARD EQU 1
+CCCARD EQU 2
+TIBASE EQU >9FF0
+MYBASE EQU >9FF1
+CCBASE EQU >9FF0
+*
+
+* DO NOT REORDER/INSERT ANY DATA BETWEEN NEXT GROUP OF DATA/BYTES!
+
+* CYA Step/track rates.
+       DATA 0            force even
+CYAMPE
+CYASTP BYTE 0,0,0,0,0,0,0,0   Used for full-time Step rate setting
+*                             If track size=0, use the card settings
+*                             If track size=40/80, use the CYA settings
+*                             A SETDSK will override the above until a reset
+*                             --checked/written in DSRPASS-S
+STPDRV BYTE 0,0,0,0
+TRKDRV BYTE 80,40,40,40       80,40,40,40
+VERWRT BYTE 1
+CTLTYP BYTE MYCARD
+CTLBAS DATA MYBASE
+LSTDRV DATA -1                no drive used yet
+*
+H50    BYTE 80
+WRTDEL BYTE 0
+H04    BYTE >04
+*
+SAVSPD DATA 0
+WHICH  DATA 0                 which code to call...controller, routine.
+IOCNT  DATA 0
+IOADR  DATA 0
+SAVR13 DATA 0
+SAVR14 DATA 0
+SAVR15 DATA 0
+H0800  DATA >0800
+*
+*********************************************************
+*
+*      READ SECTOR ROUTINE
+*           THERE ARE MANY ENTRIES
+*           1) FROM GPL FOR ITS DIRECT SECTOR I/O ROUTINE
+*           2) FROM BLWP FOR CPU I/O TO BUFFER AT R3
+*           3) FROM BLWP FOR CPU I/O TO VIBBUF
+*           4) FROM BLWP FOR VDP I/O TO VDPBUF
+*           5) FROM BLWP FOR VDP I/O GIVEN BY R
+*
+*      REGISTER USAGE IMPORTANT
+*           R0   READ<>0, WRITE=0
+*           R1   BUFFER ADDRESS
+*           R2   DRIVE NUMBER BASE 0
+*           R3   SECTOR # TO BE READ
+*           R4   FLAG SEC 0,TYPE(DENS)
+*           R5   SIDE USED 0=0, 1=1
+*           R6   TRACK #
+*           R7   SECTOR # OF TRACK
+*           R8   ****************
+*           R9   POINTER TO DSKTYP(DRIVE#)
+*           R10  ****************
+*           R11  ****************
+*
+*      ALWAYS TRY 4 RETRIES ON A SECTOR BY DOING A RESTORE AND SEEK
+*      ALL SEEKS WILL BE DONE WITH THE VERIFY OPTION SET
+*
+*      IF DISK/DISKETTE PARAMETERS ARE NOT KNOWN, I/O WILL BE TO SECTOR 0
+*           THEN TO GIVEN SECTOR IF IT IS A GPL ROUTINE
+*
+*
+********************************************************************************
+NOFCM1 B    @BADRT6
+
+IOCM1  BL   @SAVPAD           LOADS R2 WITH DRIVE #, BASE 0
+*
+       MOV  @CTLTYP,R9        card type -1?  (Tipi or no FDC)
+       JLT  NOFCM1            return error
+
+IOCM2  MOV  @CTLBAS,R15
+       SBO  0
+       MOV  R2,R9             NOW TO GET TYPE PARAMETERS SET UP
+       SLA  R9,2
+       MOV  @DSKTYP+2(R9),R4
+       MOV  R3,R3             TEST FOR I/O TO SECTOR 0
+       JNE  NZIO              BRANCH IF NOT SECTOR 0
+*
+       MOV  R0,R0             READ?
+       JNE  RS0               BRANCH IF READING SECTOR 0
+*
+NZIO   SZCB R4,R4
+       MOV  @DSKTYP(R9),R8
+
+
+       JEQ  FS0               BRANCH IF NOT ACCESSED BRFORE
+
+
+*
+       LI   R10,>0700         NOT WITHIN REACH CODE
+*
+RBCK   BL   @TURNMO           TURN MOTOR ON
+RBCK2
+DDEN   CLR  R6
+       MOV  R3,R7
+       DIV  R4,R6             R6=TRACK R7=SECTOR#
+*
+       MOVB @TRACK1(R2),R14
+       MOVB @CTLTYP,R13
+       JNE  NOTTI1
+       INV  R14
+NOTTI1 MOVB R14,@DTRKRG+8(R15)    LOAD CURRENT TRACK NUMBER
+*
+* NOW FIX TRACK NUMBER, DEPENDING ON SIDE OF DISK
+*
+       CLR  R5                ASSUME SIDE ZERO, FOR STARTERS
+       LI   R8,40
+*
+D40    EQU  $-2
+D40B   EQU  $-1
+*
+       BL   @DRTYP
+       JEQ  TK40
+*
+       MOVB @DSKTYP+2(R9),R10
+       JLT  TK40              WE'RE IN DOUBLE STEP MODE
+*
+       SLA  R8,1              80 TRACKS.
+*
+TK40   C    R6,R8
+       JL   S039
+*
+       S    R8,R6             START FROM INSIDE OUT
+       S    R8,R6
+       INV  R6
+       SETO R5                WE'RE ON SIDE TWO FOLKS.
+*
+S039   C    R6,R8
+       JL   S040
+       B    @BADRT
+*
+S040   SWPB R6
+       BL   @SEKTK            SEEK THAT TRACK
+       JMP  LOADC1
+*
+FS0    MOVB R12,@FLAGNR
+*
+RS0    BL   @SETPM
+       MOVB R12,R4
+*
+* NOW LOAD PROPER CODE IN PAD RAM TO PERFORM FAST I/O
+*
+LOADC1 LI   R8,8              index for dummy read back
+       MOVB @FLAGNR,R10       TEST IF FORCED READ SECTOR ZERO
+       JNE  LWIO
+       MOVB @FLGRBK,R10       is it a write verify?
+       JNE  LWIO              yes
+       CLR  R8
+*
+LRCPU  MOV  R0,R0             TEST IF READ<>0 OR WRITE=0
+       JNE  LWIO              BRANCH IF WRITE
+       INCT R8                POINT TO WRITE ROUTINE
+*
+LWIO   MOV  R8,@WHICH         R8 HAS INDEX: 0,2,4,6,8
+*
+AGAIN  MOV  @H0100,@IOCNT
+       MOVB @FLAGNR,R8
+       JEQ  NOT$FR
+*
+*
+* I PERSONALLY DISLIKE THE LOOKS OF THIS  . . . NO ROM HERE!
+* >2000 IS BOTTOM OF VDP BUFFER. CROSS FINGERS . . . .
+       MOV  @H2000,@IOADR         READ TO ROM IF SECTOR ZERO I/O
+       JMP  RRRR
+*
+NOT$FR NOP
+       MOV  R1,@IOADR
+*
+RRRR   LI   R13,1
+       CLR  R14
+NOWATY MOVB @DSTARG(R15),R10
+       SWPB R10                              +5 WORDS
+       MOVB @CTLTYP,R10
+       JNE  NOWATZ
+       INV  R10
+NOWATZ CI   R15,MYBASE
+       JNE  NW01
+       ANDI R10,>0001
+NW01   ANDI R10,>0081
+       JEQ  NOWATX
+       ANDI R10,>0080
+       JNE  TIMDX
+       DEC  R14
+       JNE  NOWATY
+       DEC  R13
+       JNE  NOWATY
+       JMP  TIMDX
+*
+NOWATX MOVB @WRKREG+>F,R13        LOAD PROPER SECTOR R3 LSB
+       SWPB R13
+       MOVB R6,R14            LOAD PROPER TRACK, FOR ID MATCH...EVEN IF DBL STEP
+       SWPB R14
+*
+       MOVB @CTLTYP,R13
+       JNE  NOTTI2
+       INV  R13              invert for ti card
+       INV  R14
+*
+NOTTI2 SWPB R13
+       MOVB R13,@DSECRG+8(R15)
+       SWPB R14
+       MOVB R14,@DTRKRG+8(R15)
+       MOVB R14,@DDATRG+8(R15)  fake write to clear pending DRQ
+       MOV  R4,@>F012         drop it into i/o r9 for flags...
+*
+*****
+       BLWP @DSKIO
+*****
+*
+IOCMPT MOV  @>F012,R10   R9 IN PAD OF I/O ROUTINE
+       JNE  NOTTO        NOT TIMED OUT
+TIMDX  B    @BADRT6      ELSE ERROR 6
+*
+NOTTO  MOVB @DSTARG(R15),R10
+       MOVB @CTLTYP,R13
+       JNE  NOTTI3
+       INV  R10
+NOTTI3 COC  @H0400,R10   LOST DATA?
+       JEQ  AGAIN        TRY IT AGAIN
+*
+       ANDI R10,>1800    CRC OR RECORD NOT FOUND ERROR?
+       JEQ  GOODIO       BRANCH IF GOOD
+*
+NGIOO  AB   @HFF,@RETRY
+       JEQ  ERR          BRANCH IF NOT SET
+       MOVB @FLAGNR,R8
+       JNE  ZERORD       TOGGLE DENSITY IF FORCED READ SECTOR ZERO
+*
+       MOV  R0,R0
+       JEQ  FS0          BRANCH IF WRITE
+*
+       MOV  R3,R3
+       JNE  FS0          BRANCH IF NOT SECTOR 0
+*
+**************************************************************************
+* DETERMINE CORRECT DENSITY: ONLY IF READING FROM SECTOR ZERO
+*
+ZERORD LI   R8,>0009
+*
+H09    EQU  $-1
+*
+       CB   @WRKREG+9,@H09      TEST R4LSB (STILL NOW SURE ABOUT WHICH WS)
+       JH   DDDEN             BRANCH IF DOUBLE
+       MOVB @CTLTYP,R13
+       JEQ  DDDEN             TI CARD CAN'T DO DOUBLE DENSITY
+*
+       LI   R8,>0012
+DDDEN  MOV  R8,R4             SUBTRACT FROM RETRY
+       JMP  FS0               DO IT
+*
+NFAKER MOV  R0,R0
+       JNE  GDREAD       BRANCH IF READ
+*
+       MOVB @DSTARG(R15),R10  TEST FOR WRITE PROTECT ON
+       MOVB @CTLTYP,R13
+       JNE  NOTTI4
+       INV  R10
+NOTTI4 SLA  R10,2        TEST PROPER BIT
+       JOC  WPT          BRANCH IF TRYING TO WRITE TO PROTECTED DISKETTE
+*
+       MOVB @VERWRT,R13  DON'T READ BACK IF CRU BIT IS ZERO
+       JNE  RESPAD
+*
+       SETO R0           SET READ OPCODE, TO READ BACK SECTOR
+       MOVB R12,@VDPCPU  TO ROM
+       MOVB R12,@FLGRBK  SET READ BACK FLAG
+       B    @RBCK2       DO IT
+*
+H2000  DATA >2000
+*
+* NOW FOR ERROR HANDLING AND RETURN
+*
+WPT    LI   R10,>3400    WRITE ERROR
+       JMP  BADG7
+*
+ERR    SRL  R10,4
+       MOVB R10,R10      TEST IF CRC ERROR
+       JNE  BADRD        BRANCH IF NOT
+       AI   R10,>0200
+BADRD  AI   R10,>2000    READ ERROR
+BADG7
+       B    @BADRT
+*
+GOODIO MOVB @FLAGNR,R8        FAKE READ OF SECTOR ZERO?
+       JEQ  NFAKER
+       BL   @SETPFR
+       SZCB R12,@FLAGNR       ZERO OUT FORCED READ SECTOR 0
+       B    @NZIO
+*
+GDREAD MOVB @FLGRBK,R8        ARE WE IN READBACK MODE?
+       JNE  RESPAD            IF YES THEN RETURN
+*
+       MOV  R3,R3        SECTOR ZERO?
+       JNE  RESPAD       BRANCH IF NOT
+*
+       BL   @SETPAR      GET PARMS FROM VIB INTO >RAM
+*
+RESPAD CLR  R10          RESTORE RAM, TURN DISK MOTOR OFF, TURN DRIVE SEL OFF
+       B    @GODRT       RETURN TO NEXT PAGE LOCATION
+*

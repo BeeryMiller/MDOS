@@ -1,0 +1,163 @@
+       PAGE
+*******************************************************************************
+*
+*      ROUTINE TO DETERMINE IF FILE ALREADY OPEN AND IF YES, WHERE
+*                                                    IF NO, WHERE AND IF ANOTHER
+*                                                         BUFFER EXISTS
+*                 THIS ROUTINE ALSO CHECKS VOLUME NAME FOR PROPER LENGTH
+*      NO INPUT PARMS
+*
+*      USES REGISTERS R5-R9
+*
+*      USES MEMORY LOCATIONS
+*           NUMFIL (NUMBER OF FILE BUFFERS)
+*
+*      ON RETURN, R3 CONTAINS IF <>0 POINTER TO AVAILABLE BUFFER
+*                     IF 0 THEN NO BUFFERS ARE AVAILABLE
+*                 R2 CONTAINS END OF BUFFER IF NOT FOUND OPEN
+*                             POINTER TO BUFFER IF FILE ALREADY OPEN
+*
+********************************************************************************
+COMPAT MOVB @NUMFIL,R8
+       SRL  R8,8
+       CI   R8,10
+       JLE  GETNF1
+       LI   R8,10          OH, WELL, USER BEWARE!
+GETNF1 SLA  R8,1
+       CLR  R3             ZERO OUT FOR FUTURE USE
+       LI   R2,BUF1-FBUFLN R2 CONTAINS START OF BUFFERS LOCATION
+COMPA1 AI   R2,FBUFLN      POINT TO NEXT BUFFER
+       MOVB @FDRVID(R2),R7 TEST IF BUFFER AVAILABLE
+       JNE  COMPA2
+       MOV  R2,R3          SAVE BUFFER FOR USE
+*
+       MOV  @VDPBTB-2(R8),@VDPBUF <-- CAN'T MOVE B4 JUMP (WHAT IF 0 FREE BUFFER)
+*
+COMNT1 DECT R8             ONE LESS BUFFER TO SEARCH
+       JNE  COMPA1         BRANCH IF NOT ALL BUFFERS SEARCHED
+       LI   R2,ENDBUF      ELSE DONE WITH SEARCH AND RETURN NOT FOUND
+       JMP  COMP11         BRANCH TO SET UP VDP BUFFER POINTER
+*
+COMPA2 MOVB @OPTLEN,R9     PATHNAME LENGTH
+       SRL  R9,8
+       AI   R9,-4          COMPENSATE FOR PARSING DSK? PART
+       JEQ  COMNT1         BRANCH IF ZERO (BAD PATHNAME)
+*
+* this stuff with the drive numbers can be reduced lots...it's already
+* @@@  done in CALDRV except for GPL file access...
+*
+       LI   R6,PATHNM+3    POINT TO CHARACTER PAST "DSK" PART
+       MOVB *R6+,R5
+       CB   R5,@DECIML     IS IT A DRIVE #?
+       JEQ  VOLSRH         NO, SEARCH VOLUMES...
+*
+COMPA9 ANDI R5,>0F00
+       JEQ  COMNT1         TRY NEXT BUFFER  DSK0 ?
+       CB   @FDRVID(R2),R5   TEST IF DRIVE NUMBER MATCH
+       JNE  COMNT1         NO, TRY NEXT BUFFER
+*
+****************************************************************
+*
+* TO BE HERE, CORRECT DRIVE SO SUBTRACT 1 FROM R9 FOR "." AND
+*  IF LENGTH LEFT TO PARSE IS 0 THEN directory access
+*
+COMPA8 INC  R6                count decimal point as parsed
+       DEC  R9
+       JNE  COMPA3            file name is not zero length
+COMDA1 MOV  @FLOCFC(R2),R9    test FCB loc on used buffer
+       JNE  COMNT1            not a directory buffer...
+       JMP  COMPA4            directory buffer!
+*
+*      Check about subdirectories...
+*
+COMPA3 MOV  @SUBDIR(R2),R7    is there a subdirectory with this file?
+       JEQ  COMDA9            ...no so we can just compare filename...
+       LI   R7,10
+*      INC  R6                point to start of possible pathname
+       MOV  R2,R5
+       AI   R5,SUBDIR         point to start of stored pathname
+COMDA2 CB   *R6,@DECIML       end of name?
+       JEQ  COMDA4             yes
+       CB   *R5+,*R6+         match?
+       JNE  COMNT1             nope.
+       DEC  R9                down total count...
+       JEQ  COMNT1            running out of characters in dir is no-no
+       DEC  R7                down the 10 count...
+       JNE  COMDA2             no problem..still more to go.
+       CB   *R6,@DECIML       end of name?
+       JNE  COMNT1             no, die . .
+       JMP  COMDA5             otherwise is ok...
+*
+COMDA4 CB   *R5,@BLANK        also end of stored pathname?
+       JNE  COMNT1             nope
+COMDA5 INC  R6                skip past the decimal
+       DEC  R9                count that being done...
+       JEQ  COMDA1             ...looks like a directory request
+*
+* COMPARE NAME IN FILE CONTROL BLOCK TO PAB
+*
+COMDA9 LI   R7,10        MAX LEN FOR NAME
+*      INC  R6           POINT TO FILENAME START
+       MOV  R2,R5        POINTER TO FILENAME
+       AI   R5,FCB       POINT TO START OF BLOCK
+COMPA5 CB   *R5+,*R6+    MATCHING...
+       JNE  COMNT1       BAD MATCH...
+       DEC  R9           1 DOWN, MORE TO GO?
+       JEQ  COMPA6       NO MORE...NOW TEST TRAILING SPACES
+       DEC  R7           1 DOWN, MORE TO GO?
+       JNE  COMPA5       YEP!
+*
+* TO BE HERE, FILE NAME IS TOO LONG SO ERROR IN PATHNAME
+*
+*****************************************************************************
+*
+* TO BE HERE, MUST TEST IF 10 CHARACTERS PARSED OR IF NEXT CHAR IN FCB IS BLANK
+*
+COMPA6 DEC  R7           TRAILING SPACES NEEDED?
+       JEQ  COMPA4       NOPE...
+       CB   *R5,@BLANK
+       JNE  COMNT1       NO MATCH...
+*
+COMPA4 MOV  R2,R3        MATCH SO RETURN FDR LOC IN R3 AND R2
+       MOV  *R3,R5       PUT DRIVE # IN DRIVID...
+       ANDI R5,>000F
+       MOV  R5,@VOLUME
+       MOV  @VDPBTB-2(R8),@VDPBUF  GET BUFFER ADDRESS FROM TABLE
+*
+CFILX1
+COMP11 B    @CFILEX      RETURN TO CALLER
+*
+**********************************************************************
+*
+* TO BE HERE, LOOKING FOR DSK.VOLUMENAME.FILENAME, SO FIRST DETERMINE
+* IF ALL NAMES ARE WITHIN PROPER LENGTH (DONE ELSEWHERE)
+* NEXT DETERMINE IF THIS PATHNAME HAS BEEN LOOKED AT BEFORE
+*
+VOLSRH LI   R11,VIBBUF
+       MOVB @VIBID,R5
+VOLSR3 MOVB *R6,R7       GET NEXT CHARACTER
+       JLT  VOLSR4       BRANCH IF FOUND BEFORE
+       CB   R7,@DECIML   TEST IF DECIMAL DELIMITER
+       JEQ  VOLSR2
+       CB   R7,*R11+
+       JEQ  VOLSR1
+       CLR  R5
+VOLSR1 INC  R6
+       DEC  R9
+       JEQ  COMNT1       CAN'T BE THIS ONE
+       JMP  VOLSR3       JUST CONTINUE
+*
+VOLSR2 CI   R11,VIBBUF+10 TEST IF ALL 10 CHARS PARSED
+       JEQ  COMPA9       BRANCH IF YES
+       CB   *R11,@BLANK  IF NOT, THEN NEXT CHAR IN VOL NAME MUST BE " "
+       JEQ  COMPA9       BRANCH IF YES
+       JMP  COMNT1       ELSE GO TO NEXT BUFFER
+*
+VOLSR4 MOV  R7,R5
+       JMP  COMPA9
+*
+VDPBTB DATA VBUF1,VBUF2,VBUF3
+       DATA VBUF4,VBUF5,VBUF6
+       DATA VBUF7,VBUF8,VBUF9
+       DATA VBUF10
+       PAGE

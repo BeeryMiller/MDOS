@@ -1,0 +1,279 @@
+**LOADSAV-P*********************************************************************
+* Save/GPL>15, Bwrite
+* Load/GPL>14, Bread
+* 3.22.2018 - Verify SETSE1 accounts for HD/UltraHD sizes
+*
+*      save file...write sectors to disk
+*      (binary Write 0x0B next section)
+********************************************************************************
+*
+*      set up FCB some more
+*
+SAVEFI MOV  @PFILE,*R6+
+       INCT R6                skip level 2 record count
+       MOVB @CHRCNT,R5
+       SRL  R5,8
+       MOVB @CHRCNH,R5        number of sectors <or one less>
+       MOVB @CHRCNT+1,*R6     EOF offset
+       JEQ  SAVE00
+       INC  R5                round up to true number of sectors
+SAVE00 MOV  R5,R5             any to save?
+       JEQ  SAVED2            no data to save
+*
+       BL   @GETAUS           get sectors from bitmap (or extend current alloc)
+       DATA BADO4S            no sectors or no clusters left...
+       MOV  @FCB+LV2REC(R3),R5  # of sectors to save
+       BL   @SETSC            get start sector number, housekeeping
+*
+SAVFI1 MOV  R15,@PASADH       ...move to odd address= irregular
+       MOV  R6,@PASADL        low part of address
+       MOV  @GBGSEC,@PASDSR   DSR data pad
+       MOVB @CPUFLG,@PASVDP   move CPU/VDP flag from PAB
+       SETO @PASRW            user --> DSR
+       MOV  @D256,@PASCNT     one sector
+       BLWP @PASDAT           get the data ...
+*
+       MOV  @GBGSEC,@MYR1
+       BLWP @WSCPU2           write the data
+       DATA TRAP#4            trap for write to bad sector
+*
+       DEC  R5                all done?
+       JEQ  SAVED2            yep
+       BL   @SETSEC           set next sector
+       MOV  R1,R1             zero pointer?
+       JNE  SAVFI1            nope, we're in a valid cluster
+*
+SAVED2 CB   @OPCODE,@H0B      all done with save
+       JNE  SAVED3
+       LI   R10,>8000         disk full error
+       MOV  R5,R5
+       JNE  SAVEPX
+       CLR  R10
+SAVEPX SOCB R10,@PABERR
+       S    R5,@CHRCNT        calc number of sectors written
+       A    @CHRCNT,@RECNUM   point to sector offset past our save
+       MOV  R5,@CHRCNT        return number of sectors not written
+       BL   @UPDBFR
+*
+SAVED3 B    @SRTSF            save file and update time stamp
+*
+TRAP#4 MOVB @MYR9,R10         low-level error code
+       CB   @OPCODE,@H0B
+       JEQ  SAVEPX
+       B    @BADOPS           bad op and save FCB
+*
+GBGSEC DATA NULSEC
+H00FF  BYTE >00
+HFF    BYTE >FF
+H0012  DATA >0012
+*
+********************************************************************************
+*
+*      binary write ...
+*
+*
+OPB2   A    @RECNUM,R5        calculate highest sector requested
+       BL   @GETAUS           possibly auto extend
+       DATA BINAR1            don't care about error <yet>
+
+BINAR1 MOV  @CHRCNT,R5        get sector count for binary read/write
+       JMP  BINAR2
+*
+ADOF1
+ADIF1  SRL  R5,8              adjust sector count
+*
+BINAR2 BL   @SETSC            setup for scan
+       MOV  @RECNUM,R0
+       CB   @OPCODE,@H10
+       JL   ADDF2
+*
+       MOV  *R0,R0            start sector #  <in additional info block>
+
+ADDF2  C    R0,@FCB+LV2REC(R3)  are we in the file at all?
+       JL   ADDF2A
+       B    @LODED1           1st sector isn't in file...exit
+*
+ADDF2A MOV  R0,R0
+       JEQ  ADF3              don't need to scan if we start at zero offset
+ADF2   BL   @SETSEC           scan one
+       DEC  R0
+       JNE  ADF2              more to scan...
+*
+ADF3   CB   @OPCODE,@H10
+       JH   ADDF3
+*
+       MOVB @BUFADH,R15
+       SRL  R15,8
+       MOV  @BUFADR,R6
+       JMP  BINAR3
+*
+ADDF3  CLR  R15               in 1st 16k of VRAM
+       MOV  @RECNUM,R7
+       DECT R7                address of additional info block
+       MOV  *R7,R6            VRAM address
+*
+BINAR3 CB   @OPCODE,@H15      GPL output?
+       JEQ  SAVFI1
+       CB   @OPCODE,@H0B      binary write?
+       JEQ  SAVFI1
+       CLR  R14               LSB of byte count
+       JMP  LODFI2            GPL input, binary read
+*
+********************************************************************************
+*
+*      routines to bump to next sector within file <on the fly...>
+*      3.22.2018-does SETSE1 account for high/ultra high density ?
+*
+SETSC  MOV  R11,R10
+       SETO R8                current offset in file
+       MOV  R3,R9             get pointer to starting cluster
+       AI   R9,FCB+CLUSTR
+*
+       MOVB @BUFADH,R15       high byte of address
+       SRL  R15,8
+       MOV  @BUFADR,R6        low word of address
+       JMP  SETSC1            get 1st pointer and sector number
+*
+SETSEC MOV  R11,R10
+       AI   R6,>0100          bump buffer pointer
+D256   EQU  $-2
+*
+       JNC  NC00
+       INC  R15               high byte of address
+*
+NC00   INC  R1                next disk sector
+NC01   C    R2,R8             at end of cluster?
+       JNE  SETSE1            nope, continue
+*
+SETSC1 BL   @PTTOWD           get info from next cluster
+SETSE1 C    R2,@FCB+LV2REC(R3)
+       JL   SETSE2            if 80 track and empty sector at end of file
+       DEC  R2                don't read the empty sector at end of file
+*                             we could jump back to NC01 here, but it is
+*                             unnessary since we are guaranteed at least one
+*                             used sector in this cluster
+SETSE2 INC  R8                high fence for this cluster
+       MOV  R1,@MYR3
+       B    *R10
+*
+UPDBFR AB   @CHRCNT+1,@BUFADR
+       JNC  UPDBU1
+       INC  @BUFADH
+UPDBU1 AB   @CHRCNT,@BUFADH
+       RT
+*
+********************************************************************************
+*
+*      load file...read sectors from disk
+*
+* (binary read 0x0A gets dumped in here too)
+*
+LOADFI MOV  @FCB+FSTATF(R3),R2
+       SLA  R2,8              is the file a program image?
+       JOC  LOAD00            yep
+       B    @BADOP2           nope, error
+*
+LOAD00 MOV  @FCB+LV2REC(R3),R5               get high word of byte count
+       MOVB @FCB+EOFOST(R3),R14              get LSB of byte count
+       JEQ  LOAD01                           jump for sector boundary
+       DEC  R5                               adjust for non-boundary
+*
+LOAD01 CLR  @RECNUM           return size in PAB
+       MOVB R5,@RECNUM+1      high byte of program length
+       SWPB R5
+       MOVB R5,@LRECLN        middle byte of program length
+       SWPB R5
+       MOVB R14,@LRECLN+1     low byte of program length
+       SRL  R14,8             save as a count for later use
+*
+       C    @RECNUM+1,@CHRCNH compare program size to buffer size
+       JL   LOAD02            it fits...
+       C    @LRECLN,@CHRCNT   continue compare.
+       JLE  LOAD02            program image will fit into buffer
+       B    @BADOP4           it won't fit
+*
+LOAD02 MOV  R5,R5             check MSW
+       JNE  LOAD03            zero length file...nothing to load
+       MOV  R14,R14           check LSB
+       JEQ  LOADED            nothing to load
+*
+LOAD03 BL   @SETSC            get first pointer
+       JMP  LODFI2
+*
+LODF10 BL   @SETSEC
+*
+LODFI2 MOV  R1,R1             test for empty cluster...last sector
+       JEQ  LOADED            (used for GPL subroutine end...)
+*
+       MOV  @GBGSEC,@MYR1     dummy buffer
+       BLWP @RSCPU2           get the sector
+       DATA TRAP#5            trap for disk read error
+
+*
+       CLR  @PASRW            DSR -> user
+       MOVB @CPUFLG,@PASVDP   which memory type?
+       MOV  R15,@PASADH       high byte of address (hmmm..move to odd address)
+       MOV  R6,@PASADL        low word of address
+       MOV  @GBGSEC,@PASDSR   dummy sector location
+       MOV  @D256,@PASCNT
+*
+       MOV  R5,R5             paritial sector?
+       JNE  LODF11            load the whole sector
+       MOV  R14,@PASCNT       move a partial sector over
+*
+LODF11 BLWP @PASDAT           move the sector
+*      BLWP @PASDAT
+       INC  R0                one more sector loaded
+       DEC  R5                one less sector to load
+       JGT  LODF10            branch if more to do...8 meg limit!
+       JLT  LOADED            none left to move, we just moved partial
+*
+       MOV  R14,R14           partial sector to transfer?
+       JEQ  LOADED            nope, all done
+       JMP  LODF10            go back to transfer the partial sector
+*
+LODED1 CLR  R0                none loaded
+LOADED SLA  R0,8
+       MOVB R0,@MYPAD+>4D
+       CB   @OPCODE,@H0A      binary read?
+       JNE  LOADX1            nope, no cleanup to do
+*
+       LI   R10,>A000         error 5...read past end of file
+       MOV  R5,R5             check if all sectors read
+       JNE  LOADPX            report EOF error
+       CLR  R10               no error, all sectors read
+LOADPX SOCB R10,@PABERR
+       S    R5,@CHRCNT        calc number of sectors read
+       A    @CHRCNT,@RECNUM   point to sector after last successful read
+       MOV  R5,@CHRCNT        return number of sectors not read
+       BL   @UPDBFR
+*
+LOADX1 B    @SRTFB            return to system & release the buffer
+*
+TRAP#5 CB   @OPCODE,@H0A
+       JEQ  LOADPX            report info, even if error
+       B    @BADOP            other opcodes just have error return
+*
+********************************************************************************
+*
+*  binary file read...top entry
+*
+OPA2   MOV  @CHRCNT,R7        test if zero sectors
+       JEQ  OPA2B             yes, get file info
+       B    @BINAR1           no, so read some sectors
+*
+OPA2B  MOV  R3,R5
+       AI   R5,FCB+EXTRLN     point to special info
+       MOV  R5,@PASDSR
+*
+       CLR  @PASRW
+       MOVB @CPUFLG,@PASVDP
+       MOVB @BUFADH,@PASADH
+       MOV  @BUFADR,@PASADL
+       MOV  @H0012,@PASCNT
+*
+       BLWP @PASDAT
+*
+       MOVB @H00,@PABERR
+       B    @SRTFB            release file buffer and return
+*

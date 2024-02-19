@@ -143,6 +143,10 @@ BREG DATA  >000D ;38.4  1A=19.2; 34=9600
 ;
 INITRS DATA XMWS,INITR1
 INITR1 LIMI 0
+
+       RTWP
+
+
        LI R12,>1340
        SBO  >1F          Reset 9902
        LI   R5,>0200

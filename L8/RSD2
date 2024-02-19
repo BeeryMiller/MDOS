@@ -1,0 +1,323 @@
+; File: RSD2-S
+; 3.20.2021, added 38.4k Serial option [see also CLI\MODES for os command]
+;
+*----------------------->
+* test if internal data type
+*----------------------->
+IFINTD MOVB @FLGSTS,R1     flag/status byte
+       SLA  R1,5         >08=internal
+       RT
+*----------------------->
+* test if fixed record length
+*----------------------->
+FIXED  MOVB @FLGSTS,R1     get the flag/status byte
+       SLA  R1,4          >01xx carry=variable length
+       RT
+*
+*----------------------->
+* convert ascii decimal to binary
+*
+* inputs:  R0 - remaining char count to be parsed
+*          R6 - first char to be parsed
+* outputs: R0 - remaining chars to be parsed
+*          R5 - binary value of the parsed decimal number
+*          R6 - last char parsed (MSbyte)
+*
+* special ram and reg usage:
+*   R1+R2 - 32 bit accumulator for multiply
+*   XX - accepted char count
+*   R5 - accumulated binary value
+*   R7 - general scratch reg
+*----------------------->
+ASCINT MOV  R11,@LEVEL4
+       CLR  R1           clear accumulator
+       CLR  R11          number of accepted chars
+       JMP  ASCENT       entery point
+*
+ASCLP  MOVB *R13+,R6     read next char from vdp
+       DEC  R0           dec remaining chr count
+*
+ASCENT MOV  R6,R7        copy to work reg
+       SRL  R7,8         clear msbyte and put in low byte
+       AI   R7,-'0'      convert ASCII digit to binary
+       JLT  ASCEND       jmp not numeric
+       CI   R7,9
+       JH   ASCEND       jmp not numeric
+       INC  R11          bump number of accepted chars
+       MPY  @DEC10,R1    next base 10
+       MOV  R1,R1        did it overflow?
+       JNE  GOBAT        jmp yes
+       A    R7,R2        add digit to accumulator
+       MOV  R2,R1        set up for next time
+       MOV  R0,R0        any more chars?
+       JNE  ASCLP        jmp yes
+*
+ASCEND MOV  R11,R11      if 0 chars accpeted is err
+       JNE  ASCEXT       go ok
+GOBAT  B    @BADATT      go some type of attribute err
+*
+ASCEXT MOV  R1,R5        return binary value
+       MOV  @LEVEL4,R11
+       RT
+*
+*----------------------->
+* scan for given char then return first non-blank
+*
+* inputs: vdp read addr set up pointing to chars
+*   R0 - remaining char count
+*   R6 - current char to be parsed
+*  *R11- char to be parsed for (MSbyte of at R11)
+*
+* outputs:
+*   R0 - remaining char count to be parsed
+*   R6 - last char parsed
+*  JEQ - use this jump after return to detect errs
+*  JNE - use this jump after return to detect no errs
+*----------------------->
+SCAN   MOV  *R11+,R5     get scan char
+       CB   R5,R6        current char?
+       JEQ  SKIP         jmp yes
+SCANLP MOVB *R13+,R6     next char from vdp
+       DEC  R0           char count
+       CB   R5,R6        match?
+       JEQ  SKIP         jmp yes
+       MOV  R0,R0        more chars?
+       JNE  SCANLP       jmp yes
+SKIP   MOV  R0,R0        more chars?
+       JEQ  SCANRT       jmp no, err
+       CLR  R6           init for CI below
+       MOVB *R13+,R6     next char
+       DEC  R0           bump remaining char count
+       CB   R6,@H20      space?
+       JEQ  SKIP         yes, loop
+SCANRT RT                no, return
+*----------------------->
+* send one char
+*
+*  R6 MSbyte= output char (@PUTCH)
+* R11 MSbyte= output char (@PUTCHI)
+* @VRD(R15) = output char (@PUTCHR)
+*----------------------->
+PUTCHR MOVB *R13+,R6     get char
+       JMP  PUTCH        output it
+PUTCHI MOV  *R11+,R6     get char
+PUTCH  MOV  R11,@LEVEL5
+*
+PUTLP  BL   @PUTLP0           stick it in the buffer
+       CB   R6,@FLGCHR        did we send a flag?
+       JNE  PUTCRT            no, so just get out . .
+       BL   @PUTLP0           stick it out again . . .
+       JMP  PUTCRT            and give up . .
+*
+PUTLP0 MOV  R11,@PUTLPR
+PUTLP2 MOV  @BUFNUM,R15       get buffer number
+       BL   @PUTBUF           try to put a char into the buffer
+       MOV  R15,R15
+       JNE  PUTLP3            error, try to lose a character from buffer.
+       B    @0                good . . return to caller
+PUTLPR EQU  $-2
+*
+PUTLP3 MOVB @MODE4A,R0        /4a mode?
+*      JNE  PUTLP4            no, report buffer full error
+       BL   @CKABRT           this also traps out 9640 mode
+       STWP R11
+       MOV  R11,@PUTWS
+       LWPI INTWS
+       MOV  @BUFNUM,R3
+       BL   @INTROU
+       LWPI 0
+PUTWS  EQU  $-2
+       JMP  PUTLP2
+*
+PUTLP4 B    @SIZERR           report device error if buffer full
+*
+*                             (with setting parms when buffer full!)
+PUTCRT STWP R11               try to send out one char when buffer is full
+       MOV  R11,@RSWS
+       LWPI INTWS
+       MOV  @BUFNUM,R3
+       BL   @INTROU           @@is r12 correct here????
+       LWPI 0
+RSWS   EQU  $-2
+       MOV  R3,R12
+       JLT  PUTPC1
+       SBO  XBIENB
+*
+PUTPC1 MOV  @LEVEL5,R11       get return
+       RT                     do it
+*
+********************************************************************************
+*
+PUTPIO MOV  R11,@PIORT        save return address
+*
+       ANDI R12,>FF00
+       MOVB @IBFLG,R1         inverted busy? 0=no
+       JEQ  PTPIO             jmp not inverted
+       X    @HSINTB(R14)
+       JNE  PIOBUS            jmp busy (low)
+       JMP  PTPIO1
+PTPIO  X    @HSINTB(R14)      busy?
+       JEQ  PIOBUS            jmp busy (hi)
+*----------------------->start output
+PTPIO1 MOV  @BUFNUM,R15       get buffer number
+       BL   @GETBUF           get the character
+       ABS  R15               error?
+       JEQ  PTPIO5            nope
+       CLR  R12               indicate buffer empty
+       JMP  PIOBUS            now report error
+*
+PTPIO5 SBO  0                 turn the card on
+       MOVB @HBA,@MAP96+6     put in the peripheral page
+       X    @IOMOOF(R14)      output mode
+*
+       CI   R14,CCPIO
+       JEQ  COR1
+*
+       MOVB R6,@PIOREG        no, output data
+       JMP  PTPIO7
+*
+COR1   AI   R12,>0010         handle output to corcrap card
+       CLR  R0
+       LDCR R0,8
+       MOVB R6,R0             got character to process
+       DECT R12
+COR3   MOVB R0,R0             built character in CRU bits
+       JEQ  COR4
+       INCT R12
+       SLA  R0,1
+       JNC  COR3
+       SBO  0
+       JMP  COR3
+*
+COR4   ANDI R12,>1F00
+*
+PTPIO7 X    @HSOUOF(R14)      signal output data valid
+       SBZ  0                 turn the card off
+       MOVB @HSFLG,R1         handshake mode?
+       JEQ  PTPIO3            jmp no
+PTPIO2 X    @HSINTB(R14)      wait for handshake HI signal
+       JEQ  PTPIO4            jmp hi
+       BL   @CKABRT           user abort
+       JMP  PTPIO2
+*
+PTPIO3 C    *R1+,*R1+         delay strobe
+PTPIO4 X    @HSOUON(R14)      signal output data no longer valid
+       X    @IOMOON(R14)      input mode
+       JMP  PIORET            exit
+*
+PIOBUS SETO R15               indicate error
+PIORET B    @0
+PIORT  EQU  $-2
+*
+*----------------------->
+* load the vdp read or write addr
+*
+* VDPWAD - load vdp with R1 addr and offset *R11
+* VDPRAD - load vdp with R1 addr
+*----------------------->
+VDPWAD A    *R11+,R1     add in offset
+VDPRAD SWPB R1
+       MOVB R1,@VDP1     output LSbyte r1 first
+       SWPB R1           delay for addr output
+       MOVB R1,@VDP1     output MS byte now
+       SWPB R1
+       SWPB R1                better long than sorry, jph '87
+       RT
+*
+*----------------------->
+* see if a char is ready from 9902
+* or pio output side's strobe inactive
+*----------------------->
+READY  MOV  R3,R3             pio?
+       JLT  PIORDY            jmp yes    * JNE
+       MOV  R3,R12            correct RS232 card
+READYX TB   DSR               dataset ready?
+       JNE  RDYRET            jmp no
+       TB   RBRL              rec buffer loaded?
+RDYRET RT                     (EQ = both yes)
+PIORDY X    @HSINTB(R14)      output inactive
+       RT                     hi=inactive (EQ)
+*----------------------->
+* check for user abort
+*
+* if a BREAK is pressed, a DEVERR exit will be taken
+*----------------------->
+*
+CKABRT MOV  R11,@CKABD1       save return address
+       MOVB @MODE4A,R11
+       JNE  CKABEX            jump if 9640 mode
+*
+       STWP R11
+       MOV  R11,@CKABDT       save calling WS (probably not needed)
+*
+       LWPI >83E0             required WS for this sort of thing
+       CLR  R11
+       BL   @ABTKEY           wait for abort key
+*
+       LWPI DSRWS
+CKABDT EQU  $-2               make sure real calling WS is restored
+*
+       MOV  @11*2+>83E0,R11
+       ANDI R11,>2000         check equal bit
+       JNE  ABORT             return error if abort key is pressed
+*
+CKABEX B    @0                if no, return
+CKABD1 EQU  $-2               easier then finding a register . ..
+*
+ABORT  B    @DEVERR
+*
+*----------------------->
+* switch table format= data x,y
+* x = first 2 chars of the switch. (no numbers or symbols)
+* y = pointer to the processing routine or flag address.
+*----------------------->table for open/read/write
+OPNSWT DATA 'EC',ECHFLG  .echo off flag addr
+       DATA 'CR',CRFLG   .crlf off flag addr
+       DATA 'LF',LFFLG   .lf   off flag addr
+       DATA 'NU',NULFLG  .nulls on flag addr
+       DATA 'HS',HSFLG   handshake strobe flag addr
+       DATA 'IB',IBFLG   inverted  busy   flag addr
+RSONLY EQU  $            rs232 commands only (here down)
+       DATA 'DA',DODATA  .data bits=
+*----------------------->table for load/save
+LSSWT  DATA 'BA',DOBAUD  .baud =
+       DATA 'PA',DOPAR   .parity=
+       DATA 'TW',DOSTOP  .two stip bits
+       DATA 'CH',PARFLG  .check parity on
+       DATA 0
+*----------------------->
+BAUDEC DATA 19200  sw=0  decimal value
+       DATA 9600      1
+       DATA 4800      2
+       DATA 2400      3
+       DATA 1200      4
+       DATA 600       5
+       DATA 110       6
+       DATA 300       7
+       DATA 38400     8  ;added 3.20.2021
+H00    DATA 0
+DEC10  DATA 10                needed above . . .
+D80    BYTE 80
+HBA    BYTE >BA
+*----------------------->
+* baudnn is  data x (nn= freq in mhz )
+* x = timer value for the 9902.
+*     +>400 means CLK/8 instead of CLK/1.
+*     +>8000 means CLK/4 instead of CLK/3.
+*      >400 is MSbit of counter. >8000 is a flag only.
+*----------------------->
+BAUDV  DATA 26            19200 = 0 at hardware switch
+H80    DATA 39+>8000       9600   1
+       DATA 78+>8000       4800   2
+       DATA 156+>8000      2400   3
+       DATA 417            1200   4
+       DATA 625+>8000       600   5
+       DATA 426+>400+>8000  110   6
+       DATA 156+>400+>8000  300   7
+       DATA 13            38400   8
+*----------------------->
+OPTBL  DATA OPEN         op code table
+       DATA EXIT
+       DATA READ
+       DATA WRITE
+*

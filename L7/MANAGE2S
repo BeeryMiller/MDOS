@@ -23,7 +23,9 @@
 ;           old pre-fix file to check the routine
 ;
 ;3.4.2021   Completely disabled RAVE routines and flag
-
+;
+;11.24.2023 Updated COPY for relative folder access
+;           MANAGE2T at end of file
 
        REF  OS#GEN
        DEF  FRECNT,NODFRE
@@ -69,9 +71,11 @@ ASAV1  EQU  $
 *
 *****************************************************************************
 *
-       COPY "\MDOS\HEAD\OSTASK"
-       COPY "\MDOS\L7\MEMPTRS"
-       COPY "\MDOS\HEAD\PAGENUMS"
+       COPY "HEAD\OSTASK"
+
+       COPY "L7\MEMPTRS"
+
+       COPY "HEAD\PAGENUMS"
 *
 * define where our list is, what it looks like.
 *
@@ -769,6 +773,6 @@ ER9L2  MOVB @H00,@MEMTYP(R6)
 OP5ER8 MOV  @H0008,*R13
 MEM5RT RT
 *
-       COPY "\MDOS\L7\MANAGE2T"
+       COPY "L7\MANAGE2T"
 *
        END

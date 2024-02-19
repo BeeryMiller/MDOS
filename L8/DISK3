@@ -1,0 +1,786 @@
+********************************************************************************
+*
+WRKPAD BSS  >0090        SAVE >f000 pad
+*
+DSKIO  DATA >F000,DO#IO
+*
+H45BC  DATA >45BC        CAN BE USED FOR DATA
+*
+HB0    BYTE >B0
+HF7    BYTE >F7
+*
+HB34   BYTE >34
+H12    BYTE >12
+*
+DECIML TEXT '.'
+       BYTE >50
+*
+RESCOD EQU  $
+H0400  DATA >0400
+*
+SAVDSR BYTE 0
+PAGDSR BYTE >BA
+*
+********************************************************************************
+*
+CMDTBL DATA TIDKCP,TICPDK,TIDKVP,TIVPDK,TIDKGB,TIFMDK
+       DATA MYDKCP,MYCPDK,MYDKVP,MYVPDK,MYDKGB,MYFMDK
+       DATA CCDKCP,CCCPDK,CCDKVP,CCVPDK,CCDKGB,CCFMDK
+*
+TIREAD BYTE >77
+MYREAD BYTE >80
+CCREAD BYTE >80
+H4E    BYTE >4E
+*
+       EVEN
+*
+DENS1  NOP               no density on ti card
+       SBO  3            MYR
+       SBO  10           CC
+DENS2  NOP               no density on ti card
+       SBZ  3            MYR
+       SBZ  10           CC
+SIDE1  SBZ  7            TI
+       SBZ  2            MYR
+       SBZ  7            CC
+SIDE2  SBO  7            TI
+       SBO  2            MYR
+       SBO  7            CC
+*
+DO#IO  LI   R12,>1100
+       CLR  R7
+       MOVB @CTLTYP,R11
+       SRL  R11,7
+       X    @DENS1(R11)
+       X    @SIDE1(R11)
+*
+       MOVB R9,R9
+       JNE  SIDE0             R9=FLAG & DENSITY INFO
+*
+       MOVB @MYR5,R9
+       JEQ  SIDE0             SIDE 0, JUMP
+       X    @SIDE2(R11)       TURN ON SIDE 1
+*
+SIDE0  SLA  R9,12             MASK OFF FORCED READ SECTOR 0
+       JNC  IO#PAT            BRANCH IF SINGLE DENSITY
+       X    @DENS2(R11)       SET FOR DOUBLE DEN
+*
+* routine codes:
+*      0   d->c
+*      2   c->d
+*      4   d->v
+*      6   v->d
+*      8   d->trashcan
+*     10   c->track           (format)
+*
+IO#PAT CLR  R4
+       MOVB @CTLTYP,R4
+       SRL  R4,5
+       MOV  R4,R5
+       SRL  R4,1
+       A    R5,R4             12x routine code
+       A    @WHICH,R4
+       MOV  @CMDTBL(R4),R4
+       LI   R6,>0100
+       LI   R7,>0200
+       MOV  @IOADR,R1
+       MOV  @IOCNT,R2
+       LI   R8,3              timeout count
+       CLR  R9
+       LI   R3,>F020
+ML1A   MOV  *R4+,*R3+
+       CI   R3,>F020+>70
+       JL   ML1A
+       B    @>F020
+*
+********************************************************************************
+*
+TIDKGB LI   R1,>F000          io address     (r0)
+       LI   R2,1              io count       (the rest get thrown away)
+*
+TIDKCP MOVB @TIREAD,@TIBASE+8
+       LI   R0,30
+SPIN1  DEC  R0                wait for 1771 to set all status bits
+       JNE  SPIN1
+WAITA1 MOVB @TIBASE,R0
+       CZC  R7,R0             wait for 1st byte DRQ
+       JEQ  MOVE1             DRQ is on
+       CZC  R6,R0
+       JNE  DKERR1            busy is off now
+       DEC  R9
+       JNE  WAITA1
+       DEC  R8
+       JNE  WAITA1
+       B    @DSKERR
+*
+MOVE1  MOVB @TIBASE+6,R0
+       INV  R0
+       MOVB R0,*R1+
+       DEC  R2
+       JEQ  MOVED1
+*
+WAITA2 MOVB @TIBASE,R0
+       CZC  R7,R0
+       JEQ  MOVE1
+       CZC  R6,R0
+       JEQ  WAITA2            busy is still on
+DKERR1 B    @IODONE
+*
+MOVEX1 MOVB @TIBASE+6,R0
+*
+MOVED1 MOVB @TIBASE,R0
+       CZC  R7,R0
+       JEQ  MOVEX1
+       CZC  R6,R0
+       JEQ  MOVED1
+       B    @IODONE
+*
+********************************************************************************
+*
+TIFMDK LI   R0,>0B00          format entry (write track)
+       SETO R11               pad character
+       JMP  TIFM2
+*
+TICPDK LI   R0,>5700          write command
+       CLR  R11               pad character
+       SZCB @WRTDEL,R0        delay for new drive, seek, motor on...
+TIFM2  MOVB R0,@TIBASE+8      issue the command
+*
+       LI   R0,30
+SPIN2  DEC  R0                wait for 1771 to set all status bits
+       JNE  SPIN2
+WAITB1 MOVB @TIBASE,R0
+       CZC  R7,R0             wait for 1st byte DRQ
+       JEQ  MOVE2             DRQ is on
+       CZC  R6,R0
+       JNE  DKERR2            busy is off now
+       DEC  R9
+       JNE  WAITB1
+       DEC  R8
+       JNE  WAITB1
+       B    @DSKERR
+*
+MOVE2  MOVB *R1+,R0
+       INV  R0
+       MOVB R0,@TIBASE+14     move a data byte
+       DEC  R2
+       JEQ  MOVED2
+*
+WAITB2 MOVB @TIBASE,R0
+       CZC  R7,R0
+       JEQ  MOVE2
+       CZC  R6,R0
+       JEQ  WAITB2            busy is still on
+DKERR2 B    @IODONE
+*
+MOVEX2 MOVB R11,R0
+       INV  R0
+       MOVB R0,@TIBASE+14     write a pad character
+*
+MOVED2 MOVB @TIBASE,R0
+       CZC  R7,R0
+       JEQ  MOVEX2
+       CZC  R6,R0
+       JEQ  MOVED2
+       B    @IODONE
+*
+********************************************************************************
+*
+TIDKVP MOVB @TIREAD,@TIBASE+8
+       LI   R0,30
+SPIN3  DEC  R0                wait for 1771 to set all status bits
+       JNE  SPIN3
+WAITC1 MOVB @TIBASE,R0
+       CZC  R7,R0             wait for 1st byte DRQ
+       JEQ  MOVE3             DRQ is on
+       CZC  R6,R0
+       JNE  DKERR3            busy is off now
+       DEC  R9
+       JNE  WAITC1
+       DEC  R8
+       JNE  WAITC1
+       B    @DSKERR
+*
+MOVE3  MOVB @TIBASE+6,R0
+       INV  R0
+       MOVB R0,@>F110         VDP write (for reading sectors)
+       DEC  R2
+       JEQ  MOVED3
+*
+WAITC2 MOVB @TIBASE,R0
+       CZC  R7,R0
+       JEQ  MOVE3
+       CZC  R6,R0
+       JEQ  WAITC2            busy is still on
+DKERR3 B    @IODONE
+*
+MOVEX3 MOVB @TIBASE+6,R0
+*
+MOVED3 MOVB @TIBASE,R0
+       CZC  R7,R0
+       JEQ  MOVEX3
+       CZC  R6,R0
+       JEQ  MOVED3
+       B    @IODONE
+*
+********************************************************************************
+*
+TIVPDK LI   R0,>5700          write command
+       SZCB @WRTDEL,R0        delay for new drive, seek, motor on...
+       MOVB R0,@TIBASE+8      issue the command
+*
+       LI   R0,30
+SPIN4  DEC  R0                wait for 1771 to set all status bits
+       JNE  SPIN4
+WAITD1 MOVB @TIBASE,R0
+       CZC  R7,R0             wait for 1st byte DRQ
+       JEQ  MOVE4             DRQ is on
+       CZC  R6,R0
+       JNE  DKERR4            busy is off now
+       DEC  R9
+       JNE  WAITD1
+       DEC  R8
+       JNE  WAITD1
+       B    @DSKERR
+*
+MOVE4  MOVB @>F110,R0
+       INV  R0
+       MOVB R0,@TIBASE+14     move a data byte
+       DEC  R2
+       JEQ  MOVED4
+*
+WAITD2 MOVB @TIBASE,R0
+       CZC  R7,R0
+       JEQ  MOVE4
+       CZC  R6,R0
+       JEQ  WAITD2            busy is still on
+DKERR4 B    @IODONE
+*
+MOVEX4 MOVB @H00,@TIBASE+14   fill rest of sector
+*
+MOVED4 MOVB @TIBASE,R0
+       CZC  R7,R0
+       JEQ  MOVEX4
+       CZC  R6,R0
+       JEQ  MOVED4
+       B    @IODONE
+*
+********************************************************************************
+*
+MYDKGB LI   R1,>F000          io address     (r0)
+       LI   R2,1              io count       (the rest get thrown away)
+*
+MYDKCP MOVB @MYREAD,@MYBASE+8
+       LI   R0,30
+SPIN5  DEC  R0                wait for 1770 to set all status bits
+       JNE  SPIN5
+WAITE1 MOVB @MYBASE,R0
+       COC  R7,R0             wait for 1st byte DRQ
+       JEQ  MOVE5             DRQ is on
+       COC  R6,R0
+       JNE  DKERR5            busy is off now
+       DEC  R9
+       JNE  WAITE1
+       DEC  R8
+       JNE  WAITE1
+       B    @DSKERR
+*
+MOVE5  MOVB @MYBASE+6,*R1+
+       DEC  R2
+       JEQ  MOVED5
+*
+WAITE2 MOVB @MYBASE,R0
+       COC  R7,R0
+       JEQ  MOVE5
+       COC  R6,R0
+       JEQ  WAITE2            busy is still on
+DKERR5 B    @IODONE
+*
+MOVEX5 MOVB @MYBASE+6,R0
+*
+MOVED5 MOVB @MYBASE,R0
+       COC  R7,R0
+       JEQ  MOVEX5
+       COC  R6,R0
+       JEQ  MOVED5
+       B    @IODONE
+*
+********************************************************************************
+*
+MYFMDK LI   R0,>F800          format entry (write track)
+       MOVB *R1,R11           pad character
+       JMP  MYFM2
+*
+MYCPDK LI   R0,>A000          write command
+       CLR  R11               pad character
+       SOCB @WRTDEL,R0        delay for new drive, seek, motor on...
+MYFM2  MOVB R0,@MYBASE+8      issue the command
+*
+       LI   R0,30
+SPIN6  DEC  R0                wait for 1770 to set all status bits
+       JNE  SPIN6
+WAITF1 TB   FLPDRQ
+       JEQ  MOVE6
+       TB   FLPINT
+       JEQ  DKERR6
+       DEC  R9
+       JNE  WAITF1
+       DEC  R8
+       JNE  WAITF1
+       B    @DSKERR
+*
+MOVE6  MOVB *R1+,@MYBASE+14   move a data byte
+       DEC  R2
+       JEQ  MOVED6
+*
+WAITF2 TB   FLPDRQ
+       JEQ  MOVE6
+       TB   FLPINT
+       JNE  WAITF2
+DKERR6 B    @IODONE
+*
+MOVEX6 MOVB R11,@MYBASE+14    fill rest of sector
+MOVED6 TB   FLPDRQ
+       JEQ  MOVEX6
+       TB   FLPINT
+       JNE  MOVED6
+       B    @IODONE
+*
+********************************************************************************
+*
+MYDKVP MOVB @MYREAD,@MYBASE+8
+       LI   R0,30
+SPIN7  DEC  R0                wait for 1770 to set all status bits
+       JNE  SPIN7
+WAITG1 MOVB @MYBASE,R0
+       COC  R7,R0             wait for 1st byte DRQ
+       JEQ  MOVE7             DRQ is on
+       COC  R6,R0
+       JNE  DKERR7            busy is off now
+       DEC  R9
+       JNE  WAITG1
+       DEC  R8
+       JNE  WAITG1
+       B    @DSKERR
+*
+MOVE7  MOVB @MYBASE+6,@>F110  into vdp ram
+       DEC  R2
+       JEQ  MOVED7
+*
+WAITG2 MOVB @MYBASE,R0
+       COC  R7,R0
+       JEQ  MOVE7
+       COC  R6,R0
+       JEQ  WAITG2            busy is still on
+DKERR7 B    @IODONE
+*
+MOVEX7 MOVB @MYBASE+6,R0
+*
+MOVED7 MOVB @MYBASE,R0
+       COC  R7,R0
+       JEQ  MOVEX7
+       COC  R6,R0
+       JEQ  MOVED7
+       B    @IODONE
+*
+********************************************************************************
+*
+MYVPDK LI   R0,>A000          write command
+       SOCB @WRTDEL,R0        delay for new drive, seek, motor on...
+       MOVB R0,@MYBASE+8      issue the command
+       CLR  R11               pad character
+*
+       LI   R0,30
+SPIN8  DEC  R0                wait for 1770 to set all status bits
+       JNE  SPIN8
+WAITH1 MOVB @MYBASE,R0
+       TB   FLPDRQ            wait for 1st DRQ
+       JEQ  MOVE8             DRQ is on
+       TB   FLPINT
+       JEQ  DKERR8            command terminated
+       DEC  R9
+       JNE  WAITH1
+       DEC  R8
+       JNE  WAITH1
+       B    @DSKERR
+*
+MOVE8  MOVB @>F110,@MYBASE+14 move a data byte
+       DEC  R2
+       JEQ  MOVED8
+*
+WAITH2 MOVB @MYBASE,R0
+       TB   FLPDRQ
+       JEQ  MOVE8
+       TB   FLPINT
+       JNE  WAITH2            command not finished
+DKERR8 B    @IODONE
+*
+MOVEX8 MOVB R11,@MYBASE+14   fill rest of sector
+*
+MOVED8 MOVB @MYBASE,R0
+       TB   FLPDRQ
+       JEQ  MOVEX8
+       TB   FLPINT
+       JNE  MOVED8
+       B    @IODONE
+*
+********************************************************************************
+*
+CCDKGB LI   R1,>F000          io address     (r0)
+       LI   R2,1              io count       (the rest get thrown away)
+*
+CCDKCP MOVB @CCREAD,@CCBASE+8
+       LI   R0,30
+SPIN9  DEC  R0                wait for 2793 to set all status bits
+       JNE  SPIN9
+WAITI1 MOVB @CCBASE,R0
+       COC  R7,R0             wait for 1st byte DRQ
+       JEQ  MOVE9             DRQ is on
+       COC  R6,R0
+       JNE  DKERR9            busy is off now
+       DEC  R9
+       JNE  WAITI1
+       DEC  R8
+       JNE  WAITI1
+       B    @DSKERR
+*
+MOVE9  MOVB @CCBASE+6,*R1+
+       DEC  R2
+       JEQ  MOVED9
+*
+WAITI2 MOVB @CCBASE,R0
+       COC  R7,R0
+       JEQ  MOVE9
+       COC  R6,R0
+       JEQ  WAITI2            busy is still on
+DKERR9 B    @IODONE
+*
+MOVEX9 MOVB @CCBASE+6,R0
+*
+MOVED9 MOVB @CCBASE,R0
+       COC  R7,R0
+       JEQ  MOVEX9
+       COC  R6,R0
+       JEQ  MOVED9
+       B    @IODONE
+*
+********************************************************************************
+*
+CCFMDK LI   R0,>F800          format entry (write track)
+       MOVB *R1,R11           pad character
+       JMP  CCFM2
+*
+CCCPDK LI   R0,>A000          write command
+       CLR  R11               pad character
+       SOCB @WRTDEL,R0        delay for new drive, seek, motor on...
+CCFM2  MOVB R0,@CCBASE+8      issue the command
+*
+       LI   R0,30
+SPINA  DEC  R0                wait for 2793 to set all status bits
+       JNE  SPINA
+WAITJ1 MOVB @CCBASE,R0
+       COC  R7,R0             wait for 1st byte DRQ
+       JEQ  MOVEA             DRQ is on
+       COC  R6,R0
+       JNE  DKERRA            busy is off now
+       DEC  R9
+       JNE  WAITJ1
+       DEC  R8
+       JNE  WAITJ1
+       B    @DSKERR
+*
+MOVEA  MOVB *R1+,@CCBASE+14   move a data byte
+       DEC  R2
+       JEQ  MOVEDA
+*
+WAITJ2 MOVB @CCBASE,R0
+       COC  R7,R0
+       JEQ  MOVEA
+       COC  R6,R0
+       JEQ  WAITJ2            busy is still on
+DKERRA B    @IODONE
+*
+MOVEXA MOVB R11,@CCBASE+14    fill rest of sector
+*
+MOVEDA MOVB @CCBASE,R0
+       COC  R7,R0
+       JEQ  MOVEXA
+       COC  R6,R0
+       JEQ  MOVEDA
+       B    @IODONE
+*
+********************************************************************************
+*
+CCDKVP MOVB @CCREAD,@CCBASE+8
+       LI   R0,30
+SPINB  DEC  R0                wait for 2793 to set all status bits
+       JNE  SPINB
+WAITK1 MOVB @CCBASE,R0
+       COC  R7,R0             wait for 1st byte DRQ
+       JEQ  MOVEB             DRQ is on
+       COC  R6,R0
+       JNE  DKERRB            busy is off now
+       DEC  R9
+       JNE  WAITK1
+       DEC  R8
+       JNE  WAITK1
+       B    @DSKERR
+*
+MOVEB  MOVB @CCBASE+6,@>F110  into vdp ram
+       DEC  R2
+       JEQ  MOVEDB
+*
+WAITK2 MOVB @CCBASE,R0
+       COC  R7,R0
+       JEQ  MOVEB
+       COC  R6,R0
+       JEQ  WAITK2            busy is still on
+DKERRB B    @IODONE
+*
+MOVEXB MOVB @CCBASE+6,R0
+*
+MOVEDB MOVB @CCBASE,R0
+       COC  R7,R0
+       JEQ  MOVEXB
+       COC  R6,R0
+       JEQ  MOVEDB
+       B    @IODONE
+*
+********************************************************************************
+*
+CCVPDK LI   R0,>A000          write command
+       SOCB @WRTDEL,R0        delay for new drive, seek, motor on...
+       MOVB R0,@CCBASE+8      issue the command
+       CLR  R11               pad character
+*
+       LI   R0,30
+SPINC  DEC  R0                wait for 2793 to set all status bits
+       JNE  SPINC
+WAITL1 MOVB @CCBASE,R0
+       COC  R7,R0             wait for 1st byte DRQ
+       JEQ  MOVEC             DRQ is on
+       COC  R6,R0
+       JNE  DKERRC            busy is off now
+       DEC  R9
+       JNE  WAITL1
+       DEC  R8
+       JNE  WAITL1
+       B    @DSKERR
+*
+MOVEC  MOVB @>F110,@CCBASE+14 move a data byte
+       DEC  R2
+       JEQ  MOVEDC
+*
+WAITL2 MOVB @CCBASE,R0
+       COC  R7,R0
+       JEQ  MOVEC
+       COC  R6,R0
+       JEQ  WAITL2            busy is still on
+DKERRC B    @IODONE
+*
+MOVEXC MOVB R11,@CCBASE+14    fill rest of sector
+*
+MOVEDC MOVB @CCBASE,R0
+       COC  R7,R0
+       JEQ  MOVEXC
+       COC  R6,R0
+       JEQ  MOVEDC
+       B    @IODONE
+*
+********************************************************************************
+*
+DSKERR CLR  R9
+       RTWP
+IODONE SETO R9
+       RTWP
+*
+TURNMO CLR  R13
+       MOVB @CTLTYP,R13
+       MOVB @H00,@WRTDEL
+       C    R2,@LSTDRV   cru is already on...
+       JEQ  HEADLD       so don't reselect the drive
+       MOV  R2,@LSTDRV
+       MOVB @H04,@WRTDEL
+*
+       SBZ  4
+       SBZ  5
+       SBZ  6
+*
+       MOVB R13,R13
+       JNE  COKE#1
+       CI   R2,3         no drive #4 on a ti card
+       JNE  COKE#2
+       B    @BADRT6
+*
+COKE#1 CI   R13,>0200    CORCRAP
+       JNE  COKE#3
+       SBZ  8
+       JMP  COKE#2
+*
+COKE#3 SBZ  7            myarc #4
+COKE#2 MOV  R13,R14
+       SRL  R14,5
+       A    R2,R14
+       A    R2,R14
+       X    @SELECT(R14) turn on correct drive
+*
+HEADLD CI   R13,>0100
+       JEQ  COKE#4
+       SBO  3
+       SBZ  1
+COKE#4 SBO  1
+       RT
+*
+SELECT SBO  4            TI
+       SBO  5
+       SBO  6
+       NOP
+*
+       SBO  4            MYARC
+       SBO  5
+       SBO  6
+       SBO  7
+*
+       SBO  4            CORCRAP
+       SBO  5
+       SBO  6
+       SBO  8
+*
+RESPA1 LI   R9,WRKPAD    RESTORE CPU PAD FROM RAM AT >5000
+       LI   R6,>F000
+       MOVB @SAVDSR,@MAP96+4
+RESP2  MOV  *R9+,*R6+
+       CI   R6,>F090
+       JL   RESP2
+*
+       MOV  @SAVR13,R13
+       MOV  @SAVR14,R14
+       MOV  @SAVR15,R15
+       SBZ  0            turn disk controller off
+       MOV  R12,R9
+       LI   R12,>1EFE
+       LDCR @SAVSPD,1
+       MOV  R9,R12
+*
+DO$RT  RT
+*
+* ROUTINE TO SET DISKETTE PARAMETERS IN PAD RAM
+* SECTOR IN VDP OR CPU RAM GIVEN BY R1
+* ASSUME THAT IT IS EITHER DOUBLE DOUBLE OR DOUBLE SINGLE
+* TEST IF READ TO CPU RAM
+*
+*
+SETPAR MOVB @VDPCPU,R10       =0 IF VDP
+*      JEQ  SETPFR       NEVER DO VDP NOW . . . .
+*
+
+       MOVB @SECTRK(R1),@WRKREG+9
+       JLT  DO$RT             JUMP IF JUST FORMATTED
+*
+       SZCB @H80,@DSKTYP+2(R9) ASSUME SINGLE STEP FOR NOW
+*
+       CB   @TRKDRV(R2),@H50  TEST DRIVE TYPE
+       JNE  SETPFR
+*
+       CB   @H50,@TRKSID(R1)
+       JEQ  SET1C             WE DON'T WANT TO DOUBLE STEP
+*
+       SOCB @H80,@DSKTYP+2(R9)
+*
+SETPFR CLR  R10               R10 IS NOW FLAG FOR MULTIPLICATION FACTOR <>0=*2
+*
+SET1C  LI   R8,>05A0
+       CB   @WRKREG+9,@H10
+       JNE  SET1D
+       LI   R8,>0500
+*
+SET1D  CB   @WRKREG+9,@H09
+       JNE  SET1E
+       SRL  R8,1              DIVIDE BY TWO FOR SINGLE DENSITY
+SET1E  MOV  R10,R10
+       JEQ  SET1F
+       SLA  R8,1              TIMES 2 FOR 80 TRACK DRIVE
+*
+SET1F  MOV  R8,@DSKTYP(R9)
+       MOVB @WRKREG+9,@DSKTYP+3(R9)
+*
+SET1G  RT
+*
+SAVPAD MOV  @VOLUME,R2
+       DEC  R2                BASE 0
+       MOVB @MAP96+4,@SAVDSR
+       MOVB @PAGDSR,@MAP96+4
+       LI   R8,WRKPAD         SAVE CPU PAD INTO RAM AT IOBUF
+       LI   R6,>F000
+STPAD1 MOV  *R6+,*R8+
+       CI   R6,>F090
+       JNE  STPAD1
+*
+       CLR  @FLAGNR           CLEAR READ SEC 0 FLAG AND READ BAK FLAG
+       MOVB @H05,@RETRY       CLEAR FORCED READ SECTOR 0 AND 5 TO RETRY
+*
+       MOV  R13,@SAVR13
+       MOV  R14,@SAVR14
+       MOV  R15,@SAVR15
+       MOV  R12,R9
+       LI   R12,>1EFE
+       STCR @SAVSPD,1
+       SBO  0
+       MOV  R9,R12
+       SBO  0                 turn disk on
+       RT                     RETURN
+*
+SETPM  CLR  R6                TRACK 0
+       CLR  R7                SECTOR 0
+       CLR  R5                SIDE 0
+       MOV  R11,R10           SAVE RETURN
+       BL   @TURNMO           TURN MOTOR ON
+       CLR  R8
+       MOVB @STPDRV(R2),R14   restore command & step rate
+       MOVB @CTLTYP,R13
+       JNE  NOTTI7
+       INV  R14
+NOTTI7 MOVB R14,@DCMDRG+8(R15)
+*
+SEKTK1
+RES204 MOVB R8,@TRACK1(R2)    ZERO TRACK LOCATION OF DRIVE
+       B    *R10
+*
+SEKTK  LI   R10,200           'TIME DELAY FOR STEP AFTER -WG TURNS OFF
+*
+SEKTK$ DEC  R10
+       JNE  SEKTK$
+*
+       MOV  R6,R8
+       SLA  R8,1
+*
+*      AI   R8,>0100          IF DRIVE IS ALIGNED TO INDUSTRY STD.
+*
+       MOVB @DSKTYP+2(R9),R10 DOUBLE STEP?
+       JLT  SEKTK2
+       MOV  R6,R8             NO.
+*
+SEKTK2 MOVB R8,R14
+       MOVB @CTLTYP,R13
+       JNE  NOTTI5
+       INV  R14
+NOTTI5 MOVB R14,@DDATRG+8(R15)  SAVE RETURN
+       CB   R14,@DTRKRG+8(R15)  test for fresh seek
+       JNE  ESC1
+       MOVB @H04,@WRTDEL      delay for 30ms on write
+ESC1   LI   R14,>1000         seek command
+       SOCB @STPDRV(R2),R14   step rate for this drive
+       MOVB R13,R13
+       JNE  NOTTI6
+       INV  R14
+NOTTI6 MOVB R14,@DCMDRG+8(R15)
+       MOV  R11,R10           save return
+H10    JMP  SEKTK1
+*
+DRTYP  CLR  R10
+       CB   @TRKDRV(R2),@H50  TEST SINGLE CRU BIT INSTRUCTION
+       JNE  DRTYP1
+       SETO R10
+DRTYP1 MOV  R10,R10           set flag
+       RT
+*
