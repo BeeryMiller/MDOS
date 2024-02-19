@@ -10,7 +10,7 @@
        REF  GETSTR,EMIT1
        REF  BATFLG              in batch mode (<>0) or not (0)
 *
-       COPY "\MDOS\HEAD\PAGENUMS"
+       COPY "HEAD\PAGENUMS"
 *
        RORG 0
 CLKMAX BYTE 9,5,9,5,9,2
@@ -118,7 +118,7 @@ IVDATE TEXT 'Invalid date'
 *
 DTIME  LI   R0,1
        JMP  DDATE1
- 
+
 *
 DDATE  LI   R0,4
 DDATE1 LI   R1,NEWSTR

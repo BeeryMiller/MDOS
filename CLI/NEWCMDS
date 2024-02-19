@@ -1,4 +1,5 @@
 * File: CLI\NEWCMDS
+*            |--COPY "TELNETS" near end of file
 *
 *  01.30.94 Code added for DISK1 <ON/OFF> to turn HDS1.DSK1. emulation on/off
 *           Changed VERIFY, TI to display status after entering command
@@ -33,7 +34,8 @@
 ; 5.08.2022 Reincorporated SCSMAP invalidation and used page equate P_SCAC
 ; 7.18.2022 Split TELNET command out as separate source file with COPY "TELNETS"
 ;           at end of file
-;
+;11.24.2023 Updated COPY statements (see telnets at end)
+;12. 3.2023 Fixed boundary issue with VIDEO command
 *
 *      DEF  TI
 *      DEF  WORK             12.06.2021
@@ -81,7 +83,7 @@
 *           ABOVE REF'S FOR MEMORY CALL
 
 *
-       COPY "\MDOS\HEAD\PAGENUMS"
+       COPY "HEAD\PAGENUMS"
 
 TIRWRT EQU  >001A        OFFSET FOR TIMODE WDS1 FLAG
 
@@ -141,10 +143,10 @@ COMMONMESG
 VIDFLG DATA 0            0=slow(default) 1=FAST
 VIDF12 DATA 0
 VIDA1  TEXT 'Video '
-       BYTE 0
-VIDA1S TEXT 'SLOW'
-CRLF   BYTE 10,13,0
-VIDA1F TEXT 'FAST'
+       BYTE 0,0
+VIDA1S TEXT 'SLOW'       ;must be on even boundary
+CRLF   BYTE 10,13,0,0
+VIDA1F TEXT 'FAST'       ;also must be on even boundary
        BYTE 10,13,0
 
 VIDOFF MOV R11,R10
@@ -938,7 +940,6 @@ ANSI   DATA 13           ANSI xop number
 *HEXDEC TEXT '0123456789ABCDEF'
 *SIXTN DATA 16
 
-       COPY "\MDOS\CLI\TELNETS"
-
+       COPY "CLI\TELNETS"
        END
 

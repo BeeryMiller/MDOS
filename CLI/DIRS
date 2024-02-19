@@ -3,7 +3,8 @@
 *
 ;12.27.2020 - Added TIPEXC and warning regarding >127 files
 ;03.27.2022 - Added flag when TIPI Directory exceeds 114 directories
-
+;11.24.2023 - Updated COPY statements (see end of file)
+;
        REF  TIPFLG,TIPEXC     ;12.19.2020, 12.27.2020
        REF  SUBFLG            ;03.27.2022, flag for exceeding TIPI directories
 
@@ -845,7 +846,7 @@ NINE   DATA 9
 WIDEOP DATA 0
 PAUZOP DATA 0
 *
-       COPY "\MDOS\CLI\CATMAPS"
+       COPY "CLI\CATMAPS"
 *
        END
 *

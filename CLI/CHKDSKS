@@ -430,7 +430,7 @@ SIZ50  TEXT ' bytes of total memory'
 SIZ60  TEXT ' bytes free'
        BYTE >0D,>0A,0
 *
-       COPY "\MDOS\CLI\CATMAPS"
+       COPY "CLI\CATMAPS"
 *
        LIST
 *

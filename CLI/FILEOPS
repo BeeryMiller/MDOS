@@ -1,3 +1,6 @@
+; FILEOPS
+;11.24.2023 Updated COPY statements (see also end)
+
        REF  EMIT1
        REF  SETCAT,RELCAT,GETCAT,VOLON
        REF  NAMBUF
@@ -9,7 +12,7 @@
        DEF  RENAME,ATTRIB,ERASE
        DEF  MKDIR,RMDIR
        REF  CSFLG                  added, 24 feb 93, jj - for case sensitivity
-       COPY "\MDOS\HEAD\PAGENUMS"  added, 24 feb 93, jj - to resolve P_MEM
+       COPY "HEAD\PAGENUMS"  added, 24 feb 93, jj - to resolve P_MEM
 *
 MKDIR  MOVB @MKDIRO,@PABR
        JMP  COMDIR            jump to common code for rmdir,mkdir
@@ -464,7 +467,7 @@ DIRM2  TEXT 'Not enough space for directory'
 DIRM3  TEXT 'No such directory'
        BYTE >0D,>0A,0
 *
-       COPY "\MDOS\CLI\CATMAPS"
+       COPY "CLI\CATMAPS"
 *
        END
 *

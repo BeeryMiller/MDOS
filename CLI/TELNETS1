@@ -14,7 +14,7 @@
 * 11.01.2023  Save/restore calling video mode. implement 25/26 line mode.
 *             Changed order of operation to test URL before flipping modes,
 *             and allow user to see the error messages
-* 11.25.2023  Asked BM about IACMSG and GRABB routine changes via AA
+*
 ***********************************************
 
 ANSITEXT  DATA 0         ANSI TEXT FLAG
@@ -40,32 +40,36 @@ TELNET MOV  R11,@TELNETRTN
        LI   R6,NOTIPI    display error
        B    @ABORTMSG
 
+
 TELNET2
        MOV  R1,R0        RECOVER
        CLR  @ANSIDRIVE   ;no driver
        CLR  R6
        CLR  @ANSIFLAG    ;<>0 ansi driver enabled. Seems we have dupe
        CLR  @ANSITEXT    ;<>0 text mode, 0=graphics
+TELNET3
 
-       LI   R2,URL1      see CLI\CMDSTKS
+TELNET1
+       LI   R2,URL1
        LI   R3,>2020
-       LI   R4,40        max 80 bytes!
-CLRURL MOV  R3,*R2+      clear the URL
-       DEC  R4
-       JNE  CLRURL
+       LI   R4,40
 
-* Lets get connection URL from command line via R0
+OPENNT1
+       MOV  R3,*R2+
+       DEC  R4
+       JNE  OPENNT1
+
+* Lets get connection URL
        LI   R2,URL1
        LI   R4,80
 OPENNT2
        DEC  R4
-       JEQ  OPENNT3      *WRONG: this is skipping driver/etc test
-
-       MOVB *R0+,R3      test this byte
+       JEQ  OPENNT3
+       MOVB *R0+,R3
 
        INC  R6           Length of URL
 
-       CB   R3,@SPACE    space/cr/lf/nul don't add to url
+       CB   R3,@SPACE
        JEQ  OPENNT2B
        CB   R3,@CRLF+0  ;cr
        JEQ  OPENNT2
@@ -76,7 +80,7 @@ OPENNT2
        CB   R3,@NUL
        JEQ  OPENNT2B
 
-       MOVB R3,*R2+      add to url, get next byte
+       MOVB R3,*R2+
        JMP  OPENNT2
 
 SLASH  BYTE '/'
@@ -86,16 +90,16 @@ SLASHG BYTE 'G'
 
 OPENNT2B
        DEC  R6           Subtract space character from length
-       MOVB *R0+,R1   ISSUE: term string with space (could be LF/NUL!)
+       MOVB *R0+,R1      terminate string with space
 
-       CB   R1,@SPACE    if the next char was a space,assume done
-       JEQ  OPENNT3      no need to test for /t or /g
+       CB   R1,@SPACE
+       JEQ  OPENNT3
 
-       CB   R1,@SLASH    if this next char isn't "/" then again, no need
-       JNE  OPENNT3      to test
+       CB   R1,@SLASH
+       JNE  OPENNT3
 
-       MOVB *R0+,R1      get the option
-       ANDI R1,>DF00     7.2.2019 make upper case
+       MOVB *R0+,R1
+       ANDI R1,>DF00     7.2.2019
 
        CB   R1,@SLASHG   ANSI GRAPHICS MODE '/G'?
        JNE  OPENNT3C     no, test for /T
@@ -125,21 +129,20 @@ OPENNT3B
        LI   R6,ANSINOTINSTALLED
        B    @ABORTNODRIVERNOTIPI  ;@ABORT
 
-
-;-----------------------------------------------------------
+;
 ; Test the URL for connection before changing video mode/etc.
 ;
 TRYTOCONNECT
 OPENNT3
 OPENNT4
-       LI   R0,5              CLOSE ANY OPEN CONNECTIONS
-       MOVB @TELNETPORT,R1
+       LI   R0,5                             CLOSE ANY OPEN CONNECTIONS
+       MOVB @TELNETPORT,R1    ;this does not seem to work.
        XOP  @TIPI,0
 
        LI   R0,2                             Open URL
        LI   R1,URL1                          URL
-       MOV  R6,R2                            Length of URL
        MOVB @TELNETPORT,R3
+       MOV  R6,R2                            Lenth of URL
        XOP  @TIPI,0
 
        MOV  R1,R1
@@ -154,7 +157,7 @@ OPENNT4
 ;                        and prime the port for the ansi interpreter
 FOUNDHOST
        ABS  @ANSIDRIVE        ;driver?
-       JEQ  TESTKEY           ;no. skip setup. Use current mode for ttyout
+       JEQ  TESTKEY           ;no. skip setup. Use current mode
 
          BLWP @VIDMODGET      save the video mode/color parameters for return
 
@@ -334,32 +337,24 @@ IACGRAB
 ;;     JEQ  IACGRABA          ;login screen. We already consumed this during
 ;;                            ; the >FF test in above code, 2 chars remain
 ;;
+       MOVB *R1+,@TEMPREG     2nd
+       DEC  R6
+       JEQ  IACGRAB1
 
-; 12.2.2023, First byte was consumed by >FF. We need to test R6 FIRST!
+       MOVB *R1+,@IACGRABMSG+2   3rd
+       DEC  R6
 
-       DEC  R6           any left?
-       JEQ  IACGRABA     no. We need to get 2 more bytes.
-
-       MOVB *R1+,@TEMPREG     get 2nd byte
-       DEC  R6                any more in buffer?
-       JEQ  IACGRAB1          no. Go wait for third byte
-
-       MOVB *R1+,@IACGRABMSG+2  Yes, 3rd was in buffer. Get it.
-       DEC  R6                  Adjust counter. We will retest it later.
-
-       MOV  R6,@IACGRABR6     ;save remaining chars in buffer
+       MOV  R6,@IACGRABR6
        MOV  R1,@IACGRABR1     ;save current buffer location
-       JMP  IACSENDREPLY
+       JMP  IACGRABB
 
-;Get 2nd of 3 bytes
 IACGRABA
        LI   R0,3
        MOVB @TELNETPORT,R1    wait for next char in R1
        XOP  @TIPI,0
        MOV  R0,R0
-       JEQ  IACGRABA     ;warning: if disconnect, we never exit
+       JEQ  IACGRABA
 
-;Get 3rd of 3 bytes
 IACGRAB1
        LI   R0,3
        MOVB @TELNETPORT,R1
@@ -373,29 +368,22 @@ IACGRAB1
        CLR  R1              ;why?
        MOV  R6,@IACGRABR6   ;ok
 
-IACSENDREPLY
 IACGRABB
-       LI   R0,>13       ;11.26.2023, send all at once
-       MOVB @TELNETPORT,@IACGRABMSGPORT
-       LI   R1,IACGRABMSGWRT
-       LI   R2,3
+       LI   R0,4
+       CLR  R1
+
+       LI   R3,IACGRABMSG     ;>FF
+       MOVB *R3+,R1
+       MOVB @TELNETPORT,R2
        XOP  @TIPI,0
 
-;      LI   R0,4
-;      CLR  R1
-;
-;      LI   R3,IACGRABMSG     ;>FF
-;      MOVB *R3+,R1
-;      MOVB @TELNETPORT,R2
-;      XOP  @TIPI,0
-;
-;      MOVB *R3+,R1           ;>FC
-;      MOVB @TELNETPORT,R2
-;      XOP  @TIPI,0
-;
-;      MOVB *R3+,R1           ;why are we echoing IACGRABMSG+2 to host?
-;      MOVB @TELNETPORT,R2    ;we populate it above. SHOULD BE >00  ??
-;      XOP  @TIPI,0
+       MOVB *R3+,R1           ;>FC
+       MOVB @TELNETPORT,R2
+       XOP  @TIPI,0
+
+       MOVB *R3+,R1           ;why are we echoing IACGRABMSG+2 to host?
+       MOVB @TELNETPORT,R2    ;we populate it above. SHOULD BE >00  ??
+       XOP  @TIPI,0
 
        MOV  @IACGRABR1,R1
        MOV  @IACGRABR6,R6
@@ -415,8 +403,8 @@ VIDMODWS  BSS >20        ;for now
 VIDMODGET DATA VIDMODWS,$+2
        LI   R0,1
        XOP  @VID,0
-;;     MOV  R7,@FCOLOR   save fore/back color
-;;     MOV  R6,@BORDER
+       MOV  R7,@FCOLOR   save fore/back color
+       MOV  R6,@BORDER
        RTWP
 
 ANSITABLE1                  ;test table for special output; ANSI XOP 2nd byte
@@ -436,56 +424,44 @@ TELNETPORT  BYTE >A4     CLIENT TELNET HANDLE/PORT
             EVEN
 CHARSAVE    TEXT ' _'
 
-;
-; keep following 3 items together for IAC
-;
-IACGRABMSGWRT  BYTE >22   write
-IACGRABMSGPORT BYTE 0     set before write
-IACGRABMSG  DATA >FFFC,>0000  ;common response to all IAC requests
+
+IACGRABMSG
+       DATA >FFFC,>0000  ;common response to all IAC requests
 
 TIPIRECEIVEMSG DATA 0
 
 ; Reset screen and abort
 ; R6 holds message to display
 ABORT
+       LI   R0,>0C       ;border
+       MOV  @BORDER,R1
+;;     MOVB @BCOLOR,R1
+;;     SRL  R1,8
+       XOP  @VIDEO,0
+
        LI   R6,CRLF      ;for message @abort
 
        LI   R0,5         ;close sockets
        MOVB @TELNETPORT,R1  ;need to indicate socket 10.28.2023
        XOP  @TIPI,0
 
-; *** TRY AGAIN 11.26.2023 for HW connect issue
-;      AI   R1,>0100     ;increment port TEST ** did not work *******
+;;;    AI   R1,>0100     ;increment port TEST ** did not work *******
 
        ABS  @ANSIDRIVE   ;ansi mode?         10-29
        JEQ  ABORTMSG     ;no, skip video reset
 
 ABVID  CLR  R0
-       MOV  @VIDMODWS,R1 ;10-29, restore caller's video mode
+       MOV  @VIDMODWS,R1 ;10-29, restore previous mode
 ;;     LI   R1,>0001     ;we should restore previous video setting here
-       XOP  @VIDEO,0
+       XOP  @VIDEO,0     ;so we get previous colors, etc.
 
-;default will be used. Set mode doesn't take parameters
-;  There is a problem with getvideoparms that seems related to using the
-;  video xops within the driver versus a user task.
-;  For now, enforce default white|blue
+;default will be used, we'd have to clear screen to 'fix'
+;since the video mode doesn't take parameters. :(
 ;
        LI   R0,>29
        MOV  @FCOLOR,R1   ;fore|background color for text
        XOP  @VIDEO,0
 
-;11.26.2023
-*      MOV  @VIDMODWS,R1 ;MDOS XOP bug. Border resets foreground to 0
-*      CI   R1,10        ;in text modes, possibly others.
-*      JEQ  ABORTMSG     ;so we skip border for 2/10.
-*      CI   R1,2
-*      JLE  ABORTMSG
-*
-*      LI   R0,>0C       ;border
-*      MOV  @BORDER,R1
-*;;     MOVB @BCOLOR,R1
-*;;     SRL  R1,8
-*      XOP  @VIDEO,0
 
 ABORTMSG                 ;error return, before ansi interp does screen setting
 ABORTNODRIVERNOTIPI

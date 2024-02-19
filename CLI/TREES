@@ -1,3 +1,5 @@
+* File: TREES
+*11.24.2023 Updated COPY statement (end)
 *
 * TREE command for MDOS       -pc 11/26/88
 *
@@ -410,7 +412,7 @@ SUBREC DATA 0
 SBDIRS DATA 0,0,0,0,0,0,0,0,0,0
        DATA 0,0,0,0,0,0,0,0,0,0
 *
-       COPY "\MDOS\CLI\CATMAPS"
+       COPY "CLI\CATMAPS"
 *
        END
 *

@@ -1,0 +1,574 @@
+* 7/7/96    TAT, Failed sectors caused routine to break, added coding to
+*           eliminate the bugs!
+*
+       UNL
+       DEF  DSKCOM
+       REF  EMIT1,GETSTR
+       REF  CISNIL
+*
+* COMPARE a disk:
+*      get source name
+*      get dest   name
+*      kill winchester access for now
+*
+*      get memory size
+*      claim 80% memory
+*      calc number of sectors it will hold
+*      read sector zero from each drive
+*      if dest not compatible with source: abort compare
+*        read lots, source    (bufsiz/2)     va=1 0000
+*        read lots, dest      (bufsiz/2)     va=1 0000 + bufsiz/2
+*        compare lots
+*      until done
+*      free memory
+*
+*
+DSKCOM MOV  R11,@COMRET
+       MOV  R0,R11            save string pointer
+*
+       MOV  R11,R1            get pointer to option buffer
+       LI   R2,P1LEN
+       CLR  R3
+       MOVB @MAXLEN,*R2       to point to string rather than length byte @@
+       LI   R0,8              parse opcode
+       XOP  @NINE,0
+       JEQ  GETDST
+       JMP  ERR1B
+*
+ERRM1  TEXT 'Insufficient memory'
+       BYTE >0D,>0A,0
+ERRM2  TEXT 'Device error'
+       BYTE >0D,>0A,0
+ERRM3  TEXT 'Not a diskette device'
+       BYTE >0D,>0A,0
+*
+ERR1A  LI   R1,ERRM1          not enough memory
+       JMP  ERR1Z
+*
+ERR1B  LI   R1,ERRM2          device error
+       JMP  ERR1Z
+*
+ERR1C  LI   R1,ERRM3          not diskette device
+*
+ERR1Z  BL   @MESG
+       B    @ERROR1
+*
+GETDST CB   *R0,@NIL
+       JEQ  GETD20
+       CB   *R0,@SLASH
+       JEQ  GETD20
+*
+GETD10 INC  R0                skip over delimiter
+       CB   *R0,@SPACE
+       JEQ  GETD10            skip all intervening spaces
+*
+GETD20 MOV  R0,R1
+       LI   R0,8              parse opcode
+       LI   R2,P2LEN
+       CLR  R3
+       MOVB @MAXLEN,*R2
+       XOP  @NINE,0           get the destination name
+       JNE  ERR1B
+*
+       MOVB @H05,@P1LEN       correct drive name
+       MOVB @H05,@P2LEN       correct drive name
+*
+       LI   R2,DSKNAM         compare for diskette access
+       LI   R3,P1NAM          on both names
+       LI   R4,P2NAM
+*
+       CB   *R2,*R3+          'd'
+       JNE  ERR1C
+       CB   *R2+,*R4+
+       JNE  ERR1C
+*
+       CB   *R2,*R3+          's'
+       JNE  ERR1C
+       CB   *R2+,*R4+
+       JNE  ERR1C
+*
+       CB   *R2,*R3+          'k'
+       JNE  ERR1C
+       CB   *R2+,*R4+
+       JNE  ERR1C
+*
+       CB   *R2,*R3           '.'
+       JEQ  ERR1C
+       CB   *R2+,*R4
+       JEQ  ERR1C
+*
+       CLR  @SINGLE
+       CB   *R3,*R4
+       JNE  DRIV00
+       SETO @SINGLE
+*
+DRIV00 CLR  R0
+       XOP  @SEVEN,0          get number of free pages in system
+       MOV  R0,R0
+       JNE  ERR1A
+*
+       MOV  R1,R1
+       JEQ  ERR1A             number of free pages in system too small
+*
+       CI   R1,4
+       JL   CLAIM
+*
+       SLA  R1,2
+       DIV  @FIVE,R0
+       MOV  R0,R1             use 80% of free pages
+*
+CLAIM  MOV  R1,@PAGES
+       LI   R0,1
+       LI   R2,8
+       CLR  R3
+       XOP  @SEVEN,0          claim pages
+       MOV  R0,R0
+       JEQ  AGAIN
+       B    @ERR2A
+*
+AGAIN  LI   R0,3
+       LI   R1,8
+       LI   R2,6
+       XOP  @SEVEN,0          map >1 0000    @ >C000
+       MOV  R0,R0
+       JNE  ERR2A
+*
+       MOV  @PAGES,R1
+       SLA  R1,4              convert to (number of sectors it can hold) / 2
+       MOV  R1,@BUFSIZ
+*
+       LI   R1,M1
+       BL   @MESG
+       LI   R1,PAB1+16
+       LI   R2,4
+NO00   MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  NO00
+       LI   R1,CRLF
+       BL   @MESG
+       MOV  @SINGLE,R1
+       JEQ  INFO00
+*
+       BL   @ANYKEY
+*
+       LI   R0,PAB1
+       MOVB @REDSEC,*R0
+       MOV  @ONE,@PAB1+2      set high part of virtual address, clear error
+       MOV  @SECAD1,@PAB1+4
+       CLR  @PAB1+6           sector zero
+       MOV  @ONE,@PAB1+12     read one sector from source drive
+       XOP  @EIGHT,0
+       MOVB @PAB1+2,R1
+       JNE  ERR2B
+*
+INFO00 LI   R1,M2
+       BL   @MESG
+       LI   R1,PAB2+16
+       LI   R2,4
+NO01   MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  NO01
+       LI   R1,CRLF
+       BL   @MESG
+       BL   @ANYKEY
+*
+       MOV  @SINGLE,R1
+       JNE  INFO01            we already have sector zero of source disk
+*
+       LI   R0,PAB1
+       MOVB @REDSEC,*R0
+       MOV  @ONE,@PAB1+2      set high part of virtual address, clear error
+       MOV  @SECAD1,@PAB1+4
+       CLR  @PAB1+6           sector zero
+       MOV  @ONE,@PAB1+12     read one sector from source disk
+       XOP  @EIGHT,0
+       MOVB @PAB1+2,R1
+       JNE  ERR2B
+*
+INFO01 LI   R0,PAB2           get sector zero of destination disk
+       MOVB @REDSEC,*R0
+       MOV  @ONE,@PAB2+2      set high part of virtual address, clear error
+       MOV  @SECAD2,@PAB2+4
+       CLR  @PAB2+6           sector zero
+       MOV  @ONE,@PAB2+12     read one sector
+       XOP  @EIGHT,0
+       MOVB @PAB2+2,R1
+       JNE  ERR2B
+*
+       C    @SECT1+10,@SECT2+10
+       JEQ  INSIDE
+*
+       LI   R1,COMF1          Disks are different sizes, compare aborted
+ERR2Z  BL   @MESG
+       B    @ERROR2
+*
+ERR2A  LI   R1,ERRM1
+       JMP  ERR2Z
+ERR2B  LI   R1,ERRM2
+       JMP  ERR2Z
+*
+* read lots, read more, until all done!
+*
+INSIDE LI   R1,COMF2          comparing
+       BL   @MESG
+       MOV  @SECT1+10,R8
+       MOV  R8,@DSKSIZ
+       BL   @CISNIL           #
+       LI   R1,COMF3
+       BL   @MESG             sectors. <cr><lf>
+*
+       CLR  @COMFLG
+       MOV  @ONE,@PAB1+6      start sector for first pass
+       MOV  @ONE,@PAB2+6
+*
+       LI   R2,1              calc buffer address for dest disk
+       CLR  R3
+       MOV  @BUFSIZ,R4
+       SWPB R4
+       AB   R4,R3
+       JNC  SIZE00
+       INC  R4
+SIZE00 ANDI R4,>00FF
+       A    R4,R2
+       MOV  R2,@BUFH          high part of address
+       MOV  R3,@BUFL          low part of address
+*
+READ00 MOV  @PAB1+6,@COMSEC   1st sector compared during this pass
+*
+       MOV  @SINGLE,R1
+       JEQ  READ01
+*
+       LI   R1,M1             insert source disk
+       BL   @MESG
+       LI   R1,PAB1+16
+       LI   R2,4
+RED100 MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  RED100
+       LI   R1,CRLF
+       BL   @MESG
+       BL   @ANYKEY
+*
+READ01 MOVB @REDSEC,@PAB1
+       MOV  @ONE,@PAB1+2      high part of address
+       CLR  @PAB1+4           low part of address
+       MOV  @DSKSIZ,R2        total sectors
+       S    @PAB1+6,R2        determine remaining sector count
+       C    R2,@BUFSIZ
+       JL   READ02            less left than will fill buffer
+       MOV  @BUFSIZ,R2
+READ02 MOV  R2,@PAB1+12
+       MOV  R2,@PAB2+12       count of sectors in buffer this pass
+       MOV  R2,@COMCNT
+*
+READ03 LI   R1,READIN
+       BL   @MESG
+       MOV  @PAB1+6,R8
+       BL   @CISNIL
+       LI   R1,MESTO
+       BL   @MESG
+       MOV  @PAB1+6,R8
+       DEC  R8
+       A    @PAB1+12,R8
+       BL   @CISNIL
+       LI   R1,CRLF
+       BL   @MESG
+*
+       LI   R0,PAB1
+       XOP  @EIGHT,0
+       MOVB @PAB1+2,R1
+       JEQ  DEST00
+*
+* process error on source diskette
+*
+       LI   R1,READR1
+       BL   @MESG
+       MOV  @PAB1+6,R8
+       BL   @CISNIL
+       LI   R1,CRLF
+       BL   @MESG
+*
+       INC  @PAB1+6
+*
+       MOV  @PAB1+12,R1
+       JEQ  DEST00            all done with read
+*
+       A    @H0100,@PAB1+4    7.7.96
+       JNC  TAT1
+*      JNC  READ03
+*
+       AB   @H01,@PAB1+3
+
+TAT1   DEC  @PAB1+12          7.7.96
+       JEQ  DEST00
+       JMP  READ03
+*
+* now to read sector from destination disk
+*
+DEST00 MOV  @SINGLE,R1
+       JEQ  DEST01
+*
+       LI   R1,M2             insert target disk
+       BL   @MESG
+       LI   R1,PAB2+16
+       LI   R2,4
+WRT100 MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  WRT100
+       LI   R1,CRLF
+       BL   @MESG
+       BL   @ANYKEY
+*
+DEST01 MOVB @REDSEC,@PAB2
+       MOV  @BUFH,@PAB2+2     high part of address
+       MOV  @BUFL,@PAB2+4     low part of address
+*
+DEST03 LI   R0,PAB2
+       XOP  @EIGHT,0
+       MOVB @PAB2+2,R1
+       JEQ  LOOP00            read was ok
+*
+* process an error on the read
+*
+       LI   R1,READR2
+       BL   @MESG
+       MOV  @PAB2+6,R8
+       BL   @CISNIL
+       LI   R1,CRLF
+       BL   @MESG
+*
+       INC  @PAB2+6
+*
+       MOV  @PAB2+12,R1
+       JEQ  LOOP00            all done with write
+*
+       A    @H0100,@PAB2+4
+       JNC  TAT2              7.7.96
+*      JNC  DEST03
+*
+       AB   @H01,@PAB2+3
+TAT2   DEC  @PAB2+12          7.7.96
+       JEQ  LOOP00
+       JMP  DEST03
+*
+*      compare data, report errors
+*
+LOOP00 LI   R4,8              source sector page number
+       CLR  R5                source sector offset
+       MOV  @BUFH,R6
+       MOV  @BUFL,R7          dest   sector address
+*
+       MOVB R7,R6
+       ANDI R6,>E01F
+       SRC  R6,13             dest sector page number
+       ANDI R7,>1FFF          dest sector offset
+*
+       MOV  @COMSEC,R8        start sector for this pass
+       MOV  @COMCNT,R9        number of sectors to compare this pass
+*
+COMP00 LI   R0,3              map source in
+       MOV  R4,R1
+       LI   R2,6              to >c000 7/31/88
+       XOP  @SEVEN,0
+*
+       LI   R0,3              map dest in
+       MOV  R6,R1
+       LI   R2,5
+       XOP  @SEVEN,0
+*
+       MOV  R5,R1
+       AI   R1,>C000          7/31/88
+       MOV  R7,R2
+       AI   R2,>A000
+*
+       LI   R3,>0100
+COMP01 C    *R1+,*R2+
+       JNE  COMP02
+       DECT R3
+       JNE  COMP01
+       JMP  COMP03
+*
+* compare fail, print message with sector number
+*
+COMP02 SETO @COMFLG
+       LI   R1,FAIL1
+       BL   @MESG
+*
+       MOV  R4,@SAVR4
+       MOV  R5,@SAVR5
+       MOV  R6,@SAVR6
+       MOV  R7,@SAVR7
+       MOV  R8,@SAVR8
+       MOV  R9,@SAVR9
+       BL   @CISNIL
+       MOV  @SAVR4,R4
+       MOV  @SAVR5,R5
+       MOV  @SAVR6,R6
+       MOV  @SAVR7,R7
+       MOV  @SAVR8,R8
+       MOV  @SAVR9,R9
+*
+       LI   R1,CRLF
+       BL   @MESG
+*
+* compare next sector
+*
+COMP03 AI   R5,256
+       ANDI R5,>1FFF
+       JNE  COMP04
+       INC  R4
+COMP04 AI   R7,256
+       ANDI R7,>1FFF
+       JNE  COMP05
+       INC  R6
+COMP05 INC  R8                next sector number
+       DEC  R9
+       JNE  COMP00            more to compare this pass
+*
+LOOP10 C    @PAB1+6,@DSKSIZ
+       JHE  LOOP01
+       B    @READ00
+*
+LOOP01 MOV  @COMFLG,R1
+       JNE  LOOP20
+*
+       LI   R1,COMS1          "COMPARE OK"
+       BL   @MESG
+*
+LOOP20 LI   R1,MORMSG         "Compare another diskette? (Y/N)"
+       BL   @MESG
+*
+LOOP02 LI   R0,4
+       XOP  @FIVE,0
+       ANDI R1,>DF00
+       CI   R1,'N'*256
+       JEQ  LOOP03
+       CI   R1,'Y'*256
+       JNE  LOOP02
+*
+LOOP03 MOV  R1,R2
+       MOV  R1,R0
+       BLWP @EMIT1
+       LI   R1,CRLF
+       BL   @MESG
+       CI   R2,'N'*256
+       JEQ  ERROR2
+       B    @AGAIN
+*
+ERROR2 LI   R0,2              time to release our extra memory
+       MOV  @PAGES,R1
+       LI   R2,8
+       XOP  @SEVEN,0
+*
+ERROR1 MOV  @COMRET,R11
+       RT
+*
+ANYKEY MOV  R11,R10
+       LI   R1,M3
+       BL   @MESG
+*
+AK00   LI   R0,4
+       XOP  @FIVE,0
+       JNE  AK00
+       B    *R10
+*
+MESG   MOVB *R1+,R0
+       JEQ  MESGR
+       BLWP @EMIT1
+       JMP  MESG
+MESGR  RT
+*
+COMF1  TEXT 'Different size disks, compare aborted'
+       BYTE >0D,>0A,0
+COMF2  TEXT 'Comparing '
+       BYTE 0
+COMF3  TEXT 'sectors'
+       BYTE >0D,>0A,0
+*
+COMS1  TEXT 'Compare OK'
+       BYTE >0D,>0A,0
+MORMSG TEXT 'Compare another diskette (Y/N)? '
+       BYTE 0
+*
+FAIL1  TEXT 'Compare fail at sector '
+       BYTE 0
+*
+M1     TEXT 'Insert SOURCE diskette into '
+       BYTE 0
+M2     TEXT 'Insert TARGET diskette into '
+       BYTE 0
+M3     TEXT 'Press any key when ready...'
+CRLF   BYTE >0D,>0A,0
+*
+READIN TEXT 'Comparing sectors '
+       BYTE 0
+MESTO  TEXT 'to '
+       BYTE 0
+*
+READR1 TEXT 'SOURCE error, sector #'
+       BYTE 0
+READR2 TEXT 'TARGET error, sector #'
+       BYTE 0
+*
+NIL    BYTE >00
+SLASH  BYTE '/'
+SPACE  BYTE ' '
+H01    BYTE >01
+H05    BYTE >05
+H20    BYTE ' '
+MAXLEN BYTE 40
+DSKNAM TEXT 'DSK.'
+*
+REDSEC BYTE >0A
+WRTSEC BYTE >0B
+FRMDSK BYTE >0E
+SECAD1 DATA SECT1->C000
+SECAD2 DATA SECT2->C000
+SECADR DATA SECTS->C000
+COMRET DATA 0
+COMFLG DATA 0                 flag for any compare fails
+COMSEC DATA 0
+COMCNT DATA 0
+DSKSIZ DATA 0
+PAGES  DATA 0
+BUFSIZ DATA 0
+SINGLE DATA 0
+ONE    DATA 1
+FIVE   DATA 5
+SEVEN  DATA 7
+EIGHT  DATA 8
+NINE   DATA 9
+H0100  DATA >0100
+BUFH   DATA 0
+BUFL   DATA 0
+SAVR4  DATA 0
+SAVR5  DATA 0
+SAVR6  DATA 0
+SAVR7  DATA 0
+SAVR8  DATA 0
+SAVR9  DATA 0
+*
+PAB1   DATA >0000,>0000,SECT1,>0000
+       DATA >0000,>0000,>0001
+       BYTE 0
+P1LEN  BYTE 0
+P1NAM  TEXT '0123456789 123456789 123456789 123456789'
+*
+PAB2   DATA >0000,>0000,SECT2,>0000
+       DATA >0000,>0000,>0001
+       BYTE 0
+P2LEN  BYTE 0
+P2NAM  TEXT '0123456789 123456789 123456789 123456789'
+*
+       DORG >C000
+SECT1  BSS  256
+SECT2  BSS  256
+SECTS  EQU  $
+*
+       LIST
+       END
+*

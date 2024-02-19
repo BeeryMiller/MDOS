@@ -22,6 +22,8 @@
 *
 * 4.16.2022 Moved CLR @SUBFLG to clear flag after set, for all devices
 * 4.16.2022 Moved CLR @DIRFLG to clear flag after set, for all devices
+;11.24.2023 Updated COPY statements (see also end of file)
+;
 
        UNL
 *
@@ -39,7 +41,7 @@
        REF  BREAK
 
 ;      REF  P_DSR2       ;1.23.2021, added for TIPI DSKx remap integration
-       COPY "\MDOS\HEAD\PAGENUMS"   ;can't REF, must include|add to !makefile
+       COPY "HEAD\PAGENUMS"   ;can't REF, must include|add to !makefile
        REF  DRVMAP       ;tipi
 *
 SETCAT LI   R0,1              opcode
@@ -1341,7 +1343,7 @@ SAVR1  DATA 0
 SAVR2  DATA 0
 SAVR3  DATA 0
 *
-       COPY "\MDOS\CLI\CATMAPS"
+       COPY "CLI\CATMAPS"
 *
        LIST
        END

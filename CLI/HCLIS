@@ -35,12 +35,12 @@
 ; 7.25.2022 BWM, added CYA mapping for AUTOEXEC, label CYAMP9, CYAMPA, CYAMPB
 ;                added CYA mappingfor default colors, CYAMPD
 ; 1.03.2023 BWM, added pagenumber/vector or last task PAB loaded
-;
+;11.24.2023 Updated COPY statements
 ;
 ; @@ need to make _all_ dynamic variables reside in 1st 8k page of cli
 ;
-       COPY "\MDOS\CLI\HVERSIONS"
-       COPY "\MDOS\HEAD\PAGENUMS"
+       COPY "CLI\HVERSIONS"
+       COPY "HEAD\PAGENUMS"
 *
        DEF  CYAMP9,CYAMPA,CYAMPB,CYAMPD      7.25.2022
 

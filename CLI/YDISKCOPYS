@@ -1,0 +1,557 @@
+       UNL
+       DEF  DSKCOP
+       REF  EMIT1,GETSTR
+       REF  CISNIL,CISSPC
+*
+* COPY a disk:
+*      get source name
+*      get dest   name
+*      kill winchester access for now
+*
+*      get memory size
+*      claim 80% memory
+*      calc number of sectors it will hold
+*      read sector zero from each drive
+*      if dest not compatible with source: format disk
+*        read lots, source
+*        write lots, dest
+*      until done
+*      free memory
+*
+*
+DSKCOP MOV  R11,@COPRET
+       MOV  R0,R11            save string pointer
+*
+       MOV  R11,R1            get pointer to option buffer
+       LI   R2,P1LEN
+       CLR  R3
+       MOVB @MAXLEN,*R2       to point to string rather than length byte @@
+       LI   R0,8              parse opcode
+       XOP  @NINE,0
+       JEQ  GETDST
+       JMP  ERR1B
+*
+ERRM1  TEXT 'Insufficient memory'
+       BYTE >0D,>0A,0
+ERRM2  TEXT 'Device error'
+       BYTE >0D,>0A,0
+ERRM3  TEXT 'Not a diskette device'
+       BYTE >0D,>0A,0
+*
+ERR1A  LI   R1,ERRM1          not enough memory
+       JMP  ERR1Z
+*
+ERR1B  LI   R1,ERRM2          device error
+       JMP  ERR1Z
+*
+ERR1C  LI   R1,ERRM3          not a diskette device
+*
+ERR1Z  BL   @MESG
+       B    @ERROR1
+*
+GETDST CB   *R0,@NIL
+       JEQ  GETD20
+       CB   *R0,@SLASH
+       JEQ  GETD20
+*
+GETD10 INC  R0                skip over delimiter
+       CB   *R0,@SPACE
+       JEQ  GETD10            skip all intervening spaces
+*
+GETD20 MOV  R0,R1
+       LI   R0,8              parse opcode
+       LI   R2,P2LEN
+       CLR  R3
+       MOVB @MAXLEN,*R2
+       XOP  @NINE,0           get the destination name
+       JNE  ERR1B
+*
+       MOVB @H05,@P1LEN       correct drive name
+       MOVB @H05,@P2LEN       correct drive name
+*
+       LI   R2,DSKNAM         compare for diskette access
+       LI   R3,P1NAM          on both names
+       LI   R4,P2NAM
+*
+       CB   *R2,*R3+          'd'
+       JNE  ERR1C
+       CB   *R2+,*R4+
+       JNE  ERR1C
+*
+       CB   *R2,*R3+          's'
+       JNE  ERR1C
+       CB   *R2+,*R4+
+       JNE  ERR1C
+*
+       CB   *R2,*R3+          'k'
+       JNE  ERR1C
+       CB   *R2+,*R4+
+       JNE  ERR1C
+*
+       CB   *R2,*R3           '.'
+       JEQ  ERR1C
+       CB   *R2+,*R4
+       JEQ  ERR1C
+*
+       CLR  @SINGLE
+       CB   *R3,*R4
+       JNE  DRIV00
+       SETO @SINGLE
+*
+DRIV00 CLR  R0
+       XOP  @SEVEN,0          get number of free pages in system
+       MOV  R0,R0
+       JNE  ERR1A
+*
+       MOV  R1,R1
+       JEQ  ERR1A             number of free pages in system too small
+*
+       CI   R1,4
+       JL   CLAIM
+*
+       SLA  R1,2
+       DIV  @FIVE,R0
+       MOV  R0,R1             use 80% of free pages
+*
+CLAIM  MOV  R1,@PAGES
+       LI   R0,1
+       LI   R2,8
+       CLR  R3
+       XOP  @SEVEN,0          claim pages
+       MOV  R0,R0
+       JNE  ERRA2
+*
+       LI   R0,3
+       LI   R1,8
+       LI   R2,6
+       XOP  @SEVEN,0          map >1 0000    @ >c000
+       MOV  R0,R0
+       JEQ  MEMOK
+ERRA2  B    @ERR2A
+*
+MEMOK  MOV  @PAGES,R1
+       SLA  R1,5              convert to number of sectors it can hold
+       DECT R1
+       MOV  R1,@BUFSIZ
+*
+AGAIN  LI   R1,M1
+       BL   @MESG
+       LI   R1,PAB1+16
+       LI   R2,4
+NO00   MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  NO00
+       LI   R1,CRLF
+       BL   @MESG
+       MOV  @SINGLE,R1
+       JEQ  INFO00
+*
+       BL   @ANYKEY
+*
+       LI   R0,PAB1
+       MOVB @REDSEC,*R0
+       MOV  @ONE,@PAB1+2      set high part of virtual address, clear error
+       MOV  @SECAD1,@PAB1+4
+       CLR  @PAB1+6           sector zero
+       MOV  @ONE,@PAB1+12     read one sector
+       XOP  @EIGHT,0
+       MOVB @PAB1+2,R1
+       JNE  ERRB2
+*
+INFO00 LI   R1,M2
+       BL   @MESG
+       LI   R1,PAB2+16
+       LI   R2,4
+NO01   MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  NO01
+       LI   R1,CRLF
+       BL   @MESG
+       BL   @ANYKEY
+*
+       MOV  @SINGLE,R1
+       JNE  INFO01            we already have sector zero of source disk
+*
+       LI   R0,PAB1
+       MOVB @REDSEC,*R0
+       MOV  @ONE,@PAB1+2      set high part of virtual address, clear error
+       MOV  @SECAD1,@PAB1+4
+       CLR  @PAB1+6           sector zero
+       MOV  @ONE,@PAB1+12     read one sector
+       XOP  @EIGHT,0
+       MOVB @PAB1+2,R1
+       JEQ  INFO01
+ERRB2  B    @ERR2B
+*
+INFO01 LI   R0,PAB2           get sector zero of destination disk
+       MOVB @REDSEC,*R0
+       MOV  @ONE,@PAB2+2      set high part of virtual address, clear error
+       MOV  @SECAD2,@PAB2+4
+       CLR  @PAB2+6           sector zero
+       MOV  @ONE,@PAB2+12     read one sector
+       XOP  @EIGHT,0          ignore errors,since can be a blank disk
+       MOVB @PAB2+2,R1
+       JNE  FORMAT
+*
+       CB   @12+SECT1,@12+SECT2
+       JNE  FORMAT            incompatible densities
+*
+       CB   @17+SECT1,@17+SECT2
+       JNE  FORMAT            incompatible tracks/side
+*
+       C    @10+SECT1,@10+SECT2
+       JLE  SKIP00            skip format if compatible
+*
+FORMAT MOVB @FRMDSK,@PAB2
+       MOVB @SECT1+17,@PAB2+3 tracks/side
+       MOVB @H04,@PAB2+4
+       MOVB @H04,@PAB2+5
+       MOVB @H02,@PAB2+6
+       MOVB @H02,@PAB2+7
+       CB   @12+SECT1,@SIXTEN
+       JHE  FORM00            double density
+*
+       MOVB @H02,@PAB2+4      single density
+       MOVB @H02,@PAB2+5
+       MOVB @H01,@PAB2+6
+       C    @SECT1+10,@D720
+       JL   FORM01
+       JH   FORM02
+       CB   @SECT1+17,@D80
+       JEQ  FORM01
+       JMP  FORM02
+*
+FORM00 C    @SECT1+10,@D1440
+       JH   FORM02
+       C    @SECT1+10,@D1280
+       JL   FORM01
+       CB   @SECT1+17,@D80
+       JNE  FORM02
+*
+FORM01 MOVB @H01,@PAB2+7
+FORM02 LI   R1,FORMS1
+       BL   @MESG
+       LI   R0,PAB2
+       XOP  @EIGHT,0
+       MOVB @PAB2+2,R1
+       JNE  ERR2B
+*
+       LI   R0,PAB2
+       MOVB @WRTSEC,*R0
+       MOV  @ONE,@PAB2+2      set high part of virtual address, clear error
+       MOV  @SECAD1,@PAB2+4
+       CLR  @PAB2+6           sector zero
+       MOV  @ONE,@PAB2+12     write one sector to fresh diskette
+       XOP  @EIGHT,0
+       MOVB @PAB2+2,R1
+       JNE  ERR2B
+*
+       LI   R0,PAB2
+       MOVB @REDSEC,*R0
+       MOV  @ONE,@PAB2+2      set high part of virtual address, clear error
+       MOV  @SECAD1,@PAB2+4
+       CLR  @PAB2+6           sector zero
+       MOV  @ONE,@PAB2+12     read one sector from fresh disk to get parameters
+       XOP  @EIGHT,0
+       MOVB @PAB2+2,R1
+       JEQ  ARGH00
+ERR2B  ANDI R1,>E000
+       CI   R1,>2000          write protect error?
+       JNE  ERR2B1
+       B    @WRIT90
+*
+ERR2B1 LI   R1,ERRM2
+       JMP  ERR2Z
+*
+ERR2A  LI   R1,ERRM1
+*
+ERR2Z  BL   @MESG
+       B    @ERROR2
+*
+ARGH00 LI   R1,FORMS2
+       BL   @MESG
+*
+* format completed, now to copy info over to other diskette
+* read lots, write lots until all done!
+*
+* Jump here to SKIP Format
+*
+SKIP00 CLR  @PAB1+6           start sector for first pass
+       CLR  @PAB2+6
+*
+READ00 MOV  @SINGLE,R1        LOOPS Here if #sectors > buffer size
+       JEQ  READ01
+*
+       LI   R1,M1             @@Insert Source Diskettet
+       BL   @MESG
+       LI   R1,PAB1+16
+       LI   R2,4
+RED100 MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  RED100
+       LI   R1,CRLF
+       BL   @MESG
+       BL   @ANYKEY
+*
+READ01 MOVB @REDSEC,@PAB1
+       MOV  @ONE,@PAB1+2      high part of address
+       MOV  @SECADR,@PAB1+4   low part of address
+       MOV  @SECT1+10,R2      total sectors
+       S    @PAB1+6,R2        determine remaining sector count
+       C    R2,@BUFSIZ
+       JL   READ02            less left than will fill buffer
+       MOV  @BUFSIZ,R2
+READ02 MOV  R2,@PAB1+12
+       MOV  R2,@PAB2+12       count of sectors in buffer this pass
+*
+READ03 LI   R1,READIN         @@Reading sectors
+       BL   @MESG
+       MOV  @PAB1+6,R8        sector offset (first sector)
+       BL   @CISNIL
+       LI   R1,MESTO          @@to
+       BL   @MESG
+       MOV  @PAB1+6,R8        sector offset+sector count left
+       DEC  R8
+       A    @PAB1+12,R8
+       BL   @CISNIL
+       LI   R1,CRLF
+       BL   @MESG        show it
+*
+       LI   R0,PAB1
+       XOP  @EIGHT,0          Read 'em in!
+       MOVB @PAB1+2,R1        error?
+       JEQ  WRIT00            no - go write
+*
+* process error on source diskette
+*
+       LI   R1,READER         @@SOURCE ERROR, sector #
+       BL   @MESG
+       MOV  @PAB1+6,R8
+       BL   @CISNIL
+       LI   R1,CRLF
+       BL   @MESG
+*
+       INC  @PAB1+6           update sector offset
+*
+       MOV  @PAB1+12,R1       If zero, we've read all of our sectors
+       JEQ  WRIT00            all done with read
+
+       A    @H0100,@PAB1+4    But, if we had an error, XOP returns address of
+*      JNC  READ03            bad sector buffer.  So, let's point past it.
+       JNC  TAT1
+       AB   @H01,@PAB1+3      and read the rest if possible
+
+TAT1   DEC  @PAB1+12          7-7-96 POINT past errored sector
+       JEQ  WRIT00                   zero left?  go write
+       JMP  READ03                   not yet, keep reading
+
+
+
+*----------------------------------*
+* now to write some shit out...    *
+*----------------------------------*
+WRIT00 MOV  @SINGLE,R1   single disk>
+       JEQ  WRIT01       no
+*
+       LI   R1,M2        Yes, @@"Insert TARGET"
+       BL   @MESG
+       LI   R1,PAB2+16   with DSK.
+       LI   R2,4
+WRT100 MOVB *R1+,R0
+       BLWP @EMIT1
+       DEC  R2
+       JNE  WRT100
+       LI   R1,CRLF
+       BL   @MESG
+       BL   @ANYKEY           wait for keypress
+*
+WRIT01 MOVB @WRTSEC,@PAB2     opcode
+       MOV  @ONE,@PAB2+2      high part of address
+       MOV  @SECADR,@PAB2+4   low part of address
+*
+WRIT03 LI   R1,WRITIT
+       BL   @MESG
+       MOV  @PAB2+6,R8
+       BL   @CISNIL
+       LI   R1,MESTO
+       BL   @MESG
+       MOV  @PAB2+6,R8
+       DEC  R8
+       A    @PAB2+12,R8
+       BL   @CISNIL
+       LI   R1,CRLF
+       BL   @MESG
+*
+       LI   R0,PAB2
+       XOP  @EIGHT,0
+       MOVB @PAB2+2,R1
+       JEQ  LOOP00            write was ok
+*
+* process an error on the write
+*
+WRIT90 ANDI R1,>E000
+       CI   R1,>2000          write protect?
+       JNE  WRIT04
+       LI   R1,PROTER
+       BL   @MESG
+       B    @ERROR2
+*
+WRIT04 LI   R1,WRITER         ""TARGET ERROR, Sector #"
+       BL   @MESG
+       MOV  @PAB2+6,R8
+       BL   @CISNIL
+       LI   R1,CRLF
+       BL   @MESG
+*
+       INC  @PAB2+6           go past this sector
+*
+       MOV  @PAB2+12,R1
+       JEQ  LOOP00            all done with write
+*
+       A    @H0100,@PAB2+4
+*      JNC  WRIT03
+       JNC  TAT2
+*
+       AB   @H01,@PAB2+3
+TAT2   DEC  @PAB2+12          also move past bad sector!
+       JEQ  LOOP00            if that was last sector, finish writing
+       JMP  WRIT03            keep writing
+
+*
+*      check to see if we're done!
+*
+LOOP00 C    @PAB1+6,@SECT1+10
+       JHE  LOOP01
+       B    @READ00
+*
+LOOP01 LI   R1,COPYS1         "COPY COMPLETE"
+       BL   @MESG
+LOOP02 LI   R0,4
+       XOP  @FIVE,0
+       ANDI R1,>DF00
+       CI   R1,'N'*256
+       JEQ  LOOP03
+       CI   R1,'Y'*256
+       JNE  LOOP02
+*
+LOOP03 MOV  R1,R2
+       MOV  R1,R0
+       BLWP @EMIT1
+       LI   R1,CRLF
+       BL   @MESG
+       CI   R2,'N'*256
+       JEQ  ERROR2
+       B    @AGAIN
+*
+ERROR2 LI   R0,2              time to release our extra memory
+       MOV  @PAGES,R1
+       LI   R2,8
+       XOP  @SEVEN,0
+*
+ERROR1 MOV  @COPRET,R11
+       RT
+*
+ANYKEY MOV  R11,R10
+       LI   R1,M3
+       BL   @MESG
+*
+AK00   LI   R0,4
+       XOP  @FIVE,0
+       JNE  AK00
+       B    *R10
+*
+MESG   MOVB *R1+,R0
+       JEQ  MESGR
+       BLWP @EMIT1
+       JMP  MESG
+MESGR  RT
+*
+M1     TEXT 'Insert SOURCE diskette into '
+       BYTE 0
+M2     TEXT 'Insert TARGET diskette into '
+       BYTE 0
+M3     TEXT 'Press any key when ready...'
+CRLF   BYTE >0D,>0A,0
+*
+FORMS1 TEXT 'Formatting while copying...'
+       BYTE >0D,>0A,0
+FORMS2 TEXT 'Format complete.'
+       BYTE >0D,>0A,0
+*
+PROTER TEXT 'Write protected disk!'
+       BYTE >0D,>0A,0
+*
+COPYS1 TEXT 'Copy complete,'
+       BYTE >0D,>0A
+       TEXT 'Copy another diskette (Y/N)? '
+       BYTE 0
+*
+READIN TEXT 'Reading sectors '
+       BYTE 0
+WRITIT TEXT 'Writing sectors '
+       BYTE 0
+MESTO  TEXT 'to '
+       BYTE 0
+*
+READER TEXT 'SOURCE error, sector #'
+       BYTE 0
+WRITER TEXT 'TARGET error, sector #'
+       BYTE 0
+*
+NIL    BYTE >00
+SLASH  BYTE '/'
+SPACE  BYTE ' '
+H05    BYTE >05
+SIXTEN BYTE 16
+H20    BYTE ' '
+MAXLEN BYTE 40
+DSKNAM TEXT 'DSK.'
+*
+REDSEC BYTE >0A
+WRTSEC BYTE >0B
+FRMDSK BYTE >0E
+D80    BYTE 80
+H01    BYTE 1
+H02    BYTE 2
+H03    BYTE 3
+H04    BYTE 4
+SECAD1 DATA SECT1->C000
+SECAD2 DATA SECT2->C000
+SECADR DATA SECTS->C000
+COPRET DATA 0
+PAGES  DATA 0
+BUFSIZ DATA 0
+SINGLE DATA 0
+ONE    DATA 1
+FIVE   DATA 5
+SEVEN  DATA 7
+EIGHT  DATA 8
+NINE   DATA 9
+H0100  DATA >0100
+D720   DATA 720
+D1280  DATA 1280
+D1440  DATA 1440
+*
+PAB1   DATA >0000,>0000,SECT1,>0000
+       DATA >0000,>0000,>0001
+       BYTE 0
+P1LEN  BYTE 0
+P1NAM  TEXT '0123456789 123456789 123456789 123456789'
+*
+PAB2   DATA >0000,>0000,SECT2,>0000
+       DATA >0000,>0000,>0001
+       BYTE 0
+P2LEN  BYTE 0
+P2NAM  TEXT '0123456789 123456789 123456789 123456789'
+*
+       DORG >C000
+SECT1  BSS  256
+SECT2  BSS  256
+SECTS  EQU  $
+*
+       LIST
+       END
+*

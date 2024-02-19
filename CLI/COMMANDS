@@ -1,3 +1,11 @@
+; File: COMMANDS
+;
+;
+; 7.2.2023  Added folder existence check to "CD" command
+;           Commented some of the code while working in the file
+;7.16.2023  Fixed CD output. Retaining display of hardware path, for now.
+;           May change to only output on error and/or when "CD" is typed alone
+;
        REF  FREPTR,CURDRV,MAXDRV,ALIASA
        REF  PMTSTR,PATH#P,GPLPAR,ALIASP
        REF  DIRSTR
@@ -14,6 +22,10 @@
 *
 ************************************************************
 *
+; Check for drive letter within MAXDRV limit
+;      If found, R0 points to the alias pointer
+;      CURDRV pointer is updated via *R1, for caller usage
+;
 CHGDRV MOV  R1,R0
        LI   R1,CURDRV
 CHKDRV SETO @CHKFLG
@@ -24,7 +36,7 @@ CHKDRV SETO @CHKFLG
        JH   CHKOUT
        AI   R0,->4100
        SRL  R0,6
-       AI   R0,ALIASA
+       AI   R0,ALIASA    ; ^alias pointer table
        MOV  R0,*R1
        CLR  @CHKFLG
 CHKOUT ABS  @CHKFLG
@@ -189,12 +201,12 @@ GETDIR MOV  R11,R10
        JNE  GETD2
 *
        STWP R1
-       BL   @CHKDRV
-       JNE  CDBAD
-       MOV  R0,R12
+       BL   @CHKDRV      R0 returns new CURDRV location
+       JNE  CDBAD        and *CURDRV points to it
+       MOV  R0,R12       save the new current drive letter/pointer
        MOVB @2(R9),R0
-       BL   @TERMIN
-       JNE  GETD2
+       BL   @TERMIN      next char termination?
+       JNE  GETD2        no, go set the current dir
 *
 * DISPLAY CURRENT DIRECTORY
 *
@@ -208,15 +220,82 @@ GETD1  MOVB @MAXLEN,@TMPLEN
        BL   @MESG
        B    *R10
 *
+; 7.2.2023
+; If we get here, the user entered a drive letter[path] or similar construct
+; We attempt to parse and if successful, we place the original string into
+; the environment string. Note: the parsed hardware device is NOT captured
+;   as it is only tested for syntax.
+; We will use the output for our PAB
+;
+;-- it would be nice to skip display for success
+;-- and show current hardware path for 'CD' command.
+
 GETD2  MOV  R9,R1
        LI   R2,DIRSTR
-       MOVB @MAXLEN,*R2
-*      CLR  R0
-       SETO R0
+       MOVB @MAXLEN,*R2       ;7-2-2023, this is 127 in this code space!!!
+*      CLR  R0                ;     Probably need to restrict to 40!
+       SETO R0           ;this sets R3 in called parse util (strips drive)
        BLWP @CNVRTF           RETURNED NAME SHOULD BE "dirspec"
        JNE  CDBAD
+
+       MOV  R9,R1
+       LI   R2,PABCDL    pab len
+       MOVB @MAXLEN,*R2
+       CLR  R0           allow prefix/drive
+       BLWP @CNVRTF      convert for file op
+       JNE  CDBAD
+
+*---------------
+; 7-2-2023, check existence via 'catalog' input
+;           Potential issue for floppy devices. (removable media is risky)
+;
+       MOVB *R2,R1       should never be 0, right?
+       SRL  R1,8
+
+       CB   @PERIOD,@PABCDL(R1)  ;did parse result in device only "HDSx."?
+       JEQ  PABCC1               ;yes, don't modify
+
+       AB   @H01,@PABCDL         ;NO, must adjust length
+       INC  R1                   ;
+       MOVB @PERIOD,@PABCDL(R1)  ;and add period to end FOR THE TEST ONLY
+
+PABCC1 INC  R1
+       MOVB @H00,@PABCDL(R1)  ;for display test
+;
+;  --0123456789
+;  05 SCS1.
+;  08 SCS1.DD.
+;
+       MOV  @CDOPN1,@PABCD1   set OPEN opcode and type
+       CLR  @PABCD1+8    ;default rec len
+       CLR  @PABCD1+10   ;cpu transfer|default char count
+       CLR  @PABCD1+12
+
+       LI   R1,PABCDL+1  display the hardware device.path
+       BL   @MESG
+
+       LI   R0,PABCD1    ;try to open the directory catalog
+       XOP  @EIGHT,0
+
+       MOVB @PABCD1+2,R1 ;error ?
+       JEQ  PABCC2       ;no
+
+       LI   R1,CDBDP1    ;Yes, non-existent or some other problem
+       BL   @MESG        ;inform user
+       JMP  CDBAD        ;should we jump to ERROR2?
+
+PABCC2 LI   R1,CDBCRL    ;crlf (only needed if success)
+       BL   @MESG
+
+       MOVB @H01,@PABCD1 ;close catalog
+       LI   R0,PABCD1
+       XOP  @EIGHT,0     don't worry about an error
+
+       LI   R2,DIRSTR    reset R2
+       JMP  PABCC3
+;--------
 *
-       MOVB *R2+,R1
+PABCC3 MOVB *R2+,R1      ;jump here if directory test was successful
        SRL  R1,8
 *      AB   @H01,*R2+
 *      SRL  R1,8
@@ -227,12 +306,25 @@ GETD3  A    R2,R1
        MOV  R2,R1
        MOV  R12,R0
        INCT R0
-       BL   @STRNOD
+       BL   @STRNOD      stuff new directory into environment
        JNE  ERROR2
 CDBAD  B    *R10
-ERROR2 MOV  R10,R11
+
+ERROR2 MOV  R10,R11      ;only to report environment errors
        B    @ERROR
 *
+; Note: we are using error msg as the buffer location. open/close opcodes
+;       do not require any buffers.
+;
+CDOPN1 DATA >000D        ;open|>0D
+PABCD1 DATA >000D,0,CDBDP1,0  ;>0D is fix,int,input,rel
+       DATA 0,0,0
+       BYTE 0
+PABCDL BYTE 0
+       BSS  50           ;MAXLEN var is 127. Enforce 40 in CD command ?
+CDBDP1 TEXT '   ** Non-existent folder'
+CDBCRL BYTE 10,13
+       DATA 0
 *******************************
 *
 ASSIGN MOV  R11,R10
@@ -346,7 +438,7 @@ ERRSYN TEXT 'Syntax error in command'
 *
 CNVRTF DATA >F000,FCONV
 *
-FCONV  MOV  *R13,R3
+FCONV  MOV  *R13,R3      ;R0 of caller dictates alias prefix generation
        MOV  @2(R13),R1
        MOV  @4(R13),R2
        LI   R0,8
@@ -374,6 +466,7 @@ TERMRT RT
 *
 *******************************************************************
 *
+EIGHT  DATA 8
 NINE   DATA 9
 MAXLEN BYTE 127
 ONE    BYTE '1'

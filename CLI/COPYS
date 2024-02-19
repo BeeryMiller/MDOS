@@ -1,3 +1,6 @@
+; File: COPYS
+;11.24.2023 Updated COPY statements (see also ~line 1500)
+
        UNL
 *      COPY A FILE
 *      GET MEMORY SIZE
@@ -24,7 +27,7 @@
 COPRET DATA 0
 BRKSAV DATA 0
 *
-       COPY "\MDOS\CLI\TIMES"
+       COPY "CLI\TIMES"
 
 COPY   MOV  R11,@COPRET       SAVE RETURN
        MOV  R0,R11            SAVE COMMAND LINE PTR FOR LATER USE
@@ -1515,7 +1518,7 @@ RCCTMS EQU  26
 RCCTLS EQU  28
 *
        PAGE
-       COPY "\MDOS\CLI\CATMAPS"
+       COPY "CLI\CATMAPS"
 *
 P1LEN  EQU  DIRLEN
 *

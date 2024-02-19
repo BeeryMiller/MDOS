@@ -4,6 +4,7 @@
 *
 * 2.15.2021 Added crlf to VERMSG; moved HELLO to the text. Removed CLS. See hcls
 * 7.25.2022 Added CYAMP1 reference for CYA
+*
 
        COPY "CLI\HVERSIONS"
 *
