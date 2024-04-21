@@ -11,9 +11,11 @@
 ;    [code "         "            "]
 ; FI
 ;
-
+; 3.10.2024 Added DEBUGL8#
+;
 DEBUGSCSI#  EQU  0       ;debug for SCSI/HRD/IDE segment
 DEBUGTIPI#  EQU  0       ;debug for TIPI DSR segment
+DEBUGL8#    EQU  0       ;debug for L8 segments
 
 ;;     EOF
 
