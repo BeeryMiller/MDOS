@@ -1,0 +1,763 @@
+===============================================================================
+      MM     MM  DDDDD   OOOOOO   SSSS         7777777     4    4  555555
+      M M   M M  D    D  O    O  S    S             77     4    4  5
+      M M   M M  D    D  O    O  S                 77      4    4  5
+      M  M M  M  D    D  O    O  SSSSS            77       444444  555554
+      M  M M  M  D    D  O    O       S          77             4       5
+      M   M   M  D    D  O    O  S    S         77              4       5
+      M   M   M  DDDDD   OOOOOO   SSSS         77       .       4  55555
+
+                         Myarc Disk Operating System
+
+                 Copyright (C)2024 9640*News and Contributors
+                            Updated April 13, 2024
+
+                    Updates by T. Tesch (InsaneMultitasker)
+                            &  B. Miller (9640News)
+
+                      CRC CHECK >DF9B FOR ORIGINAL RELEASE
+
+==============================================================================
+* RELEASE 7.45
+
+          OS Corrections:
+
+          This update fixes two issues:
+
+           -File writes not correctly reporting a sector write error due to a
+            bad disk.  This can occur during MDOS use of the COPY command or
+            during record access, and with standard disk managers.
+
+           -Fixes an issue with file deletion on a RamHD or IDE drive
+            when a SCSI controller is not in the system. Fixes possible
+            corruption during close and save operations.
+
+          This distribution contains all updates and the most current versions
+          of most Geneve applications in a single ZIP archive.
+
+          Separately, a new update for the LOAD-SYS file for the V2.00 Geneve
+          eprom for the SCSI controller cards for AUTOEXEC autotracking is
+          available.
+
+          Peter Muys text editor has been updated to pass command line
+          filenames to load a file and double file buffering has been removed
+          for faster file loading.
+
+          CYA has been updated to version 7.50 with an update to allow
+          directly saving MDOS to PFM devices from the previous version.
+
+
+
+================================================================================
+
+* Release 7.43
+
+          OS Corrections:
+
+               - This update has a single fix to address a single issue with
+          the Myarc HFDC when used as a single floppy disk controller.  This
+          fixes the Format routine.
+
+          Other files from the V7.40 and V7.42 have been included in this
+          distribution.
+
+
+* Release 7.42
+
+          OS Corrections:
+
+               - The SCSI powerup routine was not clearing the common
+          buffer used by SCSI/Horizon/IDE whenever a SCSI card was not in
+          the system. The most common problem was intermittent access to
+          the Horizon hard drive partitions; the drive parameter table was
+          invalid, since it contained values set 'randomly' when the
+          system was turned on.  The powerup logic has been corrected and
+          tested.
+
+               - SCSI routines now check for the presence of the SCSI
+          card. The OS no longer locks up if you inadvertently try to
+          access a non-existent SCSI device.
+
+               - Floppy controller powerup was testing for the presence of
+          a card, however, the flag was reset if a TIPI was in the system.
+          Fixed the powerup routine and then added a test to the low-level
+          code. OS no longer executes the floppy code when there is no FDC
+          present.
+
+               - Floppy format code has been tested with above correction;
+          attempting to format a non-existent FDC now reports an error.
+
+               - Removed old SCSI code and labels.  Cleaned up some of the
+          statements.  Removed comments that were no longer relevant or
+          accurate.
+
+               - Change Directory command now validates whether the
+          directory exists.
+
+               - Fixed VDP header setup in /4A mode - SAVE file issues
+
+               - SAVE file issues have been fixed to the the extent
+          that an incomplete file can now be deleted and is reported
+          as the proper type.  Further research is needed to review DSR
+          error traps and boundary conditions.
+
+          Note: ABASIC may lock some files after an error condition; a
+          soft reset will clear the file lock.
+
+               - VIDEO command repaired.
+
+               - TELNET command has been enhanced and updated.
+          enhanced and updated.
+
+               - ANSI Driver has been updated to v1.03.  Corrections and
+          improvements.
+
+          Informational:
+
+                - The TIPI SAVE and LOAD opcodes are limited
+          to 64K by the TIPI; this may be resolved in the future by
+          utilizing BREAD/BWRITE to bypass the TIPI /4A-induced
+          limitation.
+
+                -Source code folder and file structure preparation for
+          Github repository. Binary, object file separation.
+
+
+
+CYA V7.42 is included with this distribution file. Functionality remains the
+same, however some code has been removed to prepare for the release of the
+source code on GITHUB. Look to www.9640News.com for links when the code is
+released.
+
+
+===============================================================================
+
+MDOS 7.40 is a significant update from MDOS 7.30 with significant updates to
+the TIPI, IDE, and SCSI code. If you are using a TIPI, you absolutely MUST
+update to the new TIPI image V3.16 or greater. TIPI Versins 3.11 or earlier
+will result in file corruption if you use the MDOS COPY command at the MDOS
+prompt.  Disk managers such as Clint Pulley's Directory Manager or Fred Kaal's
+GDM2K have no issue.  Simply put, the last sector of any file copied with the
+MDOS COPY command using TIPI V3.11 will result in the last sector of the file
+being corrputed.  The file will show it properly copied, but it did not!!!
+This does not pertain to any other disk storage device except for the TIPI.
+
+CYA Version 7.40 is being released with this release of MDOS.  Barring any
+future updates, Version 7.40 should be self-aware to find all necessary
+addresses within MDOS.
+
+TSTAT is being released as a standalone program.  This utility, if you are a
+TIPI user, can be placed in your AUTOEXEC file.  It will alert you if a new
+release of the TIPI software is available.
+
+TIPI users should be able to remove all floppy controller cards from their
+PEBox and be able to use the TIPI at CRU >1100 to boot from the TIPI drive.
+DSK1 through DSK4 will be automatically configured to your settings on the
+TIPI drive.
+
+PFM USERS SHOULD NOT UPDATE THEIR PFM WITH THE CURRENT PFM OR PFM+ EPROM IF
+UPDATING FROM MDOS 6.50 OR EARLIER.
+
+A NEW UPDATE IS NEEDED WITH A NEW PFM CORE THAT IS SUPPLIED IN THE PFM
+SUBDIRECTORY OF THIS ZIP FILE. THIS IS NEEDED AS MDOS IS LARGER SINCE V7.30
+AND THE PFM WOULD ONLY PROGRAM A PORTION OF MDOS.
+
+PFM USERS WISHING TO TEST THIS VERSION OF MDOS SHOULD COPY SYSTEM-SYS TO THE
+ROOT DIRECTORY OF THEIR DEVICE AND USE THE HFDC, SCSI, OR RAMDISK MENU OPTIONS
+TO LOAD AND DO NOT REPROGRAM THE PFM. THIS CAUTION IS ONLY FOR PFM USERS!!!!!
+
+
+It is highly encouraged to pursue at minimum a Raspberry PI (3B, 4, or greater)
+along with a TIPI available from ArcadeShopper.com.  This will give you near
+hard drive like speed comparable with the Myarc HFDC if you do not have one
+already.
+
+In addition, with other utilities like GDM2K, you can backup any device to the
+TIPI.  Using a network share, one can then further backup the files on the PI
+to another computer for additional protection.
+
+Eprom updates will be required for your Geneve if you desire to boot from TIPI
+or IDE.
+
+It should be noted that if you are intending on using a TIPI, if you purchased
+one after late 2020, the CPLD should be running the latest code.  If not, it
+needs to be reprogrammed. Contact ArcadeShopper on Atariage for information.
+Without the CPLD update, the TIPI works fine on the TI-99/4A but will not work
+on the Geneve.
+
+MDOS has been tested with PI version 3.15, and the most current DSR Build of
+2021-02-24. The DSR build is less relavent unless you are using Rompage in GPL
+mode as MDOS has been coded with the TIPI DSR.  Critical is making sure you
+are updated to the PI version code of 3.15 or greater. Several fixes were
+made to the underlying code written by Matt addressing some file handling
+concerns within the Python code on the PI.
+
+T. Tesch has available a utility for the PFM that will allow reprogramming a
+PFM or PFM+ to support the larger MDOS file.  This will no longer require
+splitting MDOS into multiple files.
+
+MDOS size overall has increased from 128K to 136K to accomodate the extra TIPI
+code.  All Geneves need to have at minimum a 32K memory upgrade that has been a
+requirement since MDOS 5.00.
+
+If you have received this file, and wonder how you are going to get the files
+to your Geneve, you have several options.
+
+1) ArcadeShopper has permission to distribute MDOS on floppies.
+2) Download and extract/copy files in TIFILES format to the TIPI.
+       a) Once files are extracted, use DM2K with Editor/Assembler in
+          ROMPAGE mode, and copy files to a storage device such as WDS1
+          (Myarc HFDC device name in ROMPAGE mode), SCSI drives, or
+          to floppy drive if your floppy drives work in Rompage mode.
+3) Copy files with TIIMAGETOOL or TIDIR and transfer to DSK images to use
+   with a floppy emulator.
+4) Transfer files through a terminal emulator from one PC to another.
+5) There are other means besides these one may have established.
+
+
+PFM+, PFM512 and MDOS
+---------------------
+       There is separate software that permits updating MDOS onto any PFM or
+       PFM+ device without the need to split the file. Those notes will be
+       detailed in the documentation for the PFM.
+
+
+NEW GENEVE BOOT EPROM INTRODUCED FOR V7.30 AND LATER
+----------------------------------------------------
+       A new boot Eprom is available that will boot MDOS from the TIPI
+       and other devices.  The eprom is included with this zip file or you can
+       contact Bob Carmany on AtariAge for the eprom.
+
+
+ATARIAGE VIA THE INTERNET
+-------------------------------
+       Those of you using the internet should join Atariage. This is a very
+       good way to get information about the TI and Geneve computers and
+       will put you in touch with quite a few of the folks still in our small
+       but lively community.
+
+
+9640News Website
+----------------
+       I have created a website for the Geneve 9640 at https://www.9640News.com
+       that is accessible by everyone.  The website offers the latest program
+       images files and sources for MDOS, Advanced Basic, PSystem, GPL, Forth,
+       MyWord, Geneve Boot Eprom, and more. A few github repositories are
+       currently listed as private as we need to update sources first.
+
+
+NEW/UPDATED/REMOVED COMMANDS/ROUTINES INTRODUCED WITH VERSION 7.40
+------------------------------------------------------------------
+
+Added support to the MDOS TYPE and TELNET commands at the MDOS prompt.  Users
+can optionally install the ANSI driver into their AUTOEXEC file. This will allow
+ANSI displays in either text mode or 16 color graphics mode in 80 column.
+Usage of the commands is described as below.
+
+1. MDOS "TELNET" command
+
+       Usage:
+
+       At MDOS prompt, type:
+
+       TELNET thekeep.net,9918 /T      connects and displays ANSI Text
+       TELNET thekeep.net,9918 /G      connects and displays ANSI Graphics
+       TELNET thekeep.net,9918         connects and displays text mode only
+
+
+2. MDOS "TYPE" command
+
+       TYPE <filename> /T             displays ANSI text file in Text mode
+       TYPE <filename> /G             displays ANSI text file in Graphics mode
+       TYPE <filename>                displays text file
+
+
+
+UPDATES / CHANGES WITH VERSION 7.40
+===================================
+
+1.  Updated TIPI XOP calls to use and mange port/server bytes.
+2.  Updated Telnet command.
+3.  Updated TIPI code at CLI with > 114 directories.
+4.  Updated GenREF documents - Updates file for specific changes to documents.
+5.  Updated code in Memory XOP for shared memory interaction between apps.
+6.  Updated TIPI DSR code to be CRU independent at any CRU address.
+7.  Updated calls to Video XOP for Abasic support fixes.
+8.  Expanded and documented TIPI XOP opcodes for TCP, UDP and TLS support.
+9.  Added call to TIPI opcodes for Logging messages in tipi.log.
+10. Added embedded table for CYA configuration for 7.40 and above for future
+    updates.  No more CYA updates for updated MDOS versions.
+11. Clean up of DSR code.
+12. Updates to power-up routines at MDOS booting and enter/exit from GPL.
+
+
+
+
+NEW/UPDATED/REMOVED COMMANDS/ROUTINES INTRODUCED WITH VERSION 7.30
+------------------------------------------------------------------
+
+         IBMGRF
+         ------
+         The IBMGRF command now has a default of ON to define all characters
+         from >00 to >FF or characters 0 to 255.
+
+         ECHO
+         ----
+         By default, the ECHO command is now ECHO OFF.  This will result in the
+         AUTOEXEC file not showing commands that are being executed. If you want
+         to see the commands, then add an ECHO ON statement at the beginning of
+         your AUTOEXEC file.  This was done to clean the display up when booting
+
+         DISKCOPY and DISKCOMPARE
+         ------------------------
+         The DISKCOPY and DISKCOMP commands from the MDOS prompt have been
+         removed as of Version 7.3 MDOS. These commands were infrequently if
+         ever used, and space was needed needed for the updates to MDOS to
+         support the TIPI and other new commands.
+
+         TELNET
+         ------
+         A new command has been added to MDOS to support a localhost connection
+         to the TIPI. This command also has the capability to connect to other
+         telnet accessible servers. This command is only useable if you have a
+         TIPI.
+
+         To use the TELNET command, use as follows:
+
+         TELNET localhost:23             (this connects to TIPI localhost)
+         TELNET heatwave.ddns.net:9640   (this connects to the HEATWAVE BBS)
+         TELNET thekeep.net:9918         (connects to The Keep BBS)
+         TELNET fusionbbs.ddns.net:9640  (this connects to the FUSION BBS)
+         TELNET mytbox99.ddns.net:61643  (this connects to MyTBOX99)
+
+         To terminate a connection, press the <ESC> or <F9> keys to return back
+         to the MDOS prompt.
+
+         TIMODE2
+         -------
+         Replacement for TIMODE freeing up the dedicated 64K ram for MyWord.
+         If you will be using MyWord, then you need to use the TIMODE command
+         instead of TIMODE2 in your AUTOEXEC file.
+
+         SCSMAP
+         ------
+         The SCSMAP command allows the use of SCS1 through SCS6 for devices.
+
+         SCSMAP also allows mapping the IDE drives to a SCS device name as
+
+         SCSMAP <x><y>
+
+         where x=1 to 6 for SCS1 to SCS6, and y=1 to 9 for SCSI connected
+         devices 1 through 9.
+
+         To separate the IDE class of drives, the IDE drives have been set as
+         y=A to H where A=IDE1, B=IDE2, C=IDE3, D=IDE4, E=IDE5, F=IDE6,
+         G=IDE7, and H=IDE8. Please note that if you have partitioned your IDE
+         drive to 8 partitions, our testing has indicated the 8th partition is
+         presently not useable. We suspect this is a eprom programming issue
+         that needs to be resolved.  The IDE card needs to be running the DSR
+         from Fred Kaal at www.ti99-geek.nl, Version 14.
+
+         The SCSMAP also allows mapping 16-bit Horizon Ramdisks into the
+         SCSx "RamHardDrive" addressing.  See identifiers below.
+
+         Please note, SCSI and IDE have more devices than the SCSMAP will
+         presently allow.  Plan drive size and mapping accordingly to maximize
+         your equipment configuration.
+
+         SCSMAP <Drive><Device>
+
+         By default, here are the default drive mappings:
+
+         SCSMAP 11   SCSI Device #1 to SCS1.
+         SCSMAP 22   SCSI Device #2 to SCS2.
+         SCSMAP 33   SCSI Device #3 to SCS3.
+         SCSMAP 48   HRD Ramdrive CRU >1400 to SCS4.
+         SCSMAP 59   HRD Ramdrive CRU >1600 to SCS5.
+         SCSMAP 6A   IDE 1st Drive, 1st Partition to SCS6.
+
+
+         As an example, SCSx. may be reconfigured as follows:
+
+         SCSMAP 12       This maps SCSI device #2 to SCS1
+         SCSMAP 26       This maps SCSI device #6 to SCS2
+
+         In addition, IDE drives and the Horizon Ramdisk when configured as a
+         Ram Harddrive are also mapped as a SCSI device as follows:
+
+         SCSMAP 48       This maps a Horizon Ramdisk at CRU >1400 to SCS4.
+         SCSMAP 39       This maps a Horizon Ramdisk at CRU >1600 to SCS3.
+         SCSMAP 37       This maps IDE  Device #1 to SCS3 (special case mapping)
+         SCSMAP 11       This maps SCSI Device #1 to SCS1.
+         SCSMAP 1A       This maps IDE  Device #1 to SCS1.
+         SCSMAP 6H       This maps IDE  Device #8(H) to SCS6.
+
+
+         Drive Assignment Device
+         _________________________________________________________________
+         1                SCSI Device #1
+         2                SCSI Device #2
+         3                SCSI Device #3
+         4                SCSI Device #4
+         5                SCSI Device #5
+         6                SCSI Device #6
+         7                IDE  Device #1
+         8                HRD  CRU >1400 ramdisk
+         9                HRD  CRU >1600 ramdisk
+         A                IDE  Device #1
+         B                IDE  Device #2
+         C                IDE  Device #3
+         D                IDE  Device #4
+         E                IDE  Device #5
+         F                IDE  Device #6
+         G                IDE  Device #7
+         H                IDE  Device #8
+
+         It should be noted that Drive Assignment Device "7" is also duplicated
+         as Drive Assignement Device "A".
+
+         As of 3 April 2021, testing of the IDE support in MAME has shown a
+         potential issue of being unable to use IDE Device #8 if a user has
+         partitioned both drives into 4 partitions each. This is unrelated to
+         MDOS as it has been confirmed in the TI-99/4A emulation as well within
+         MAME. The developer of the DSR has been contacted for investigation.
+
+         REMAP
+         -----
+         REMAP allows a disk i/o device to be mapped to any DSK1...DSK9
+         device number. Usage is as follows either in an AUTOEXEC file or
+         at the MDOS Command Line prompt.
+
+         REMAP <number><DRIVE>
+
+         Drive Alpha.             Device
+         Assignment
+         ________________________________________________________________
+         A              Floppy #1 (Any floppy only controller)
+         B              Floppy #2 (Any floppy only controller)
+         C              Floppy #3 (Any floppy only controller)
+                                  (that supports 4 floppies)
+         E              Internal Geneve  Ramdisk                  800K
+         F              Internal Horizon Ramdisk 8 bit CRU >1400  256K
+         G              Internal Horizon Ramdisk 8 bit CRU >1600  256K
+         H              Internal Rave    Ramdisk
+         I              HFDC Emulate File                         800K
+         J              HFDC Floppy #1
+         K              HFDC Floppy #2
+         L              HFDC Floppy #3
+         M              HFDC Floppy #4
+         N              Internal Horizon Ramdisk 16 bit CRU >1400 800K
+         O              Internal Horizon Ramdisk 16 bit CRU >1600 800K
+         P              Internal Horizon Ramdisk 16 bit CRU >1000 800K
+         Q              Internal Horizon Ramdisk 16 bit CRU >1700 800K
+         R              Reserved for Future Expansion
+         S              Reserved for Future Expansion
+         T              PFM Flashdisk #1
+         U              Reserved for Future PFM Flashdisk #2
+         V              TIPI DSK0
+         W              TIPI DSK1
+         X              TIPI DSK2
+         Y              TIPI DSK3
+         Z              TIPI DSK4
+
+         Examples
+
+         REMAP 1X       Maps DSK1 to TIPI DSK2 (assumes PI.CONFIG has entry)
+         REMAP 4O       Maps DSK4 to a 16 bit HRD at CRU >1600
+
+
+         DIR/ATTRIB/COPY
+         ---------------
+         The DIR, ATTRIB, and COPY commands have been modified in the event
+         files are being copied or manipulated on the TIPI.  TI Specifications
+         for the TI, Myarc, CorComp, SCSI, and IDE limit a maximum of 127 files
+         and 114 directories at any filepath. With the use of the TIPI, the
+         TIPI supports an unlimited number of files on the PI. As a result, if
+         a TIPI path exceeds these limits when processing a command, not all
+         files will be addressed by the command. MDOS will issue an alert
+         indicating a file limitation was exceeded.
+
+         MEM
+         ---
+         A new command, MEM, has been added to the command line interpreter.
+         This command will display the total memory free for use for a program
+         and the amount of identified Fast Ram based on current configurations.
+
+
+FIXED COMMANDS / ROUTINES:
+--------------------------
+
+       o HFDC / Winchester Code:
+         -----------------------
+         Additional Winchester Code removed from the DSR routines.
+
+
+       o SCSI, IDE, Horizon Ramdisk Code:
+         --------------------------------
+         The SCSI code has been expanded to provide support for the Horizon
+         Ramdisk as a Ram Harddrive and the use of IDE drives with the Geneve
+         9640. T. Tesch deserves a lot of credit for his work! A buffering
+         bug present in a beta release of MDOS 6.70 impacting SCSI devices has
+         been fixed.
+
+
+       o IDE Specific notes
+         ------------------
+         The IDE controller card must be set at CRU >1900 for MDOS. To use
+         the IDE drive requires V14 of Fred Kaal's DSR found at www.ti99-geek.nl
+         The DSR must be installed using the Editor/Assembler cartridge in
+         Rompage mode and the devices formatted prior to use.
+
+
+       o TIPI Code:
+         ----------
+         The Geneve Master DSR has been expanded to include all of the TIPI
+         device names including the DSKx, URIx, PI.xxx, and TIP1 replacing the
+         TIPI device name.
+
+         It is possible to print to PI.PIO, however older programs written that
+         bypass the OPEN and CLOSE commands to the PIO port through a DSR will
+         fail writing to PI.PIO. This is not a MDOS correctable issue.
+
+         A TIPI XOP library (>0C) has been added to MDOS providing XOP support
+         for accessing the TIPI. The MyTerm TIPI version uses this XOP as well
+         as the internal TELNET command in the Command Line Interpreter. A
+         separate file will be released detailing the specifications for
+         using the XOP.
+
+================================================================================
+
+TIPI Support under MDOS 7.3 and later
+
+Credit goes to T. Tesch for implementing MDOS support for the TIPI.  By far,
+he is the GURU of the DSR's.
+
+Most features of the TIPI have been developed.  Version MDOS 7.3 treats the
+TIPI as device name TIP1.  DSK0 support has been added under GPL mode for
+programs, however programs that require level 2 access will report an error.
+Such programs include DM2K which will require ROMPAGE mode from the GPL
+interpreter to be able to copy files to/from the TIPI if in GPL mode.
+
+Rather than use Fred Kaal's DM2K program from GPL mode, Fred has recently
+released a Geneve / MDOS version GDM2K.  This is the preferred method if
+you want to have the most versatile disk management program. GDM2K also offers
+the ability one can backup any device to a TIPI path by marking all files at
+root level.  This will copy all directories and subdirectories.
+
+The TIPI must be configured at CRU >1800 to be functional on the Geneve. In your
+AUTOEXEC file, you must add a command to assign a drive letter to the TIPI as
+such:
+
+ASSIGN K=TIP1:    (K may be substituted for another drive letter up to drive P)
+
+Development efforts are proceeding to have a new Geneve boot eprom to load MDOS
+from the TIPI. Initial efforts were thought to be working but issues were found
+requiring additional development time. It should be noted boot times will be
+approximately 20 seconds from the TIPI when the issues are resolved.
+
+Devices DSK0, DSK1, DSK2, DSK3, DSK4, TIP1, PI, URI1, URI2, and URI3 have been
+implemented within the master DSR of the Geneve. Settings for DSK1, DSK2, DSK3,
+and DSK4 must have their paths configured with TIPICFG from GPL mode, or
+separately using a word processor and loading the file PI.CONFIG and updating.
+This method is preferable, otherwise using TIPICFG requires using Rompage mode
+due to the additional messaging protocols used by TIPICFG.
+
+The PI.xxx routines such as PI.CONFIG, PI.PIO, PI.REBOOT, PI.SHUTDOWN, PI.STATUS
+and others are accessible from MDOS mode.  Some of the commands when you attempt
+to access will initiate an action with the PI.
+
+Printing to PI.PIO is supported.  It should be noted several MDOS programs
+including The Geometer's Apprentice, The Printer's Apprentice, and some versions
+of Myart will not print.  This is because the original printing routines wrote
+directly to the parallel port rather than using the DSR commands for OPEN, WRITE
+and CLOSE.
+
+With the URIx device names, it is possible to load and run programs from the
+internet from the MDOS prompt.
+
+Texas Instruments, and then Myarc with the Myarc HFDC following suit, placed
+limits on file and directory storage on devices.  TI imposed a 127 file limit,
+and Myarc added a limit of 114 directories in addition to the 127 file limit.
+MDOS was written with these specifications. With the TIPI and the use of the
+Raspberry PI, there is essentially no limit on the number of files in a
+directory or a limit on the number of subdirectories. Thus, on a Raspberry PI,
+it is possible a directory could have thousands of files.
+
+MDOS can not handle such a large file or directory listing and will only show
+the first 127 files and 114 directories at any path. If there are more files or
+directories, the function including DIR, ATTRIB, COPY, etc. will report a limit
+was reached for the command that was used to alert the user not all files were
+seen or processed.
+
+The REMAP command has been expanded to map TIPI device names of DSK1, DSK2,
+DSK3, and DSK4 to the assignment letters of W, X, Y, and Z.
+
+Example:
+
+REMAP 1W  Maps TIPI DSK1 to DSK1
+REMAP 1X  Maps TIPI DSK2 to DSK1
+REMAP 1Y  Maps TIPI DSK3 to DSK1
+REMAP 1Z  Maps TIPI DSK4 to DSK1
+REMAP 2W  Maps TIPI DSK1 to DSK2
+REMAP 3W  Maps TIPI DSK1 to DSK3
+REMAP 4W  Maps TIPI DSK1 to DSK4
+(etc)
+
+There are several files from the TIPI/PI you can load from an editor such as
+PI.STATUS and PI.CONFIG.  An example of a PI.STATUS file is shown below that
+gives you information about the VERSION of the PI (2.20) and RELDATE of the DSR.
+
+
+PI.STATUS
+=========
+
+MAC_ETH0=dc:a6:32:db:be:72
+MAC_WLAN0=dc:a6:32:db:be:73
+IP_WLAN0=192.168.1.79
+VERSION=2.20
+RELDATE=2021-02-24
+UUID=404a4202-48b0-11eb-87dc-b827ebf07f81
+LATEST=2.20
+
+
+Shown below is the PI.CONFIG file that can be edited in MyWord and saved back as
+a filename of PI.CONFIG. The DSK1_DIR through DSK4_DIR lines point to
+directories on the PI that can subsequently be mapped to a DSK1 through DSK9
+device with the REMAP command.  You should add the DIR_SORT=FIRST command to
+your file if it does not already exist.  No entry will result in confusing
+directory listings from the TIPI/PI. The TZ entry establishes a timezone for
+New York (EST) for all time/date stamping of files. The URIx paths establish
+a website/URL where programs may be loaded directly from the URL at the website.
+
+
+PI.CONFIG
+=========
+
+AUTO=off
+DIR_SORT=FIRST
+DSK1_DIR=TPA
+DSK2_DIR=MDOS
+DSK3_DIR=TGA
+DSK4_DIR=AFTER
+MOUSE_SCALE=50
+SECTOR_COUNT=9999
+TIPI_NAME=TIPI#4
+TZ=America/New_York
+URI1=http://myti99.com
+URI2=http://ftp.whtech.com/TIPI
+URI3=http://ftp.whtech.com/TIPI
+WIFI_PSK=xxxxxxxxx
+WIFI_SSID=xxxxxxxxxxxxxxx
+
+
+As a reference, below is a copy of my AUTOEXEC file I use and notes to the side
+to follow what the command does. As a reference, I have an 8MB HRD at CRU >1600,
+a TIPI at CRU >1800, a RS232 card, a Myarc HFDC at CRU >1100 attached to a
+DREM emulating two hard drives of 64 MB each, a SCSI card at CRU >1200 with a
+SCSI2SD emulation drive configured with 7 x 256 MB drives.  I have no floppy
+drives, and the TIPI is connected to a Raspberry PI 4 with 128 GB ram. For
+memory expansion, I have a PFM+ and a MEMEX card with 504K ram.
+
+
+AUTOEXEC
+========
+TIMODE                                Enables TIMODE
+J:                                    Sets default path to J:\ drive
+CD MDOS                               Changes to MDOS subdirectory J: dre
+PROMPT $N:\$P$g                       Defines the prompt to device\path
+PATH H:\;E:\BATCH.;E:\MDOS1.;E:\GPL.; Sets file searching locations
+LASTDRIVE = P                         Sets maximum drive letter to P
+ASSIGN K=SCS1:                        Sets drive letter K to SCS1
+ASSIGN L=SCS2:                        Sets drive letter L to SCS2
+ASSIGN J=SCS3:                        Sets drive letter J to SCS3
+ASSIGN M=SCS4:                        Sets drive letter M to SCS4
+ASSIGN N=SCS5:                        Sets drive letter N to SCS5
+ASSIGN O=SCS6:                        Sets drive letter O to SCS6
+ASSIGN G=DSK6:                        Sets drive letter G to DSK6
+ASSIGN H=DSK8:                        Sets drive letter H to DSK8
+ASSIGN I=TIP1:                        Sets drive letter I to TIP1
+REMAP 1W                              Sets DSK1 to DSK1 of TIPI mapping device
+REMAP 2X                              Sets DSK2 to DSK2 of TIPI mapping device
+REMAP 3Y                              Sets DSK3 to DSK3 of TIPI mapping device
+REMAP 4Z                              Sets DSK4 to DSK4 of TIPI mapping device
+REMAP 6O                              Sets DSK6 to HRD Ramdisk at CRU >1600
+REMAP 8T                              Sets DSK8 to PFM FlashDisk
+SCSMAP 39                             Sets SCS3 to HRD Ram HardDrive CRU >1600
+
+====EOF==============
+
+
+Supporting Files
+================
+
+There are a number of other supporting programs recommended for this latest
+release of MDOS.
+
+Included in this distribution in subdirectories
+-----------------------------------------------
+
+Abasic
+======
+Abasic has been updated to V4.06 and is included in the complete MDOS package.
+Updates may be found at www.9640News.com
+
+GPL
+===
+GPL files are being included with this archive with the latest V7+ GPL
+intrepreter. The updates with a GPL-README file are included in the GPL730
+directory. There are two sets of GPL files in this directory.  One set is for
+the 80 column menu screen.  The other set, is a revised TI-BASIC GPL ROM/GROM
+set.
+
+PFM and PFM+
+============
+The subdirectory PFM contains utilities that are required to reprogram the CORE
+functionality of the PFM and PFM+ devices. The original PFM and PFM+ cores were
+only able to embed MDOS into the flash eprom at 120K for the PFM+ and 128K in
+PFM versions.  These utilities to reprogram the PFM must be run from the MDOS
+command line.  Read the file, PFM-DOC, for instructions that must be followed
+verbatim.
+
+CRCOS7
+======
+CRCOS7 and docs are in the CRCOS7 directory. This program tests the integrity
+of the MDOS SYSTEM/SYS file.  The CRC value for MDOS 7.30 is shown in the
+beginning header of this file. If this value does not match, then you are using
+a modified version and not the original released file.
+
+EXEC27
+======
+EXEC originally written by Barry Boone has been updated as changes were needed
+to properly handle the powerup routines for the new devices and to fix earlier
+MDOS bugs.
+
+GENCFG
+======
+GENCFG is a program written to format 16 bit Horizon Ramdisks and use
+them either as a ramdisk or hard-ramdrive or as a combination.  GENCFG
+will identify the hardware in your system and allow you set your ramdisk
+as a bootable partition.
+
+TEST
+====
+The TEST directory contains multiple variations of a program allowing the
+loading of MDOS from various devices with AUTOEXEC boot tracking to the device.
+
+
+Downloads recommended
+---------------------
+
+GDM2K
+=====
+Fred Kaal's Geneve version of DM2K.  It can be downloaded from the Projects
+page at https://www.ti99-geek.nl
+
+
+Enjoy!
+
+Report any issues on Atariage for Insanemultitasker or to 9640News to address.
+
+
+
+* EOF, 4 April 2021, Beery Miller (9640News)
+*
