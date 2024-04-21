@@ -30,6 +30,9 @@
 ;           MUST USE GENCFG TO UTILIZE ramHD partitions going forward
 ;           Added code to test max size/carry bit; DISABLED for now
 ;
+;4.12.2024  Added debug to help debug inability to DELETE file when SCSI
+;           card is not present.
+;
 * test code
 *      LWPI >F000
 *      LIMI 0
@@ -73,6 +76,12 @@ RAMDSK DATA RAMWS,$+2
 
        MOV  @0(R13),R0        read/write
        MOV  @6(R13),R3        sector#, logical
+
+       IF DEBUGSCSI#     ;display the sector in debug
+          BLWP @XMNUM
+          DATA RAMWS+6,1      ;R3; 1 word
+       FI
+
        MOV  @16(R13),R8       task buffer location to read/write
        MOV  @24(R13),R12      CRU from caller
 
@@ -200,6 +209,12 @@ HRDRED MOV  *R7+,*R8+         read a horizons sector
        MOV  *R7+,*R8+
        DEC  R5
        JNE  HRDRED
+
+       IF DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA HRDREAD
+       FI
+
        JMP  SECT90  (exit)
 *
 ;;HRDWRT MOVB *R8+,*R7+  ;1.18.2021, faster
@@ -209,6 +224,11 @@ HRDWRT MOV  *R8+,*R7+         write a horizon sector
        MOV  *R8+,*R7+
        DEC  R5
        JNE  HRDWRT
+
+       IF DEBUGSCSI#
+         BLWP @XMTEXT
+         DATA HRDWRITE
+       FI
 *
 * RETURN TO CALLER:
 *      Caller R0msb = status
@@ -220,4 +240,11 @@ SECT90 SBZ  0                 turn card off
 
 HUDFSE LI   R9,>C000          return error
        JMP  SECT90
+
+HRDREAD  TEXT ' (read)'
+         BYTE 0
+
+HRDWRITE TEXT ' (write)'
+         BYTE 0
+         DATA 0
 *eof
