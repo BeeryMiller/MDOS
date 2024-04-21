@@ -6,7 +6,11 @@
 ; v7.40 released 2023
 ; v7.42 beta test
 ; v7.43 one fix, formatting with HFDC only controller
+; v7.44 fixed floppy error reporting when bad sectors encountered on disk
+;       version unreleased
+; v7.45 fixed error with deleting files
+
 VER#   EQU  7
 REV#   EQU  4
-UPD#   EQU  3
+UPD#   EQU  5
 

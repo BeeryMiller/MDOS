@@ -1,0 +1,462 @@
+* 07.18.2022  Split source file out from NEWCMDS
+* 07.18.2022  Updated with AUTO ANSI Autodetect
+* 07.24.2022  Updated F6 handling and added ANSIDRIVER flag
+* 07.25.2022  Added abort for no TIPI present
+* line 240 at 1 byte length fixes heatwave issue, but not implemented
+
+; Why is the IAC char occurring in HW? Is it the UDS or TIPI or Telnet code?
+
+***********************************************
+
+ANSITEXT  DATA 0         ANSI TEXT FLAG
+ANSIFLAG  DATA 0         ANSI FLAG
+TELNETRTN DATA 0
+H0106     DATA >0106
+HEXVAL    DATA 0         DEBUG
+ANSIDRIVE DATA 0         0 = NO DRIVER  >FFFF = DRIVER PRESENT
+CTRLCEXIT DATA 0
+
+TELNET MOV  R11,@TELNETRTN
+
+       MOV  @>00FE,@CTRLCEXIT
+       CLR  @>00FE
+
+       MOV  R0,R1        STORE
+
+       LI   R0,>0001     TEST IF TIPI PRESENT
+       XOP  @TIPI,0
+       MOV  R0,R0        CRU OF TIPI IF NOT >0000
+       JNE  TELNET2
+
+       LI   R6,NOTIPI    display error
+       B    @ABORTMSG
+
+
+TELNET2
+       MOV  R1,R0        RECOVER
+       CLR  @ANSIDRIVE   ;no driver
+       CLR  R6
+       CLR  @ANSIFLAG    ;<>0 ansi driver enabled. Seems we have dupe
+       CLR  @ANSITEXT    ;<>0 text mode, 0=graphics
+TELNET3
+
+TELNET1
+       LI   R2,URL1
+       LI   R3,>2020
+       LI   R4,40
+
+OPENNT1
+       MOV  R3,*R2+
+       DEC  R4
+       JNE  OPENNT1
+
+* Lets get connection URL
+       LI   R2,URL1
+       LI   R4,80
+OPENNT2
+       DEC  R4
+       JEQ  OPENNT3
+       MOVB *R0+,R3
+
+       INC  R6           Length of URL
+
+       CB   R3,@SPACE
+       JEQ  OPENNT2B
+       CB   R3,@CRLF+0
+       JEQ  OPENNT2
+       CB   R3,@CRLF+1
+       JEQ  OPENNT2B
+       CB   R3,@CRLF+2
+       JEQ  OPENNT2B
+       CB   R3,@NUL
+       JEQ  OPENNT2B
+
+       MOVB R3,*R2+
+       JMP  OPENNT2
+
+SLASH  BYTE '/'
+SLASHT BYTE 'T'
+SLASHG BYTE 'G'
+       BYTE 0
+
+OPENNT2B
+       DEC  R6           Subtract space character from length
+       MOVB *R0+,R1      terminate string with space
+
+       CB   R1,@SPACE
+       JEQ  OPENNT3
+
+       CB   R1,@SLASH
+       JNE  OPENNT3
+
+       MOVB *R0+,R1
+       ANDI R1,>DF00     7.2.2019
+
+       CB   R1,@SLASHG   ANSI GRAPHICS MODE '/G'?
+       JNE  OPENNT3C     no, test for /T
+       SETO @ANSIFLAG
+       CLR  @ANSITEXT
+       JMP  TESTFORDRIVER
+
+OPENNT3C
+       CB   R1,@SLASHT   ANSI TEXT MODE
+       JNE  TRYTOCONNECT   ;didn't find /G or /T. No ansi. ttyout only
+       SETO @ANSIFLAG
+       SETO @ANSITEXT
+;//end option test
+
+;
+; Ansi requested /T or /G. Test for XOP presence. Abort if ANSI not present.
+;
+TESTFORDRIVER
+OPENNT3B
+       SETO @ANSIDRIVE   ;assume driver loaded
+       LI   R0,2         ;test for driver/presence
+       XOP  @ANSI,0
+       CI   R0,>FFFF     ;driver installed?
+       JEQ  TRYTOCONNECT ;yes
+
+       CLR  @ANSIDRIVE        ;in case we decide to allow to fall through
+       LI   R6,ANSINOTINSTALLED
+       B    @ABORTNODRIVERNOTIPI  ;@ABORT
+
+;
+; Test the URL for connection before changing video mode/etc.
+;
+TRYTOCONNECT
+OPENNT3
+OPENNT4
+       LI   R0,5                             CLOSE ANY OPEN CONNECTIONS
+       MOVB @TELNETPORT,R1    ;this does not seem to work.
+       XOP  @TIPI,0
+
+       LI   R0,2                             Open URL
+       LI   R1,URL1                          URL
+       MOVB @TELNETPORT,R3
+       MOV  R6,R2                            Lenth of URL
+       XOP  @TIPI,0
+
+       MOV  R1,R1
+       JNE  FOUNDANSI
+
+       LI   R6,NOCONNECT      ;show error and exit
+       B    @ABORTMSG
+
+; at this point, we have a connection
+;
+; Check driver presence. Set /T or /G mode
+;                        and prime the port for the ansi interpreter
+FOUNDANSI
+       ABS  @ANSIDRIVE        ;driver?
+       JEQ  TESTKEY           ;no. skip setup. Use current mode
+
+       MOV  @ANSITEXT,R1      ;ansitext=0 is graphics mode
+       INV  R1                ;invert for xop
+       CLR  R0
+       MOVB @TELNETPORT,R2    ;used for autodetect. Should be AFTER connect
+       XOP  @ANSI,0           ;R1=0 text; <>0 graphics mode
+;end of ansi driver setup
+
+; keyboard routine
+TESTKEY
+       BL   @CHECKVIDEOA                     Blinking cursor routine
+
+       LI   R0,4
+       CLR  R1
+       XOP  @KEY,0
+       JNE  FILLBUFFER                       no keys selected, look for inbound
+
+       CB   R1,@BACKSPACE
+       JNE  TESTKEY1
+       AI   R1,>8000
+       B    @ANSICHARSENDA
+TESTKEY1
+       CB   R1,@F9KEY                        look for exit
+       JNE  KEYTEST      check special keys, if ANSI enabled
+
+       B    @ABORT
+
+; Special ANSI key output
+; arrrow/pgup/pgdown
+; table contains the key and associated opcode
+;
+KEYTEST
+       ABS  @ANSIDRIVE        ;ansi driver installed?
+       JEQ  ANSICHARSENDA     ;no, send as-is
+
+       LI   R2,ANSITABLE1
+SPEC1  CB   R1,*R2+
+       JEQ  SENDSPECIAL
+       INC  R2           ;point to next entry
+       CI   R2,ANSITABLE1END
+       JNE  SPEC1
+       JMP  ANSICHARSENDA     ;process normally
+
+SENDSPECIAL
+       MOVB *R2,R0        ;get opcode from table
+       SRL  R0,8
+       MOVB @TELNETPORT,R1
+       XOP  @TIPI,0      ;send special keypress
+       JMP  FILLBUFFER
+
+;process 'standard' keyboard character
+ANSICHARSENDA
+       LI   R0,4              ;send single character ;R1MSB=char
+       MOVB @TELNETPORT,R2    ;port
+       XOP  @TIPI,0
+
+; Fill buffer with available data
+FILLBUFFER
+CHECKVIDEO
+       CLR  @URL1        ;ensure no false positives
+
+       CLR  R3
+       LI   R0,6         ;Receive multiple characters from socket
+       LI   R1,URL1      ;buffer
+       LI   R2,78        ;10.28.2023, maximum buffer size  ********
+       MOVB @TELNETPORT,R3
+       XOP  @TIPI,0                          check for character from socket
+
+       MOV  R0,R0                            ZERO LENGTH
+       JEQ  TESTKEYA
+
+       LI   R1,URL1      process buffer      12.29.2021
+       MOV  R0,R6        R0/R6 contains # bytes
+       JMP  MUIN77A
+
+TESTKEYA B  @TESTKEY
+
+;
+; Main processing loop.
+;      Consume a byte from buffer and display it. Test for IAC and process
+;      R1=buffer
+;      R6=bytes in buffer
+;      Note: we should be checking for >FF >FF as an escape sequence or
+;            simply printing >FF, depending on expected state.
+;
+MAIN777
+       MOV  @IACGRABR1,R1     ;this is done by IAC routine. Why here/
+MUIN77A
+
+       CLR  R3
+       MOVB *R1,@SENDKEY1
+       MOVB *R1+,R3
+
+       CI   R3,>FF00    ;test for IAC character
+       JNE  MAIN888
+       B    @IACGRAB     Process IAC
+
+MAIN888                       ;only entered from above
+       MOV  R1,@IACGRABR1     ;save for this routine and TTYOUT. See MAIN777
+
+       MOV  @ANSIFLAG,@ANSIFLAG
+       JEQ  DOTTYOUT
+
+       LI   R0,1
+       LI   R1,SENDKEY1       ;PASS to ansi interpreter
+       LI   R2,1              ;one byte
+       XOP  @ANSI,0
+
+TTYINT DEC  R6           any more?
+       JNE  MAIN777      yes
+
+       B    @TESTKEY     no
+;
+; ttyout only, no interpreter
+; relies on emit/msg. This might populate the scrollback buffer.
+;
+DOTTYOUT
+       MOVB @ZEROME,@SENDKEY1+1               null terminate
+       LI   R1,SENDKEY1  ;use buffer
+       BL   @MESG
+       JMP  TTYINT       ;continue buffer
+
+ZEROME DATA 0
+
+;================================
+; Cursor routine, called once
+;    BL @CHECKVIDEO
+;
+CHECKVIDEOA
+
+       LI   R0,3             FLASHING CURSOR ROUTINE
+       XOP  @VID,0
+
+       MOV  R1,R2
+       MOV  R0,R1
+
+       LI   R0,>000B
+       XOP  @VID,0
+
+       SWPB R0
+       MOVB R0,@CHARSAVE
+
+       LI   R0,>002A
+       LI   R1,CHARSAVE+1
+       LI   R2,1
+       SETO R3
+       XOP  @VID,0
+
+       LI   R0,>002A
+       LI   R1,CHARSAVE
+       LI   R2,1
+       SETO R3
+       XOP  @VID,0                           END OF FLASHING CURSOR ROUTINE
+
+       RT
+
+
+IACGRABR6 DATA 0
+IACGRABR1 DATA 0
+SENDKEY1  DATA 0
+
+TEMPREG   DATA 0
+
+; IAC is 3 chars. Why are we grabbing 3 + the initial >FF ?
+; not sure why we are using tempreg and IACGRABMSG+2
+; Inquire with Beery.
+; Do we need to escape a double >FF or allow this to be disabled
+
+IACGRAB
+;;     MOVB *R1+,@TEMPREG                    THIS LINE MAY NOT BE NEEDED
+;;     DEC  R6                ;These 3 lines cause the missed chars on HW
+;;     JEQ  IACGRABA          ;login screen. We already consumed this during
+;;                            ; the >FF test in above code, 2 chars remain
+;;
+       MOVB *R1+,@TEMPREG     2nd
+       DEC  R6
+       JEQ  IACGRAB1
+
+       MOVB *R1+,@IACGRABMSG+2   3rd
+       DEC  R6
+
+       MOV  R6,@IACGRABR6
+       MOV  R1,@IACGRABR1     ;save current buffer location
+       JMP  IACGRABB
+
+IACGRABA
+       LI   R0,3
+       MOVB @TELNETPORT,R1    wait for next char in R1
+       XOP  @TIPI,0
+       MOV  R0,R0
+       JEQ  IACGRABA
+
+IACGRAB1
+       LI   R0,3
+       MOVB @TELNETPORT,R1
+       XOP  @TIPI,0           get final char in R1
+       MOV  R0,R0
+       JEQ  IACGRAB1
+
+       MOVB R1,@IACGRABMSG+2  save it  - WHY HERE?
+
+       CLR  R0              ;why?
+       CLR  R1              ;why?
+       MOV  R6,@IACGRABR6   ;ok
+
+IACGRABB
+       LI   R0,4
+       CLR  R1
+
+       LI   R3,IACGRABMSG     ;>FF
+       MOVB *R3+,R1
+       MOVB @TELNETPORT,R2
+       XOP  @TIPI,0
+
+       MOVB *R3+,R1           ;>FC
+       MOVB @TELNETPORT,R2
+       XOP  @TIPI,0
+
+       MOVB *R3+,R1           ;why are we echoing IACGRABMSG+2 to host?
+       MOVB @TELNETPORT,R2    ;we populate it above. SHOULD BE >00  ??
+       XOP  @TIPI,0
+
+       MOV  @IACGRABR1,R1
+       MOV  @IACGRABR6,R6
+       MOV  R6,R6             ;any remaining chars in the buffer?
+       JEQ  MAIN000
+
+       B    @MAIN777          ;yes, process another byte
+
+MAIN000
+
+       B    @TESTKEY          ;no. check key/blink/etc.
+
+ANSITABLE1                  ;test table for special output; ANSI XOP 2nd byte
+ANSIPAGEUP  BYTE >8C,11
+ANSIPAGEDN  BYTE >82,12
+KEYUP       BYTE >8B,7
+KEYRA       BYTE >89,10
+KEYLA       BYTE >88,9
+KEYDN       BYTE >8A,8
+ANSITABLE1END EQU $          ;end of special table
+
+BACKSPACE   BYTE >88     KEYMODE 0 AND KEYMODE 4
+
+F9KEY       BYTE >8F
+ESC         BYTE >1B
+TELNETPORT  BYTE >A4     CLIENT TELNET HANDLE/PORT
+            EVEN
+CHARSAVE    TEXT ' _'
+
+
+IACGRABMSG
+       DATA >FFFC,>0000  ;common response to all IAC requests
+
+TIPIRECEIVEMSG DATA 0
+
+; Reset screen and abort
+; R6 holds message to display
+ABORT
+       LI   R6,CRLF      ;set for displaying
+;      BL   @MESG
+
+       LI   R0,5         ;close sockets
+       MOVB @TELNETPORT,R1  ;need to indicate socket 10.28.2023
+       XOP  @TIPI,0
+
+ABVID  CLR  R0
+       LI   R1,>0001     ;we should restore previous video setting here
+       XOP  @VIDEO,0     ;so we get previous colors, etc.
+
+       LI   R0,>29
+       MOV  @FCOLOR,R1
+       XOP  @VIDEO,0
+
+       LI   R0,>0C
+       MOVB @BCOLOR,R1
+       SRL  R1,8
+       XOP  @VIDEO,0
+
+ABORTMSG                 ;error return, before ansi interp does screen setting
+ABORTNODRIVERNOTIPI
+       MOV  R6,R1
+       BL   @MESG
+
+ABORT6
+       MOV  @TELNETRTN,R11
+       MOV  @CTRLCEXIT,@>00FE                RESTORE ^C EXIT
+
+       B    *R11
+
+TTYSEND DATA 0
+
+FCOLOR BYTE >0F          ;should save/restore
+BCOLOR BYTE >04
+
+NUL
+KEY     DATA >0005        Keyboard scan library
+TIPI    DATA >000C        TIPI library
+SPACE   DATA >2020
+OPENING TEXT 'Connecting...'
+CRLF1   BYTE >0D,>0A,0
+NOCONNECT TEXT 'Not connected, exiting...'
+        BYTE >0D,>0A,0
+ANSINOTINSTALLED
+        TEXT 'ANSI driver not installed!'
+        BYTE >0D,>0A,0
+NOTIPI
+        TEXT 'No TIPI present, exiting...'
+        BYTE >0D,>0A,0
+        EVEN
+;eof
