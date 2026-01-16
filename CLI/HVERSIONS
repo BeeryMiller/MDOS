@@ -9,8 +9,10 @@
 ; v7.44 fixed floppy error reporting when bad sectors encountered on disk
 ;       version unreleased
 ; v7.45 fixed error with deleting files
+; v7.46 fixed 4a powerup on HFDC physical card at >1100 left on by 4a powerup
+;       fixed code in HD\SECTORIOW writing to address >A212
 
 VER#   EQU  7
 REV#   EQU  4
-UPD#   EQU  5
+UPD#   EQU  6
 

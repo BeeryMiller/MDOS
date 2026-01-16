@@ -106,11 +106,11 @@ VERMSG TEXT 'Version '
        TEXT ', 20'
        YEAR
 
-*      BYTE 13,10,10
-*      TEXT 'Copyright 9640*News Contributors'
-*      BYTE 13,10,10
-*      TEXT ' !! CAUTION - DEVELOPMENT ONLY !!'
        BYTE 13,10,10
+       TEXT 'Copyright 9640*News Contributors'
+       BYTE 13,10,10
+*      TEXT ' !! CAUTION - DEVELOPMENT ONLY !!'
+*      BYTE 13,10,10
        BYTE 0            signals end of text
        EVEN
 
@@ -159,8 +159,8 @@ LOGO1  BYTE 228,229,229,229,229,229,229,229,229,229
        DAY
        TEXT ', 20'
        YEAR
-*       BYTE >0D,>0A
-*       TEXT '    CAUTION - DEVELOPMENT ONLY!!'
+*      BYTE >0D,>0A
+*      TEXT '    CAUTION - DEVELOPMENT ONLY!!'
        BYTE >0D,>0A,>0D,>0A
        BYTE 0,0
        EVEN
