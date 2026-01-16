@@ -1,0 +1,18 @@
+* v6.70 Sept 2009
+* v7.00 March 4 2018
+* v7.10 December 30, 2020 TIPI prep
+* v7.30 April 3, 2021 preparing for release
+* v7.34 consolidated bwm/tat code 5-7-2022
+; v7.40 released 2023
+; v7.42 beta test
+; v7.43 one fix, formatting with HFDC only controller
+; v7.44 fixed floppy error reporting when bad sectors encountered on disk
+;       version unreleased
+; v7.45 fixed error with deleting files
+; v7.46 fixed 4a powerup on HFDC physical card at >1100 left on by 4a powerup
+;       fixed code in HD\SECTORIOW writing to address >A212
+
+VER#   EQU  7
+REV#   EQU  4
+UPD#   EQU  6
+
