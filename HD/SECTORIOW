@@ -20,7 +20,10 @@
 * 3.17.2018, fixed scrampage to use P_SCSI equate vs. hardcoded page
 * 6.18.2022, restored from TT220514 after failed testing w/step rate code
 * 7.25.2022, Added CYA label reference, CYAMPC for HFDC step rate
-
+* 12.29.2025, Restored commented out lines for BL @RESTRW, JNC RESER at
+*             label SIO025. Commented out line in BAD01C code causing writes
+*             to >A212 in GPL mode
+*
        DEF  CYAMPC       7.25.2022
 
 RESER  LI   R0,>C000          RESTORE ERROR
@@ -143,8 +146,8 @@ SIO025 BL   @STR789           SET R7,R8,R9
 *   IN PARTICULAR IF WINCHESTER WHEN PARMS ARE KNOWN
        MOV  *R2,R0            HAVE WE READ THIS DRIVE BEFORE?
        JNE  SI0251            YES
-;;     BL   @RESTRW           RESTORE THE HEAD OF THE DRIVE
-;;     JNC  RESER             RESTORE ERROR
+       BL   @RESTRW           RESTORE THE HEAD OF THE DRIVE
+       JNC  RESER             RESTORE ERROR
 SI0251 BL   @SETBUF           SET BUFFER ACCORDING TO RAMBUF OR SCOBUF ACCORDINY
        CLR  *R1               SECTOR
        CLR  *R1               CYL/HEAD
@@ -255,7 +258,7 @@ BADS03 DEC  R3                ONE LESS RETRY TO PERFORM
 *
 BAD01C MOVB @CBH48,@CMDREG
        MOVB @REDREG,R3
-       MOVB R3,@SCNOFF
+*      MOVB R3,@SCNOFF        ;COMMENTED OUT AS IT WRITES TO >A212 IN GPL MODE
        LI   R0,>2200
        ANDI R3,>2000
        JNE  BAD01B            IT IS A CRC ERROR
